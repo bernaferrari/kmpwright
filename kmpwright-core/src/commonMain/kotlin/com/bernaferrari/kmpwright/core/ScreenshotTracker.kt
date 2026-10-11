@@ -1,0 +1,57 @@
+package com.bernaferrari.kmpwright.core
+
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/** Result of a conditional capture. Unchanged captures omit image bytes. */
+data class ConditionalScreenshotResult(
+    val changed: Boolean,
+    val image: ScreenshotResult?,
+    val mismatchPercentage: Double?
+)
+
+/**
+ * Caller-owned, bounded screenshot baselines for one page. Viewport, full-page,
+ * clip, and encoding options have independent baselines. Threshold is the
+ * fraction of pixels allowed to change (0.01 means 1%). A skipped image keeps
+ * the last emitted baseline, so small cumulative changes eventually surface.
+ */
+class ScreenshotTracker internal constructor(
+    private val capture: suspend (ScreenshotOptions) -> ScreenshotResult,
+    private val maxScopes: Int = 8
+) {
+    constructor(page: Page, maxScopes: Int = 8) : this({ page.screenshot(it) }, maxScopes)
+
+    init { require(maxScopes > 0) { "maxScopes must be positive" } }
+
+    private val mutex = Mutex()
+    private val baselines = linkedMapOf<ScreenshotOptions, ScreenshotResult>()
+
+    suspend fun captureIfChanged(
+        options: ScreenshotOptions = ScreenshotOptions(),
+        threshold: Double = 0.0
+    ): ConditionalScreenshotResult = mutex.withLock {
+        require(threshold in 0.0..1.0) { "threshold must be between 0 and 1" }
+        val image = capture(options)
+        if (image.bytes.isEmpty()) throw KmpwrightException("Screenshot capture returned no image")
+        val key = options.copy(timeoutMs = 0)
+        val previous = baselines[key]
+        var mismatch: Double? = null
+        val changed = if (previous == null) true else if (previous == image) {
+            mismatch = 0.0
+            false
+        } else {
+            val before = previous.toRgbaImage() ?: throw KmpwrightException("Could not decode screenshot baseline")
+            val after = image.toRgbaImage() ?: throw KmpwrightException("Could not decode current screenshot")
+            val diff = VisualDiff.compareRgba(before, after, DiffOptions(threshold = 0.0, generateDiffImage = false))
+            mismatch = diff.mismatchPercentage
+            diff.dimensionMismatch != null || diff.mismatchPercentage > threshold * 100
+        }
+        baselines.remove(key)
+        baselines[key] = if (changed) image.copy(bytes = image.bytes.copyOf()) else previous!!
+        if (baselines.size > maxScopes) baselines.remove(baselines.keys.first())
+        ConditionalScreenshotResult(changed, if (changed) image else null, mismatch)
+    }
+
+    suspend fun clear() = mutex.withLock { baselines.clear() }
+}

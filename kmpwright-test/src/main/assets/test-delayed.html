@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Test Network Page</title>
+    <script>
+        console.log('[Network Test] Loaded');
+        
+        // Simulate network activity
+        setTimeout(() => {
+            fetch('/test-data.json')
+                .then(r => r.json())
+                .then(d => console.log('[Network Test] Data loaded', d))
+                .catch(e => console.error('[Network Test] Error', e));
+        }, 500);
+    </script>
+</head>
+<body>
+    <h1>Network Test Page</h1>
+    <p>This page makes network requests for testing network tracking.</p>
+</body>
+</html>

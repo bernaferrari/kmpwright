@@ -1,0 +1,1803 @@
+{
+  "manifestVersion": 1,
+  "manifest": "agent-browser-compatibility",
+  "upstream": {
+    "repository": "https://github.com/vercel-labs/agent-browser",
+    "publicSources": [
+      "README.md",
+      "agent-browser.schema.json"
+    ],
+    "workingTreeIsIgnored": true,
+    "baselineCommit": "b4f2f37d7b4f954022bc77f8d6dce70e07072b00",
+    "comparedCommit": "d9570915f4dd6504dee4070379d2c4f79d81dbb2",
+    "comparedVersion": "0.39.0",
+    "comparedOn": "2026-10-11",
+    "localCheckoutPath": ".upstream/agent-browser",
+    "review": "compatibility/upstream-review.md",
+    "changeInventory": "compatibility/upstream-changes.json"
+  },
+  "kmpwright": {
+    "package": "com.bernaferrari.kmpwright.core",
+    "boundary": "public Kotlin Multiplatform Page, Locator, Browser, and configuration APIs"
+  },
+  "statusDefinitions": {
+    "supported": "The command's documented core behavior has a public Kmpwright entry point.",
+    "partial": "A public entry point exists, but backend, lifecycle, output, or option semantics differ; callers must handle the documented limitation.",
+    "unsupported": "There is no public Kmpwright entry point for this command or option."
+  },
+  "commands": [
+    {
+      "command": "open",
+      "status": "supported",
+      "semantics": "Create a Browser page and optionally navigate it.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Browser",
+          "member": "newPage"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "goto"
+        }
+      ]
+    },
+    {
+      "command": "goto",
+      "aliasOf": "open",
+      "status": "supported",
+      "semantics": "Navigate the current/new page to a URL.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "goto"
+        }
+      ]
+    },
+    {
+      "command": "navigate",
+      "aliasOf": "open",
+      "status": "supported",
+      "semantics": "Navigate the current/new page to a URL.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "goto"
+        }
+      ]
+    },
+    {
+      "command": "click",
+      "status": "partial",
+      "semantics": "Click a locator, including snapshot refs.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "click"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "locatorByRef"
+        }
+      ],
+      "notes": "JVM locators dispatch trusted CDP input, with shadow/label hit testing, asynchronous dialogs and nested cross-process frame coordinates. Mobile locators retain DOM input semantics."
+    },
+    {
+      "command": "dblclick",
+      "status": "supported",
+      "semantics": "Double-click a locator.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "dblclick"
+        }
+      ]
+    },
+    {
+      "command": "focus",
+      "status": "supported",
+      "semantics": "Focus a locator.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "focus"
+        }
+      ]
+    },
+    {
+      "command": "type",
+      "status": "supported",
+      "semantics": "Type into a locator with keyboard events.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "type"
+        }
+      ]
+    },
+    {
+      "command": "fill",
+      "status": "supported",
+      "semantics": "Clear and fill a locator.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "fill"
+        }
+      ]
+    },
+    {
+      "command": "press",
+      "aliasOf": "key",
+      "status": "supported",
+      "semantics": "Press a key on a locator.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "press"
+        }
+      ]
+    },
+    {
+      "command": "key",
+      "aliasOf": "press",
+      "status": "supported",
+      "semantics": "Alias for press.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "press"
+        }
+      ]
+    },
+    {
+      "command": "keyboard",
+      "status": "supported",
+      "semantics": "Type, insert text, press, or hold keys on the active page keyboard.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Keyboard",
+          "member": "type"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Keyboard",
+          "member": "insertText"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Keyboard",
+          "member": "press"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Keyboard",
+          "member": "down"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Keyboard",
+          "member": "up"
+        }
+      ]
+    },
+    {
+      "command": "hover",
+      "status": "supported",
+      "semantics": "Hover a locator.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "hover"
+        }
+      ]
+    },
+    {
+      "command": "select",
+      "status": "supported",
+      "semantics": "Select options by value first, then normalized visible label; reject unmatched/disabled choices before mutation.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "selectOption"
+        }
+      ]
+    },
+    {
+      "command": "check",
+      "status": "supported",
+      "semantics": "Check a checkbox locator.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "check"
+        }
+      ]
+    },
+    {
+      "command": "uncheck",
+      "status": "supported",
+      "semantics": "Uncheck a checkbox locator.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "uncheck"
+        }
+      ]
+    },
+    {
+      "command": "scroll",
+      "status": "supported",
+      "semantics": "Scroll the page or a locator in a direction.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "scrollDown"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "scrollUp"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "scrollIntoViewIfNeeded"
+        }
+      ]
+    },
+    {
+      "command": "scrollintoview",
+      "aliasOf": "scrollinto",
+      "status": "supported",
+      "semantics": "Scroll a locator into view.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "scrollIntoViewIfNeeded"
+        }
+      ]
+    },
+    {
+      "command": "scrollinto",
+      "aliasOf": "scrollintoview",
+      "status": "supported",
+      "semantics": "Alias for scrollintoview.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "scrollIntoViewIfNeeded"
+        }
+      ]
+    },
+    {
+      "command": "drag",
+      "status": "supported",
+      "semantics": "Drag one locator to another.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "dragTo"
+        }
+      ]
+    },
+    {
+      "command": "upload",
+      "status": "partial",
+      "semantics": "Set files on a file input locator.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "setInputFiles"
+        }
+      ],
+      "notes": "CDP-backed JVM locators upload files with DOM.setFileInputFiles. Mobile WebView file upload is unsupported."
+    },
+    {
+      "command": "screenshot",
+      "status": "supported",
+      "semantics": "Capture a page or locator screenshot.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "screenshot"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "screenshot"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "annotatedScreenshot"
+        }
+      ],
+      "options": [
+        {
+          "name": "--full",
+          "status": "supported",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.ScreenshotOptions",
+              "member": "getFullPage"
+            }
+          ]
+        },
+        {
+          "name": "--annotate",
+          "status": "partial",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.Page",
+              "member": "annotatedScreenshot"
+            }
+          ],
+          "notes": "DOM annotation scripts are shared. Capture geometry and rendering vary by backend; real-browser annotation regression coverage currently targets JVM CDP."
+        },
+        {
+          "name": "--screenshot-format",
+          "status": "partial",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.ScreenshotOptions",
+              "member": "getFormat"
+            }
+          ],
+          "notes": "Kmpwright also exposes WEBP; agent-browser's pinned docs list PNG/JPEG."
+        },
+        {
+          "name": "--if-changed",
+          "status": "supported",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.ScreenshotTracker",
+              "member": "captureIfChanged"
+            }
+          ],
+          "notes": "Use one caller-owned tracker per page. Threshold is a fraction from 0 to 1; skipped captures keep the previous emitted baseline."
+        },
+        {
+          "name": "--threshold",
+          "status": "supported",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.ScreenshotTracker",
+              "member": "captureIfChanged"
+            }
+          ],
+          "notes": "Use one caller-owned tracker per page. Threshold is a fraction from 0 to 1; skipped captures keep the previous emitted baseline."
+        }
+      ]
+    },
+    {
+      "command": "pdf",
+      "status": "supported",
+      "semantics": "Render the current page as PDF bytes.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "pdf"
+        }
+      ]
+    },
+    {
+      "command": "snapshot",
+      "status": "supported",
+      "semantics": "Build an accessibility tree with stable @e refs.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "accessibilitySnapshot"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "locatorByRef"
+        }
+      ],
+      "options": [
+        {
+          "name": "-i",
+          "status": "supported",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.A11ySnapshotOptions",
+              "member": "getInteractiveOnly"
+            }
+          ]
+        },
+        {
+          "name": "--urls",
+          "status": "partial",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.Page",
+              "member": "accessibilitySnapshot"
+            }
+          ],
+          "notes": "Link URL inclusion is backend/output dependent."
+        },
+        {
+          "name": "-c",
+          "status": "partial",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.A11ySnapshotOptions",
+              "member": "getCompact"
+            }
+          ]
+        },
+        {
+          "name": "-d",
+          "status": "supported",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.A11ySnapshotOptions",
+              "member": "getMaxDepth"
+            }
+          ]
+        },
+        {
+          "name": "-s",
+          "status": "supported",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.A11ySnapshotOptions",
+              "member": "getScopeSelector"
+            }
+          ]
+        }
+      ],
+      "notes": "CDP snapshots follow native Chromium AX roles, names, states and hierarchy, including aria-owns and scoped stable references. includeHidden and native WebViews use bounded DOM traversal."
+    },
+    {
+      "command": "eval",
+      "status": "partial",
+      "semantics": "Evaluate JavaScript in the page.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "evaluate"
+        }
+      ],
+      "notes": "Availability is controlled by KmpwrightConfig.allowEval and backend policy."
+    },
+    {
+      "command": "read",
+      "status": "supported",
+      "semantics": "Read the active document or fetch HTTP content with Markdown negotiation, HTML extraction, llms traversal, outlines and filtering.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "read"
+        }
+      ],
+      "notes": "HTTP reads use independent clients without browser cookies. All redirects and discovered links pass origin/domain policy checks. Responses and the complete operation have bounded budgets."
+    },
+    {
+      "command": "get",
+      "status": "supported",
+      "semantics": "Read page or locator properties.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "getTitle"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "getUrl"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "textContent"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "innerHTML"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "getAttribute"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "inputValue"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "count"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "boundingBox"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "computedStyles"
+        }
+      ]
+    },
+    {
+      "command": "get cdp-url",
+      "status": "unsupported",
+      "semantics": "Return an active daemon CDP WebSocket URL.",
+      "notes": "No public Kmpwright API exposes the daemon endpoint."
+    },
+    {
+      "command": "is",
+      "status": "supported",
+      "semantics": "Check visibility, enabled state, or checked state.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "isVisible"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "isEnabled"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "isChecked"
+        }
+      ]
+    },
+    {
+      "command": "find",
+      "status": "partial",
+      "semantics": "Resolve CSS, text, ARIA, semantic, or snapshot-ref locators.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "locator"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "locatorByRef"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "first"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "last"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "nth"
+        }
+      ],
+      "options": [
+        {
+          "name": "--name",
+          "status": "supported",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.Page",
+              "member": "accessibilitySnapshot"
+            }
+          ]
+        },
+        {
+          "name": "--exact",
+          "status": "supported",
+          "apiRefs": [
+            {
+              "owner": "com.bernaferrari.kmpwright.core.Page",
+              "member": "locator"
+            }
+          ]
+        }
+      ],
+      "notes": "Shared role/name semantics approximate ARIA; they are not equivalent to browser-computed AX roles and names."
+    },
+    {
+      "command": "wait",
+      "status": "partial",
+      "semantics": "Wait for selectors, text, URLs, load states, or JavaScript predicates.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "waitFor"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "waitForText"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "waitForFunction"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "waitForLoadState"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "waitForTimeout"
+        }
+      ],
+      "notes": "JVM CDP awaits Promise-based conditions. Mobile callback evaluation does not guarantee identical Promise semantics."
+    },
+    {
+      "command": "batch",
+      "status": "unsupported",
+      "semantics": "Execute multiple CLI commands in one process."
+    },
+    {
+      "command": "clipboard",
+      "status": "supported",
+      "semantics": "Read or write page/system clipboard text.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "clipboardRead"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "clipboardWrite"
+        }
+      ]
+    },
+    {
+      "command": "mouse",
+      "status": "supported",
+      "semantics": "Perform coordinate mouse input.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Mouse",
+          "member": "move"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Mouse",
+          "member": "down"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Mouse",
+          "member": "up"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Mouse",
+          "member": "wheel"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Mouse",
+          "member": "drag"
+        }
+      ]
+    },
+    {
+      "command": "set viewport",
+      "status": "supported",
+      "semantics": "Set viewport dimensions and scale.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setViewportSize"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setDeviceScaleFactor"
+        }
+      ]
+    },
+    {
+      "command": "set device",
+      "status": "supported",
+      "semantics": "Apply a built-in device descriptor.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "emulateDevice"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Devices",
+          "member": "getAll"
+        }
+      ]
+    },
+    {
+      "command": "set geo",
+      "status": "supported",
+      "semantics": "Set geolocation.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "emulateGeolocation"
+        }
+      ]
+    },
+    {
+      "command": "set offline",
+      "status": "supported",
+      "semantics": "Toggle offline emulation.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "emulateOffline"
+        }
+      ]
+    },
+    {
+      "command": "set headers",
+      "status": "supported",
+      "semantics": "Set extra HTTP headers.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setExtraHTTPHeaders"
+        }
+      ]
+    },
+    {
+      "command": "set credentials",
+      "status": "supported",
+      "semantics": "Set HTTP basic credentials.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setHTTPCredentials"
+        }
+      ]
+    },
+    {
+      "command": "set media",
+      "status": "supported",
+      "semantics": "Emulate a color scheme.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "emulateColorScheme"
+        }
+      ]
+    },
+    {
+      "command": "cookies",
+      "status": "supported",
+      "semantics": "List, set, and clear cookies.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "getAllCookies"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setCookie"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "deleteAllCookies"
+        }
+      ]
+    },
+    {
+      "command": "storage local",
+      "status": "supported",
+      "semantics": "Read and mutate localStorage.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "getAllLocalStorage"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setLocalStorage"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "clearLocalStorage"
+        }
+      ]
+    },
+    {
+      "command": "storage session",
+      "status": "supported",
+      "semantics": "Read and mutate sessionStorage.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "getAllSessionStorage"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setSessionStorage"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "clearSessionStorage"
+        }
+      ]
+    },
+    {
+      "command": "network route",
+      "status": "partial",
+      "semantics": "Intercept, abort, fulfill, or continue matching requests.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "route"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "unroute"
+        }
+      ],
+      "notes": "Routing is backend dependent; WebView interception is not full browser-network parity."
+    },
+    {
+      "command": "network requests",
+      "status": "partial",
+      "semantics": "Inspect persistent bounded request history, stable redirect-hop IDs, request/response detail and on-demand CDP bodies.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "network"
+        }
+      ],
+      "notes": "Retains at most 500 hops within a 4 MiB metadata budget, across navigations. Native visibility follows WebView SDK event coverage; native response body retrieval explicitly throws unsupported. Evicted/cached/redirect bodies may be unavailable."
+    },
+    {
+      "command": "network request",
+      "status": "partial",
+      "semantics": "Inspect persistent bounded request history, stable redirect-hop IDs, request/response detail and on-demand CDP bodies.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "network"
+        }
+      ],
+      "notes": "Retains at most 500 hops within a 4 MiB metadata budget, across navigations. Native visibility follows WebView SDK event coverage; native response body retrieval explicitly throws unsupported. Evicted/cached/redirect bodies may be unavailable."
+    },
+    {
+      "command": "network har",
+      "status": "partial",
+      "semantics": "Represent HAR 1.2 records.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "startHarCapture"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "stopHarCapture"
+        }
+      ],
+      "notes": "Portable HAR 1.2 capture from unified page/frame events; CDP includes available text/base64 bodies, native SDKs expose partial metadata. Bounded entries, byte retention and body reads; truncated bodies are explicit."
+    },
+    {
+      "command": "tab",
+      "status": "partial",
+      "semantics": "List, switch, and close pages/tabs.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Browser",
+          "member": "pages"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Browser",
+          "member": "closePage"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Browser",
+          "member": "newPage"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Browser",
+          "member": "targetsAsync"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Browser",
+          "member": "attachTargetAsync"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Browser",
+          "member": "activateTargetAsync"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Browser",
+          "member": "closeTargetAsync"
+        }
+      ],
+      "notes": "Tabs opened from a page inherit successful headers, credentials, routes, emulation and init scripts before navigating. Independent Browser.newPage/context pages retain their configured ownership. Browser-scoped CDP enumerates existing targets and attaches without taking tab ownership. Activation revives discarded renderers. Attachment close detaches; explicit target close closes the tab."
+    },
+    {
+      "command": "window new",
+      "status": "partial",
+      "semantics": "Create a separate top-level browser window.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Browser",
+          "member": "newWindowAsync"
+        }
+      ],
+      "notes": "Browser-scoped CDP creates an owned top-level window; native WebViews and page-scoped endpoints reject this explicitly."
+    },
+    {
+      "command": "frame",
+      "status": "partial",
+      "semantics": "Resolve locators in an iframe.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "frameLocator"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.FrameLocator",
+          "member": "locator"
+        }
+      ],
+      "notes": "CDP resolves same-process and nested cross-origin/process frames, routes scoped native input/upload/screenshots/AX roles and refreshes after process swaps. Native WebViews retain same-origin DOM frame limitations."
+    },
+    {
+      "command": "dialog",
+      "status": "supported",
+      "semantics": "Accept, dismiss, inspect, or respond to JavaScript dialogs.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "onDialog"
+        }
+      ]
+    },
+    {
+      "command": "diff snapshot",
+      "status": "supported",
+      "semantics": "Diff current and saved accessibility snapshots.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "diffSnapshot"
+        }
+      ]
+    },
+    {
+      "command": "diff screenshot",
+      "status": "partial",
+      "semantics": "Compare screenshots visually.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.VisualDiff",
+          "member": "compareRgba"
+        }
+      ],
+      "notes": "Kmpwright's visual diff is an API over image bytes, not a CLI baseline file workflow."
+    },
+    {
+      "command": "diff url",
+      "status": "supported",
+      "semantics": "Compare accessibility snapshots from two URLs.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "diffUrls"
+        }
+      ]
+    },
+    {
+      "command": "trace",
+      "status": "partial",
+      "semantics": "Start and stop CDP tracing.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "startTracing"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "stopTracing"
+        }
+      ],
+      "notes": "Only CDP-backed pages support tracing; WebView is a no-op/unsupported backend."
+    },
+    {
+      "command": "profiler",
+      "status": "partial",
+      "semantics": "Start and stop the V8 CPU profiler.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "startProfiler"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "stopProfiler"
+        }
+      ],
+      "notes": "Only CDP-backed pages support profiling."
+    },
+    {
+      "command": "console",
+      "status": "supported",
+      "semantics": "Read accumulated console messages.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "consoleMessages"
+        }
+      ]
+    },
+    {
+      "command": "errors",
+      "status": "supported",
+      "semantics": "Read page errors.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "errors"
+        }
+      ]
+    },
+    {
+      "command": "highlight",
+      "status": "supported",
+      "semantics": "Temporarily highlight a locator.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Locator",
+          "member": "highlight"
+        }
+      ]
+    },
+    {
+      "command": "back",
+      "status": "supported",
+      "semantics": "Navigate backward.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "back"
+        }
+      ]
+    },
+    {
+      "command": "forward",
+      "status": "supported",
+      "semantics": "Navigate forward.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "forward"
+        }
+      ]
+    },
+    {
+      "command": "reload",
+      "status": "supported",
+      "semantics": "Reload the current page.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "reload"
+        }
+      ]
+    },
+    {
+      "command": "pushstate",
+      "status": "supported",
+      "semantics": "Perform SPA history navigation.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "pushState"
+        }
+      ],
+      "notes": "Await Next.js router navigation or use history fallback with events; enforce navigation policy/origins and update URL flow. Real Chrome verifies both paths."
+    },
+    {
+      "command": "react",
+      "status": "supported",
+      "semantics": "Inspect React fibers, renders, or Suspense boundaries.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "getReact"
+        }
+      ],
+      "notes": "React DevTools Inline 8.0.0 with private React 19.3.0 runtime. Typed tree/inspection, render profiles and rich Suspense metadata; DOM renderer selection handles Flight-first registration. Bounded capture, serialized hook operations and cleanup verified with a real React 19.3 application."
+    },
+    {
+      "command": "vitals",
+      "status": "supported",
+      "semantics": "Collect Web Vitals and hydration metrics.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "webVitals"
+        }
+      ],
+      "notes": "Typed CWV metrics/ratings, LCP/CLS details and React profiling hydration/component timing. Bundled web-vitals 6.2.3; observer/listener cleanup verified in real Chrome. Missing observations remain null."
+    },
+    {
+      "command": "addinitscript",
+      "status": "partial",
+      "semantics": "Inject a script into the page.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "addInitScript"
+        }
+      ],
+      "notes": "Document-start registration and identifier-based removal use CDP, AndroidX WebKit or WKUserScript; Android support depends on the installed WebView feature."
+    },
+    {
+      "command": "removeinitscript",
+      "status": "partial",
+      "semantics": "Remove an agent-browser init-script registration by identifier.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "removeInitScript"
+        }
+      ],
+      "notes": "Document-start registration and identifier-based removal use CDP, AndroidX WebKit or WKUserScript; Android support depends on the installed WebView feature."
+    },
+    {
+      "command": "install",
+      "status": "unsupported",
+      "semantics": "Download Chrome for Testing."
+    },
+    {
+      "command": "upgrade",
+      "status": "unsupported",
+      "semantics": "Upgrade the agent-browser installation."
+    },
+    {
+      "command": "doctor",
+      "status": "unsupported",
+      "semantics": "Diagnose and repair the agent-browser installation."
+    },
+    {
+      "command": "skills",
+      "status": "unsupported",
+      "semantics": "Read the installed agent-browser skill registry."
+    },
+    {
+      "command": "mcp",
+      "status": "unsupported",
+      "semantics": "Start agent-browser's MCP stdio server."
+    },
+    {
+      "command": "chat",
+      "status": "unsupported",
+      "semantics": "Translate natural language into CLI actions through an AI gateway."
+    },
+    {
+      "command": "auth",
+      "status": "partial",
+      "semantics": "Save, load, list, delete, and use encrypted auth profiles.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.AuthManager",
+          "member": "save"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.AuthManager",
+          "member": "load"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "login"
+        }
+      ],
+      "notes": "Encrypted profile CRUD and portable login with usable-control selection, optional navigation and identity/origin/form-destination checks. Input events are synthetic; vault/plugin protocols are excluded."
+    },
+    {
+      "command": "state",
+      "status": "partial",
+      "semantics": "Save and restore cookies/local storage state.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "saveStateToFile"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "loadStateFromFile"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "autosaveState"
+        }
+      ],
+      "notes": "Explicit restore and page-owned periodic autosave, observable failures, authenticated encryption and atomic file replacement. Daemon summary/session protocols are excluded."
+    },
+    {
+      "command": "session",
+      "status": "partial",
+      "semantics": "Isolate or persist browser state across runs.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
+          "member": "getCdp"
+        }
+      ],
+      "notes": "Kmpwright configures browser instances but has no daemon session-id CLI."
+    },
+    {
+      "command": "profile",
+      "status": "partial",
+      "semantics": "Configure browser profile/state storage.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
+          "member": "getCdp"
+        }
+      ],
+      "notes": "Profile reuse is backend/platform dependent and not a public equivalent of Chrome profile discovery."
+    },
+    {
+      "command": "stream",
+      "status": "partial",
+      "semantics": "Stream the browser viewport over agent-browser's runtime WebSocket.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "screencast"
+        }
+      ],
+      "notes": "Cold CDP JPEG frame flow with independent capture sessions, latest-frame delivery, FPS/quality/size controls and cancellation cleanup. The caller supplies a display or transport; agent-browser dashboard/WebSocket server is excluded. Native WebViews explicitly report unsupported."
+    },
+    {
+      "command": "plugin",
+      "status": "unsupported",
+      "semantics": "Install, configure, or run agent-browser executable plugins."
+    },
+    {
+      "command": "a11y",
+      "status": "partial",
+      "semantics": "Run an axe-core accessibility audit (distinct from a snapshot).",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "accessibilityAudit"
+        }
+      ],
+      "notes": "Bundled axe-core 4.14.0 with bounded findings, tags, selector errors and preserved shadow/frame target paths. CDP audits merge isolated frame partials including OOPIFs; native WebViews report skipped child frames explicitly."
+    },
+    {
+      "command": "webmcp",
+      "status": "partial",
+      "semantics": "Discover, invoke, cancel, or retrieve experimental page-provided WebMCP tools.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "getWebMcp"
+        }
+      ],
+      "notes": "Typed WebMCP catalog/context and invocation/result/cancellation with upstream limits. Observes owned pages before navigation and routes OOPIF tools by session. Real Chrome verifies same-process and cross-process duplicate names and explicit frame invocation. Initial preconnected same-process child tool replay remains a protocol limitation; native WebViews report unavailable."
+    },
+    {
+      "command": "record",
+      "status": "partial",
+      "semantics": "Record browser video, cursor overlays, or contact sheets through ffmpeg.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "startRecording"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "stopRecording"
+        }
+      ],
+      "notes": "CDP/FFmpeg recording of the current page at fixed 1\u201360 FPS, clean contact sheets, trusted pointer observation, cursor composition, output preflight and bounded cleanup. Native WebViews cannot expose CDP screencasting."
+    }
+  ],
+  "globalOptions": [
+    {
+      "option": "--headed",
+      "status": "partial",
+      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
+          "member": "headless"
+        }
+      ]
+    },
+    {
+      "option": "--session",
+      "status": "partial",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
+          "member": "getCdp"
+        }
+      ],
+      "notes": "No equivalent daemon session identifier."
+    },
+    {
+      "option": "--state",
+      "status": "partial",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "loadStateFromFile"
+        }
+      ]
+    },
+    {
+      "option": "--headers",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setExtraHTTPHeaders"
+        }
+      ]
+    },
+    {
+      "option": "--executable-path",
+      "status": "partial",
+      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
+          "member": "executablePath"
+        }
+      ]
+    },
+    {
+      "option": "--extension",
+      "status": "partial",
+      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes. Unpacked extensions require a Chromium distribution that permits them.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
+          "member": "extensionDirectories"
+        }
+      ]
+    },
+    {
+      "option": "--init-script",
+      "status": "supported",
+      "notes": "Document-start registration on CDP, AndroidX WebKit and WKWebView; removal preserves host-owned scripts.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "addInitScript"
+        }
+      ]
+    },
+    {
+      "option": "--args",
+      "status": "partial",
+      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
+          "member": "arguments"
+        }
+      ]
+    },
+    {
+      "option": "--user-agent",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
+          "member": "getUserAgent"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setUserAgent"
+        }
+      ]
+    },
+    {
+      "option": "--proxy",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.ProxyConfig",
+          "member": "getUrl"
+        }
+      ]
+    },
+    {
+      "option": "--proxy-bypass",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.ProxyConfig",
+          "member": "getBypass"
+        }
+      ]
+    },
+    {
+      "option": "--cdp",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.CdpConfig",
+          "member": "getWebsocketUrl"
+        }
+      ]
+    },
+    {
+      "option": "--auto-connect",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.CdpConfig",
+          "member": "getProvider"
+        }
+      ],
+      "notes": "Use CloudProvider.AutoConnect in the typed provider field."
+    },
+    {
+      "option": "--provider",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.CdpConfig",
+          "member": "getProvider"
+        }
+      ]
+    },
+    {
+      "option": "--device",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "emulateDevice"
+        }
+      ]
+    },
+    {
+      "option": "--hide-scrollbars",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.CdpConfig",
+          "member": "getHideScrollbars"
+        }
+      ]
+    },
+    {
+      "option": "--ignore-https-errors",
+      "status": "partial",
+      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
+          "member": "ignoreHttpsErrors"
+        }
+      ]
+    },
+    {
+      "option": "--allow-file-access",
+      "status": "partial",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.DefaultWebSettings",
+          "member": "getAllowFileAccess"
+        }
+      ],
+      "notes": "Only platform WebView settings expose related controls."
+    },
+    {
+      "option": "--color-scheme",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "emulateColorScheme"
+        }
+      ]
+    },
+    {
+      "option": "--download-path",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setDownloadPath"
+        }
+      ]
+    },
+    {
+      "option": "--content-boundaries",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "boundedContent"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "boundedSnapshot"
+        }
+      ]
+    },
+    {
+      "option": "--max-output",
+      "status": "unsupported",
+      "notes": "No public output truncation policy API."
+    },
+    {
+      "option": "--allowed-domains",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setDomainFilter"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
+          "member": "getAllowedOriginRules"
+        }
+      ]
+    },
+    {
+      "option": "--action-policy",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setActionPolicy"
+        }
+      ]
+    },
+    {
+      "option": "--confirm-actions",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "setPolicyConfirmCallback"
+        }
+      ]
+    },
+    {
+      "option": "--engine",
+      "status": "partial",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.PageCapabilities",
+          "member": "getBackend"
+        }
+      ],
+      "notes": "Kmpwright selects a platform backend rather than agent-browser's chrome/lightpanda engine flag."
+    },
+    {
+      "option": "--no-auto-dialog",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "onDialog"
+        }
+      ]
+    },
+    {
+      "option": "--debug",
+      "status": "supported",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
+          "member": "getDebug"
+        }
+      ]
+    },
+    {
+      "option": "--json",
+      "status": "unsupported",
+      "notes": "Kmpwright APIs return typed values rather than CLI output formatting."
+    },
+    {
+      "option": "--webgpu",
+      "status": "partial",
+      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
+          "member": "webGpu"
+        }
+      ]
+    },
+    {
+      "option": "--no-webmcp",
+      "status": "partial",
+      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
+          "member": "webMcp"
+        }
+      ]
+    },
+    {
+      "option": "--profile",
+      "status": "partial",
+      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
+          "member": "profileSnapshot"
+        }
+      ]
+    },
+    {
+      "option": "--restore",
+      "status": "partial",
+      "notes": "Explicit Kotlin state restoration/autosave and wait APIs; callers compose guards rather than daemon session startup flags.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "loadStateFromFile"
+        }
+      ]
+    },
+    {
+      "option": "--restore-save",
+      "status": "partial",
+      "notes": "Explicit Kotlin state restoration/autosave and wait APIs; callers compose guards rather than daemon session startup flags.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "autosaveState"
+        }
+      ]
+    },
+    {
+      "option": "--restore-check-url",
+      "status": "partial",
+      "notes": "Explicit Kotlin state restoration/autosave and wait APIs; callers compose guards rather than daemon session startup flags.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "waitForFunction"
+        }
+      ]
+    },
+    {
+      "option": "--restore-check-text",
+      "status": "partial",
+      "notes": "Explicit Kotlin state restoration/autosave and wait APIs; callers compose guards rather than daemon session startup flags.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "waitForText"
+        }
+      ]
+    },
+    {
+      "option": "--restore-check-fn",
+      "status": "partial",
+      "notes": "Explicit Kotlin state restoration/autosave and wait APIs; callers compose guards rather than daemon session startup flags.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "waitForFunction"
+        }
+      ]
+    },
+    {
+      "option": "--annotate",
+      "status": "supported",
+      "notes": "Typed annotated screenshot API.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "annotatedScreenshot"
+        }
+      ]
+    },
+    {
+      "option": "--screenshot-quality",
+      "status": "partial",
+      "notes": "Typed screenshot options; encoding support depends on the backend capabilities.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.ScreenshotOptions",
+          "member": "quality"
+        }
+      ]
+    },
+    {
+      "option": "--screenshot-format",
+      "status": "partial",
+      "notes": "Typed screenshot options; encoding support depends on the backend capabilities.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.ScreenshotOptions",
+          "member": "format"
+        }
+      ]
+    },
+    {
+      "option": "--screenshot-dir",
+      "status": "partial",
+      "notes": "Screenshot bytes are returned to callers, who choose output paths; no process-global output directory.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "screenshot"
+        }
+      ]
+    },
+    {
+      "option": "--use-system-ca",
+      "status": "partial",
+      "notes": "JVM/Android readers can combine system and custom trust, or use only the explicit bundle. Darwin uses platform trust; Chromium uses its platform verification plus isolated Linux NSS imports.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.ReadOptions",
+          "member": "useSystemCa"
+        }
+      ]
+    },
+    {
+      "option": "--enable",
+      "status": "partial",
+      "notes": "Feature APIs and Chromium launch feature flags replace built-in CLI enable switches.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
+          "member": "webMcp"
+        }
+      ]
+    },
+    {
+      "option": "--namespace",
+      "status": "unsupported",
+      "notes": "Excluded CLI/daemon/chat/plugin lifecycle option; Kotlin callers own browser and page lifetimes."
+    },
+    {
+      "option": "--session-name",
+      "status": "unsupported",
+      "notes": "Excluded CLI/daemon/chat/plugin lifecycle option; Kotlin callers own browser and page lifetimes."
+    },
+    {
+      "option": "--pin-tab",
+      "status": "unsupported",
+      "notes": "Excluded CLI/daemon/chat/plugin lifecycle option; Kotlin callers own browser and page lifetimes."
+    },
+    {
+      "option": "--confirm-interactive",
+      "status": "unsupported",
+      "notes": "Excluded CLI/daemon/chat/plugin lifecycle option; Kotlin callers own browser and page lifetimes."
+    },
+    {
+      "option": "--idle-timeout",
+      "status": "unsupported",
+      "notes": "Excluded CLI/daemon/chat/plugin lifecycle option; Kotlin callers own browser and page lifetimes."
+    },
+    {
+      "option": "--model",
+      "status": "unsupported",
+      "notes": "Excluded CLI/daemon/chat/plugin lifecycle option; Kotlin callers own browser and page lifetimes."
+    },
+    {
+      "option": "--plugins",
+      "status": "unsupported",
+      "notes": "Excluded CLI/daemon/chat/plugin lifecycle option; Kotlin callers own browser and page lifetimes."
+    },
+    {
+      "option": "--ca-cert",
+      "status": "partial",
+      "notes": "Owned Linux Chromium uses a temporary NSS HOME and certutil; JVM/Android HTTP readers support per-instance PEM/DER trust. Darwin custom trust is explicitly unsupported. Real HTTPS tests verify private trust and hostname rejection; Linux NSS browser integration requires Linux validation.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
+          "member": "caCertificatePath"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.ReadOptions",
+          "member": "caCertificatePath"
+        }
+      ]
+    },
+    {
+      "option": "--clear-ca-cert",
+      "status": "partial",
+      "notes": "Closing the owned browser removes its isolated CA trust store; each HTTP read closes its per-instance client. There is no global CLI CA state to clear.",
+      "apiRefs": [
+        {
+          "owner": "com.bernaferrari.kmpwright.core.LaunchedBrowser",
+          "member": "closeAsync"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "script": "scripts/verify-agent-browser-compatibility.sh",
+    "jvmTest": "com.bernaferrari.kmpwright.core.AgentBrowserCompatibilityTest",
+    "boundaryOnly": true,
+    "upstreamInternalsRequired": false
+  }
+}

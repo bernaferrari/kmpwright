@@ -1,0 +1,5 @@
+# Preserve the generated Windows wrapper line endings.
+gradlew.bat text eol=crlf whitespace=cr-at-eol
+
+# Preserve third-party notice text verbatim, including upstream whitespace.
+docs/licenses/*-THIRD-PARTY.txt whitespace=-blank-at-eof,-blank-at-eol

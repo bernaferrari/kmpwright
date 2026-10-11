@@ -1,0 +1,75 @@
+name: ci
+
+on:
+  push:
+    # Keep CI reachable while the repository transitions from master to main.
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4.0.4
+      - name: Verify repository metadata and documentation
+        run: |
+          ./scripts/verify-agent-browser-compatibility.sh
+          ./scripts/verify-documentation.sh
+      - name: Install video encoder for browser contracts
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libnss3-tools
+      - name: Build Android
+        run: |
+          export KMPWRIGHT_TEST_CHROME="$(command -v google-chrome || command -v chromium)"
+          test -n "$KMPWRIGHT_TEST_CHROME"
+          ./scripts/build-react-fixture.sh
+          export KMPWRIGHT_TEST_REACT_BUNDLE="$PWD/.upstream/react-fixture/app.bundle.js"
+          ./scripts/ci-build.sh
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Build iOS
+        run: ./gradlew :kmpwright-core:linkReleaseFrameworkIosSim :kmpwright-example-shared:linkReleaseFrameworkIosSim
+      - name: Run iOS simulator backend contracts
+        run: ./gradlew :kmpwright-core:iosSimTest --no-daemon
+      - name: Verify XCFramework and Swift consumer
+        run: ./scripts/verify-ios-xcframework.sh
+
+  release-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4.0.4
+      - name: Verify local publications and independent consumers
+        run: ./scripts/verify-publication.sh
+
+  android-instrumentation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4.0.4
+      - uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 35
+          arch: x86_64
+          script: ./gradlew :kmpwright-test:connectedDebugAndroidTest --no-daemon

@@ -1,0 +1,60 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B10000000000000000000001 /* KmpwrightSmoke.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* KmpwrightSmoke.swift */; };
+		B10000000000000000000003 /* KmpwrightCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* KmpwrightCore.xcframework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		B10000000000000000000005 /* KmpwrightSmoke.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KmpwrightSmoke.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000002 /* KmpwrightSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KmpwrightSmoke.swift; sourceTree = SOURCE_ROOT; };
+		B10000000000000000000004 /* KmpwrightCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KmpwrightCore.xcframework; path = KmpwrightCore.xcframework; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B10000000000000000000006 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (B10000000000000000000003 /* KmpwrightCore.xcframework in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		B10000000000000000000007 = {isa = PBXGroup; children = (B10000000000000000000008 /* KmpwrightSmoke */, B10000000000000000000009 /* Products */, B1000000000000000000000A /* Frameworks */); sourceTree = "<group>"; };
+		B10000000000000000000008 /* KmpwrightSmoke */ = {isa = PBXGroup; children = (B10000000000000000000002 /* KmpwrightSmoke.swift */,); path = .; sourceTree = SOURCE_ROOT; };
+		B10000000000000000000009 /* Products */ = {isa = PBXGroup; children = (B10000000000000000000005 /* KmpwrightSmoke.app */,); name = Products; sourceTree = "<group>"; };
+		B1000000000000000000000A /* Frameworks */ = {isa = PBXGroup; children = (B10000000000000000000004 /* KmpwrightCore.xcframework */,); name = Frameworks; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B1000000000000000000000B /* KmpwrightSmoke */ = {isa = PBXNativeTarget; buildConfigurationList = B1000000000000000000000E /* Build configuration list for target */; buildPhases = (B1000000000000000000000C /* Sources */, B10000000000000000000006 /* Frameworks */, B1000000000000000000000D /* Resources */); buildRules = (); dependencies = (); name = KmpwrightSmoke; productName = KmpwrightSmoke; productReference = B10000000000000000000005 /* KmpwrightSmoke.app */; productType = "com.apple.product-type.application"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B1000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600;}; buildConfigurationList = B10000000000000000000010 /* Build configuration list for project */; compatibilityVersion = "Xcode 15.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = B10000000000000000000007; productRefGroup = B10000000000000000000009; projectDirPath = ""; projectRoot = ""; targets = (B1000000000000000000000B /* KmpwrightSmoke */,); };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B1000000000000000000000D /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B1000000000000000000000C /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B10000000000000000000001 /* KmpwrightSmoke.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B10000000000000000000011 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; INFOPLIST_FILE = Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = io.github.bernaferrari.kmpwright.smoke; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug; };
+		B10000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CODE_SIGNING_ALLOWED = NO; INFOPLIST_FILE = Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = io.github.bernaferrari.kmpwright.smoke; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release; };
+		B10000000000000000000013 /* Project Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; IPHONEOS_DEPLOYMENT_TARGET = 15.0;}; name = Release; };
+		B10000000000000000000014 /* Project Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; IPHONEOS_DEPLOYMENT_TARGET = 15.0;}; name = Debug; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B10000000000000000000010 /* Build configuration list for project */ = {isa = XCConfigurationList; buildConfigurations = (B10000000000000000000014 /* Project Debug */, B10000000000000000000013 /* Project Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		B1000000000000000000000E /* Build configuration list for target */ = {isa = XCConfigurationList; buildConfigurations = (B10000000000000000000011 /* Debug */, B10000000000000000000012 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = B1000000000000000000000F /* Project object */;
+}

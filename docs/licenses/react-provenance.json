@@ -1,0 +1,9 @@
+{
+  "name": "react",
+  "version": "19.3.0",
+  "repository": "https://github.com/react/react",
+  "license": "MIT",
+  "registryIntegrity": "sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog==",
+  "bundle": "cjs/react.development.js",
+  "sha256": "97bef56f30daa05320514ea220d7d03eb765635519ff2d5650c4887772aa5767"
+}

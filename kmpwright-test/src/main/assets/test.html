@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        h1 { color: #333; }
+        #test-input {
+            padding: 10px;
+            font-size: 16px;
+            margin: 10px 0;
+            display: block;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover { background: #0056b3; }
+        .delayed-element {
+            opacity: 0;
+            transition: opacity 1s ease-in;
+        }
+        .delayed-element.visible { opacity: 1; }
+        #output { margin-top: 20px; padding: 10px; background: #f0f0f0; }
+    </style>
+</head>
+<body>
+    <h1>Kmpwright Test Page</h1>
+    <p>This page is used for automated testing.</p>
+    
+    <div id="test-section">
+        <h2>Form Tests</h2>
+        <input type="text" id="test-input" placeholder="Type something here" />
+        <button id="test-button">Click Me</button>
+        <div id="output">Button not clicked yet</div>
+    </div>
+    
+    <div class="delayed-element" id="delayed-element">
+        <h2>Delayed Element</h2>
+        <p>This element appears after 2 seconds.</p>
+    </div>
+    
+    <script>
+        console.log('[Test Page] Loaded');
+        
+        // Make delayed element visible after 2 seconds
+        setTimeout(function() {
+            document.getElementById('delayed-element').classList.add('visible');
+            console.log('[Test Page] Delayed element now visible');
+        }, 2000);
+        
+        // Button click handler
+        document.getElementById('test-button').addEventListener('click', function() {
+            document.getElementById('output').textContent = 'Clicked!';
+            console.log('[Test Page] Button clicked');
+        });
+        
+        // Network request for testing
+        fetch('/test-api/data.json')
+            .then(response => response.json())
+            .then(data => console.log('[Test Page] Network request completed', data))
+            .catch(error => console.log('[Test Page] Network error', error));
+    </script>
+</body>
+</html>

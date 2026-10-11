@@ -1,0 +1,9 @@
+{
+  "name": "web-vitals",
+  "version": "6.2.3",
+  "repository": "https://github.com/GoogleChrome/web-vitals",
+  "license": "Apache-2.0",
+  "registryIntegrity": "sha512-Dmy+vdO1UPMqXiAtZSNayhl4f794Bxfd94W4HIj2HlYtczEQfEOon969memlcpcHrTuOKLa5baFjX7WbgmOq+A==",
+  "bundle": "dist/web-vitals.iife.js",
+  "sha256": "1e5e9b9af6b8d71cfef508e5a869c53b4cf2bbccad8c9b5ac664c34e93f6151a"
+}

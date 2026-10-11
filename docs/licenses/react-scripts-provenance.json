@@ -1,0 +1,14 @@
+{
+  "source": "https://raw.githubusercontent.com/vercel-labs/agent-browser/d9570915f4dd6504dee4070379d2c4f79d81dbb2/cli/src/native/react/scripts.rs",
+  "commit": "d9570915f4dd6504dee4070379d2c4f79d81dbb2",
+  "sha256": "a685afe10bdf01d84d47aa137b582be082b2dfec5f7670daf439563657b8c55d",
+  "adaptations": [
+    "Kotlin API errors and private names",
+    "bounded operation capture",
+    "constant-memory FPS statistics",
+    "weak instance tracking",
+    "iterative bounded fiber traversal",
+    "hook restoration after flush failure",
+    "conditional hook ownership restoration and inactive capture tokens"
+  ]
+}

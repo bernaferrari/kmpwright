@@ -1,0 +1,93 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    # XCFramework packaging and the iOS artifact smoke consumer require Xcode.
+    runs-on: macos-latest
+    timeout-minutes: 45
+    environment: maven-central
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4.0.4
+      - name: Verify release version propagation contract
+        run: ./scripts/test-release-version-propagation.sh
+      - name: Validate release tag and credentials
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_SIGNING_IN_MEMORY_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_SIGNING_IN_MEMORY_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_SIGNING_IN_MEMORY_KEY_PASSWORD }}
+        run: |
+          ./scripts/validate-release-tag.sh "$GITHUB_REF_NAME"
+          for variable in \
+            ORG_GRADLE_PROJECT_mavenCentralUsername \
+            ORG_GRADLE_PROJECT_mavenCentralPassword \
+            ORG_GRADLE_PROJECT_signingInMemoryKey \
+            ORG_GRADLE_PROJECT_signingInMemoryKeyPassword; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "Missing required release secret: $variable" >&2
+              exit 1
+            fi
+          done
+      - name: Verify local Maven publications and independent consumers
+        run: ./scripts/verify-publication.sh
+      - name: Package and verify XCFramework and Swift artifact consumer
+        run: ./scripts/verify-ios-xcframework.sh
+      - name: Publish all signed KMP publications to Maven Central
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_SIGNING_IN_MEMORY_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.MAVEN_SIGNING_IN_MEMORY_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_SIGNING_IN_MEMORY_KEY_PASSWORD }}
+        run: ./scripts/publish-central-idempotent.sh
+      - name: Create or update GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset_dir="build/release-assets"
+          zip_asset="$asset_dir/KmpwrightCore-$RELEASE_VERSION.xcframework.zip"
+          checksum_asset="$zip_asset.sha256"
+          [[ -f "$zip_asset" && -f "$checksum_asset" ]] || {
+            echo "XCFramework release assets are missing" >&2
+            exit 1
+          }
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" "$zip_asset" "$checksum_asset" \
+              --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          else
+            download_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/kmpwright-release-assets.XXXXXX")"
+            trap 'rm -rf "$download_dir"' EXIT
+            release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq '.id')"
+            for asset in "$zip_asset" "$checksum_asset"; do
+              asset_name="$(basename "$asset")"
+              existing_id="$(gh api --paginate \
+                "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+                --jq ".[] | select(.name == \"$asset_name\") | .id" | head -n 1)"
+              if [[ -n "$existing_id" ]]; then
+                downloaded="$download_dir/$asset_name"
+                gh api --header 'Accept: application/octet-stream' \
+                  "repos/$GITHUB_REPOSITORY/releases/assets/$existing_id" > "$downloaded"
+                if cmp -s "$asset" "$downloaded"; then
+                  echo "GitHub Release asset already matches: $asset_name"
+                else
+                  echo "GitHub Release asset differs from the local build: $asset_name" >&2
+                  exit 1
+                fi
+              else
+                gh release upload "$GITHUB_REF_NAME" "$asset"
+              fi
+            done
+          fi

@@ -1,0 +1,35 @@
+{
+  "jvmTest": {
+    "tests": 859,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "iosSimTest": {
+    "tests": 39,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "androidInstrumentation": {
+    "tests": 55,
+    "failures": 0,
+    "seconds": 70.313,
+    "activityLifecycle": "one activity per class, fresh WebView per test"
+  },
+  "upstreamCommit": "d9570915f4dd6504dee4070379d2c4f79d81dbb2",
+  "date": "2026-10-11",
+  "releaseChecks": {
+    "xcframeworkArm64DeviceAndSimulator": true,
+    "artifactOnlySwiftConsumer": true,
+    "localMavenPublication": true,
+    "independentKotlinAndAndroidConsumers": true,
+    "releaseVersionPropagation": true,
+    "sharedIosExampleFramework": true
+  },
+  "runtimeVerificationLimits": [
+    "Darwin app-host document integration",
+    "Linux Chromium NSS private-CA trust (wired into CI)",
+    "Host-dependent WebGPU adapter availability"
+  ]
+}
