@@ -2,7 +2,8 @@ package com.bernaferrari.kmpwright.core
 
 internal fun buildWebKitNetworkInterceptionScript(
     messageHandlerName: String = "kmpwright",
-    bridgeNonce: String? = null
+    bridgeNonce: String? = null,
+    bridgeTimeoutMs: Long = 10_000
 ): String {
     val jsHandlerName = jsStringLiteral(messageHandlerName)
     val jsBridgeNonce = jsStringLiteral(bridgeNonce ?: "")
@@ -18,6 +19,7 @@ internal fun buildWebKitNetworkInterceptionScript(
             var originalXHROpen = window.XMLHttpRequest && window.XMLHttpRequest.prototype.open;
             var originalXHRSend = window.XMLHttpRequest && window.XMLHttpRequest.prototype.send;
             var originalXHRSetRequestHeader = window.XMLHttpRequest && window.XMLHttpRequest.prototype.setRequestHeader;
+            var originalXHRGetResponseHeader = window.XMLHttpRequest && window.XMLHttpRequest.prototype.getResponseHeader;
             var originalXHRGetAllResponseHeaders = window.XMLHttpRequest && window.XMLHttpRequest.prototype.getAllResponseHeaders;
 
             function nextRequestId(prefix) {
@@ -29,9 +31,39 @@ internal fun buildWebKitNetworkInterceptionScript(
                 try {
                     payload.nonce = bridgeNonce;
                     var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers[handlerName];
-                    if (!bridge) return;
+                    if (!bridge) return false;
                     bridge.postMessage(JSON.stringify(payload));
-                } catch (e) {}
+                    return true;
+                } catch (e) { return false; }
+            }
+
+            function finishPending(id) {
+                var entry = pending[id];
+                if (!entry) return null;
+                delete pending[id];
+                clearTimeout(entry.timer);
+                if (entry.signal && entry.onAbort) entry.signal.removeEventListener('abort', entry.onAbort);
+                return entry;
+            }
+
+            function failPending(id, error) {
+                var entry = finishPending(id);
+                if (!entry) return;
+                if (entry.kind === 'fetch') entry.reject(error);
+                else abortXhr(entry);
+                postToNative({ type: 'requestFailed', id: id, url: entry.url || entry.meta.url, error: error.message });
+            }
+
+            function armPending(entry) {
+                pending[entry.id] = entry;
+                entry.timer = setTimeout(function() {
+                    failPending(entry.id, new Error('KMPwright network bridge timed out'));
+                }, $bridgeTimeoutMs);
+                if (entry.signal) {
+                    entry.onAbort = function() { failPending(entry.id, entry.signal.reason || new DOMException('Aborted', 'AbortError')); };
+                    entry.signal.addEventListener('abort', entry.onAbort, { once: true });
+                    if (entry.signal.aborted) entry.onAbort();
+                }
             }
 
             function bytesFromBase64(base64Value) {
@@ -292,22 +324,33 @@ internal fun buildWebKitNetworkInterceptionScript(
             }
 
             window.__kmpwrightNetworkRespond = function(msg) {
-                var pendingEntry = pending[msg.id];
+                var pendingEntry = finishPending(msg.id);
                 if (!pendingEntry) return;
-                delete pending[msg.id];
 
                 if (pendingEntry.kind === 'fetch') {
                     if (msg.action === 'continue') {
-                        var nextInput = msg.url || pendingEntry.input;
+                        var nextInput = !msg.url || msg.url === pendingEntry.url ? pendingEntry.input : msg.url;
                         var nextInit = Object.assign({}, pendingEntry.init || {});
+                        if (nextInput !== pendingEntry.input) {
+                            var original = pendingEntry.input;
+                            nextInit.method = original.method;
+                            nextInit.headers = original.headers;
+                            nextInit.body = original.body;
+                            nextInit.credentials = original.credentials;
+                            nextInit.mode = original.mode;
+                            nextInit.redirect = original.redirect;
+                            nextInit.signal = original.signal;
+                            nextInit.duplex = 'half';
+                        }
                         if (msg.method) nextInit.method = msg.method;
                         if (msg.headers) nextInit.headers = msg.headers;
                         if (Object.prototype.hasOwnProperty.call(msg, 'body')) {
                             nextInit.body = msg.body;
                         }
-                        observeFetchNetworkResult(msg.id, originalFetch(nextInput, nextInit))
-                            .then(pendingEntry.resolve)
-                            .catch(pendingEntry.reject);
+                        try {
+                            observeFetchNetworkResult(msg.id, originalFetch(nextInput, nextInit))
+                                .then(pendingEntry.resolve).catch(pendingEntry.reject);
+                        } catch (error) { pendingEntry.reject(error); }
                         return;
                     }
                     if (msg.action === 'abort') {
@@ -335,11 +378,11 @@ internal fun buildWebKitNetworkInterceptionScript(
                             statusText: msg.statusText || 'OK',
                             headers: headersToObject(headers)
                         });
-                        if (bytes) {
-                            pendingEntry.resolve(new Response(bytes, { status: msg.status || 200, statusText: msg.statusText || 'OK', headers: headers }));
-                            return;
-                        }
-                        pendingEntry.resolve(new Response(body, { status: msg.status || 200, statusText: msg.statusText || 'OK', headers: headers }));
+                        try {
+                            var status = msg.status || 200;
+                            var responseBody = [204, 205, 304].indexOf(status) !== -1 ? null : (bytes || body);
+                            pendingEntry.resolve(new Response(responseBody, { status: status, statusText: msg.statusText || 'OK', headers: headers }));
+                        } catch (error) { pendingEntry.reject(error); }
                         return;
                     }
                     observeFetchNetworkResult(msg.id, originalFetch(pendingEntry.input, pendingEntry.init))
@@ -365,22 +408,42 @@ internal fun buildWebKitNetworkInterceptionScript(
                 }
             };
 
+            window.__kmpwrightNetworkDispose = function() {
+                Object.keys(pending).forEach(function(id) { failPending(id, new Error('KMPwright network bridge detached')); });
+                if (originalFetch) window.fetch = originalFetch;
+                if (window.XMLHttpRequest) {
+                    var prototype = window.XMLHttpRequest.prototype;
+                    if (originalXHROpen) prototype.open = originalXHROpen;
+                    if (originalXHRSend) prototype.send = originalXHRSend;
+                    if (originalXHRSetRequestHeader) prototype.setRequestHeader = originalXHRSetRequestHeader;
+                    if (originalXHRGetAllResponseHeaders) prototype.getAllResponseHeaders = originalXHRGetAllResponseHeaders;
+                    if (originalXHRGetResponseHeader) prototype.getResponseHeader = originalXHRGetResponseHeader;
+                }
+                delete window.__kmpwright_network_installed;
+                delete window.__kmpwrightNetworkRespond;
+                delete window.__kmpwrightNetworkDispose;
+            };
+
             if (originalFetch) {
                 window.fetch = function(input, init) {
+                    var request;
+                    try { request = new Request(input, init); }
+                    catch (error) { return Promise.reject(error); }
                     var id = nextRequestId('fetch');
-                    var url = (typeof input === 'string') ? input : (input && input.url) || '';
-                    var method = (init && init.method) || (input && input.method) || 'GET';
-                    var headers = {};
-                    try {
-                        var h = (init && init.headers) || (input && input.headers);
-                        if (h && h.forEach) {
-                            h.forEach(function(v, k) { headers[k] = v; });
-                        }
-                    } catch (e) {}
-                    var body = (init && init.body) || null;
+                    var url = request.url;
+                    var headers = headersToObject(request.headers);
                     return new Promise(function(resolve, reject) {
-                        pending[id] = { kind: 'fetch', id: id, resolve: resolve, reject: reject, input: input, init: init, url: url };
-                        postToNative({ type: 'fetch', id: id, url: url, method: method, headers: headers, body: body });
+                        armPending({ kind: 'fetch', id: id, resolve: resolve, reject: reject,
+                            input: request, init: undefined, url: url, signal: request.signal });
+                        // Read a clone so fallthrough preserves the native body bytes,
+                        // multipart boundaries and Request semantics.
+                        request.clone().text().then(function(body) {
+                            if (!pending[id]) return;
+                            if (!postToNative({ type: 'fetch', id: id, url: url, method: request.method,
+                                    headers: headers, body: request.body == null ? null : body })) {
+                                failPending(id, new Error('KMPwright network bridge is unavailable'));
+                            }
+                        }).catch(function(error) { failPending(id, error); });
                     });
                 };
             }
@@ -410,22 +473,22 @@ internal fun buildWebKitNetworkInterceptionScript(
                         return originalXHRSend.apply(this, arguments);
                     }
                     var id = nextRequestId('xhr');
-                    pending[id] = {
+                    armPending({
                         kind: 'xhr',
                         id: id,
                         xhr: this,
                         meta: this.__kmpwrightMeta,
                         body: body
-                    };
+                    });
                     dispatchXhrEvent(this, 'loadstart');
-                    postToNative({
+                    if (!postToNative({
                         type: 'xhr',
                         id: id,
                         url: this.__kmpwrightMeta.url || '',
                         method: this.__kmpwrightMeta.method || 'GET',
                         headers: this.__kmpwrightMeta.headers || {},
-                        body: body == null ? null : String(body)
-                    });
+                        body: typeof body === 'string' ? body : null
+                    })) failPending(id, new Error('KMPwright network bridge is unavailable'));
                 };
 
                 window.XMLHttpRequest.prototype.getAllResponseHeaders = function() {

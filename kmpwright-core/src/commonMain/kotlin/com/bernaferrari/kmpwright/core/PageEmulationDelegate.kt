@@ -111,17 +111,17 @@ internal class PageEmulationDelegate(
     }
 
     suspend fun setUserAgent(userAgent: String) {
-        controller.setUserAgent(userAgent)
+        controller.setUserAgentAsync(userAgent)
     }
 
     suspend fun emulateDevice(device: DeviceDescriptor) {
-        controller.setViewportSize(device.viewport.width, device.viewport.height)
-        controller.setUserAgent(device.userAgent)
-        controller.setDeviceScaleFactor(device.viewport.deviceScaleFactor)
+        controller.setViewportSizeAsync(device.viewport.width, device.viewport.height)
+        controller.setUserAgentAsync(device.userAgent)
+        controller.setDeviceScaleFactorAsync(device.viewport.deviceScaleFactor)
     }
 
     suspend fun setViewportSize(width: Int, height: Int) {
-        controller.setViewportSize(width, height)
+        controller.setViewportSizeAsync(width, height)
     }
 
     fun viewportSize(): Pair<Int, Int> {
@@ -129,6 +129,6 @@ internal class PageEmulationDelegate(
     }
 
     suspend fun setDeviceScaleFactor(scale: Double) {
-        controller.setDeviceScaleFactor(scale)
+        controller.setDeviceScaleFactorAsync(scale)
     }
 }

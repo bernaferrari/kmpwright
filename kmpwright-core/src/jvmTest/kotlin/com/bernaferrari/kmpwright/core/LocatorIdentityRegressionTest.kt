@@ -1,0 +1,181 @@
+package com.bernaferrari.kmpwright.core
+
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CoroutineStart
+import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
+import org.junit.Test
+
+/** Checks element identity in Chromium, rather than inspecting generated scripts. */
+class LocatorIdentityRegressionTest {
+    @Test fun `query stages preserve identity for reads waits assertions and descendants`() = runBlocking {
+        val chrome = System.getenv("KMPWRIGHT_TEST_CHROME")
+        assumeTrue("Set KMPWRIGHT_TEST_CHROME to execute browser contracts", !chrome.isNullOrBlank())
+        val launched = launchBrowser(BrowserLaunchOptions(chrome!!))
+        try {
+            val page = launched.browser.newPageAsync()
+            page.setContent("""
+                <div class="row"><span>First</span><button id="first">Go first</button></div>
+                <div class="row"><span>Second</span><button id="second">Go second</button></div>
+                <div><span id="nested">Unique text</span></div>
+            """.trimIndent())
+            val rows = page.locator(".row")
+            assertEquals(1, rows.filter(FilterOptions(hasText = "Second")).count())
+            assertEquals(1, rows.filter(FilterOptions(hasNotText = "First")).count())
+            assertEquals(1, rows.filter(FilterOptions(has = "#second")).count())
+            assertEquals(1, rows.filter(FilterOptions(hasNot = "#second")).count())
+            assertEquals("second", rows.nth(1).locator("button").getAttribute("id"))
+            assertEquals("second", rows.filter(FilterOptions(hasText = "Second")).first().locator("button").getAttribute("id"))
+            assertTrue(rows.nth(1).boundingBox()!!.y > rows.first().boundingBox()!!.y)
+            try {
+                rows.nth(99).waitFor(SelectorState.Attached, 100)
+                fail("An out-of-range index must not satisfy Attached")
+            } catch (_: KmpwrightException) { }
+            try {
+                rows.nth(1).expect().toHaveText(rows.first().innerText(), 100)
+                fail("An assertion must not inspect another row")
+            } catch (_: KmpwrightException) { }
+            rows.nth(1).expect().toContainText("Second", 1_000)
+            assertEquals("nested", page.locator("text=Unique text").getAttribute("id"))
+            val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+            server.createContext("/") { exchange ->
+                val html = if (exchange.requestURI.path == "/next") "<title>Next document</title><h1 id=next>Arrived</h1>"
+                    else "<a href='/next'>Follow</a>"
+                val body = html.toByteArray()
+                exchange.responseHeaders.add("Content-Type", "text/html")
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            server.start()
+            try {
+                val base = "http://127.0.0.1:${server.address.port}"
+                assertTrue(page.goto(base).ok)
+                val navigation = async(start = CoroutineStart.UNDISPATCHED) { page.waitForNavigation(WaitForNavigationOptions(timeoutMs = 2_000)) }
+                page.locator("a").click()
+                assertEquals("$base/next", navigation.await()!!.url)
+                assertEquals("$base/next", page.url.value)
+                assertEquals("Next document", page.title.value)
+                assertEquals("Arrived", page.locator("h1").innerText())
+                page.setLocalStorage("quoted'key", "value")
+                page.setSessionStorage("session", "value")
+                assertEquals("value", page.getLocalStorage("quoted'key"))
+                assertEquals("value", page.getSessionStorage("session"))
+                val expiry = (System.currentTimeMillis() / 1000 + 3600).toDouble()
+                page.setCookie(Cookie("persistent", "saved", "127.0.0.1", expires = expiry, httpOnly = true))
+                page.setCookie(Cookie("session", "saved", "127.0.0.1"))
+                assertEquals("saved", page.getCookie("persistent")!!.value)
+                page.saveState("roundtrip")
+                page.deleteAllCookies()
+                page.clearLocalStorage()
+                assertTrue(page.loadState("roundtrip"))
+                val restored = page.getCookie("persistent")!!
+                assertEquals(expiry, restored.expires!!, 1.0)
+                assertTrue(restored.httpOnly)
+                assertNull(page.getCookie("session")!!.expires)
+                assertEquals("value", page.getLocalStorage("quoted'key"))
+                page.clearLocalStorage()
+                page.clearSessionStorage()
+                page.saveState("empty")
+                page.setLocalStorage("later", "data")
+                page.setSessionStorage("later", "data")
+                page.loadState("empty")
+                assertTrue(page.getAllLocalStorage().isEmpty())
+                assertTrue(page.getAllSessionStorage().isEmpty())
+                val context = launched.browser.newContext()
+                try {
+                    val isolated = context.newPageAsync()
+                    assertTrue(isolated.goto(base, GotoOptions(timeoutMs = 2_000)).ok)
+                    assertNull(isolated.getCookie("persistent"))
+                } finally { context.closeAsync() }
+                page.setViewportSize(320, 240)
+                page.setUserAgent("KMPwright-contract")
+                assertEquals("KMPwright-contract", page.evaluate("navigator.userAgent").value)
+                val jpeg = page.screenshot(ScreenshotOptions(format = ScreenshotFormat.JPEG, quality = 70, scale = 0.5))
+                assertEquals(160, jpeg.width)
+                assertEquals(120, jpeg.height)
+                assertEquals(0xff, jpeg.bytes[0].toInt() and 0xff)
+                assertEquals(0xd8, jpeg.bytes[1].toInt() and 0xff)
+                val transparent = page.screenshot(ScreenshotOptions(omitBackground = true))
+                val decoded = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(transparent.bytes))
+                assertEquals(0, decoded.getRGB(0, 0).ushr(24))
+                val oldLocator = page.locator("h1")
+                page.setActionPolicy(ActionPolicy(deniedActions = setOf(ActionType.Click)))
+                val denied = runCatching { oldLocator.click() }.exceptionOrNull()
+                assertTrue("Existing locators must consult the current policy", denied is KmpwrightException)
+                val styleId = "style'id"
+                assertEquals(styleId, page.addStyleTag(StyleTagOptions(content = "body { color: black }", id = styleId)))
+                assertEquals(styleId, page.evaluate("document.querySelector('style').id").value)
+                verifyWebKitNetworkShim(page, base)
+                verifyIndependentLeases(launched.browser, base)
+            } finally { server.stop(0) }
+        } finally { launched.closeAsync() }
+    }
+    private suspend fun verifyIndependentLeases(browser: Browser, base: String) {
+        val farm = BrowserFarm(listOf(browserFarmSlot("fixture", connect = { browser }, close = {})))
+        try {
+            val first = farm.acquire()
+            val firstPage = first.resource.newPageAsync()
+            assertTrue(firstPage.goto(base).ok)
+            firstPage.setCookie(Cookie("borrower", "private", "127.0.0.1"))
+            firstPage.setLocalStorage("borrower", "private")
+            firstPage.saveState("private")
+            firstPage.addInitScript("window.borrower = 'private'")
+            first.resource.newContext().newPageAsync().goto(base)
+            first.release()
+            val second = farm.acquire()
+            try {
+                val page = second.resource.newPageAsync()
+                assertTrue(page.goto(base).ok)
+                assertTrue(page.stateNames().isEmpty())
+                assertFalse(page.loadState("private"))
+                assertNull(page.getCookie("borrower"))
+                assertNull(page.getLocalStorage("borrower"))
+                assertEquals("undefined", page.evaluate("typeof window.borrower").value)
+            } finally { second.release() }
+        } finally { farm.close() }
+    }
+
+    /** Executes the shipped WebKit shim in a JS engine with a recording native channel. */
+    private suspend fun verifyWebKitNetworkShim(page: Page, base: String) {
+        val result = page.evaluate("""
+            (async function() {
+                var seen = [];
+                window.fetch = async function(input, init) {
+                    var request = new Request(input, init);
+                    var bytes = new Uint8Array(await request.arrayBuffer());
+                    return new Response(Array.from(bytes).join(','));
+                };
+                window.webkit = { messageHandlers: { probe: { postMessage: function(raw) {
+                    var msg = JSON.parse(raw);
+                    if (msg.type !== 'fetch') return;
+                    seen.push(msg);
+                    if (msg.url.endsWith('/timeout')) return;
+                    window.__kmpwrightNetworkRespond(msg.url.endsWith('/no-content')
+                        ? { id: msg.id, action: 'fulfill', status: 204, body: 'ignored' }
+                        : { id: msg.id, action: 'continue' });
+                } } } };
+                ${buildWebKitNetworkInterceptionScript("probe", "nonce", bridgeTimeoutMs = 100)}
+                var urlResponse = await fetch(new URL('$base/url'));
+                if (seen[0].url !== '$base/url') throw Error('URL object lost');
+                var form = new FormData(); form.append('name', 'Kotlin');
+                await fetch('$base/form', { method: 'POST', body: form });
+                if (seen[1].body.indexOf('Kotlin') === -1) throw Error('FormData lost');
+                var binary = await fetch('$base/binary', { method: 'POST', body: new Uint8Array([0, 128, 255]) });
+                if (await binary.text() !== '0,128,255') throw Error('Binary body changed');
+                var empty = await fetch('$base/no-content');
+                if (empty.status !== 204 || await empty.text() !== '') throw Error('204 failed');
+                var timedOut = false;
+                try { await fetch('$base/timeout'); } catch (e) { timedOut = e.message.indexOf('timed out') !== -1; }
+                if (!timedOut) throw Error('Rejected bridge message stranded fetch');
+                var aborted = new AbortController(); aborted.abort();
+                var cancelled = false;
+                try { await fetch('$base/abort', { signal: aborted.signal }); } catch (e) { cancelled = e.name === 'AbortError'; }
+                if (!cancelled) throw Error('Abort signal ignored');
+                return 'passed';
+            })()
+        """.trimIndent())
+        assertEquals("passed", result.value)
+    }
+
+}

@@ -24,7 +24,7 @@ else
     :kmpwright-core:publishAndroidPublicationToLocalTestRepository
     :kmpwright-core:publishJvmPublicationToLocalTestRepository
     :kmpwright-core:publishKotlinMultiplatformPublicationToLocalTestRepository
-    :kmpwright-compose:publishReleasePublicationToLocalTestRepository
+    :kmpwright-compose:publishAllPublicationsToLocalTestRepository
   )
 fi
 "$ROOT_DIR/gradlew" "${PUBLISH_TASKS[@]}" \

@@ -39,7 +39,7 @@ internal class PageStateDelegate(
         val sessionState = SessionState(
             name = name,
             url = currentPageUrl() ?: "",
-            cookies = cookies.map { SessionCookie(it.name, it.value, it.domain, it.path, it.expires, it.secure, it.httpOnly, it.sameSite) },
+            cookies = cookies.map { SessionCookie(it.name, it.value, it.domain, it.path, it.expires, it.secure, it.httpOnly, it.sameSite, it.hostOnly) },
             localStorage = localStorage,
             sessionStorage = sessionStorage
         )
@@ -67,7 +67,7 @@ internal class PageStateDelegate(
         val state = SessionManager.deserialize(json) ?: return false
         restoreState(
             state.url,
-            state.cookies.map { Cookie(it.name, it.value, it.domain, it.path, it.expires, it.secure, it.httpOnly, it.sameSite) },
+            state.cookies.map { Cookie(it.name, it.value, it.domain, it.path, it.expires, it.secure, it.httpOnly, it.sameSite, it.hostOnly) },
             state.localStorage,
             state.sessionStorage
         )

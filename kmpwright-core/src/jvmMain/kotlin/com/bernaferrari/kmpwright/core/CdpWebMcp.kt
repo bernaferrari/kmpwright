@@ -326,6 +326,10 @@ internal class CdpWebMcp(private val transport: CdpEventTransport, private val s
         }
     }
 
+    internal fun ownsFrame(frameId: String): Boolean = synchronized(lock) {
+        frameId in origins || frameId in childFrames.values
+    }
+
     private fun invalidate(frame: String?) = synchronized(lock) {
         if (frame == null) { generation++; frameEpochs.clear(); tools.clear(); toolSizes.clear(); toolSessions.clear(); catalogBytes = 2; origins.clear(); catalogError = null; early.clear() }
         else { frameEpochs[frame] = (frameEpochs[frame] ?: 0L) + 1; tools.keys.filter { it.first == frame }.forEach { removeTool(it) }; origins.remove(frame) }

@@ -15,9 +15,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
+import platform.WebKit.WKContentWorld
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCSignatureOverride
 import kotlinx.cinterop.useContents
+import kotlinx.cinterop.toKString
 import kotlin.coroutines.resume
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSData
@@ -109,6 +112,7 @@ class IOSWebViewController(
         }
     }
 
+    private val disposed = kotlinx.atomicfu.atomic(false)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var webView: WKWebView
     private val previousNavigationDelegate = existingWebView?.navigationDelegate
@@ -205,21 +209,63 @@ class IOSWebViewController(
         webView.loadHTMLString(content, baseURL = baseUrl?.let { NSURL(string = it) })
     }
 
+    override val supportsPromiseEvaluation: Boolean get() = true
     override fun normalizeJavaScriptResult(raw: String?): String? = raw
+    private fun scriptResult(result: Any?): String? = when {
+        result is platform.Foundation.NSNull || result == null -> null
+        result is Boolean -> result.toString()
+        result is NSNumber && result.objCType?.toKString() == "c" -> result.boolValue.toString()
+        result is NSNumber -> numberResult(result.doubleValue)
+        result is Number -> numberResult(result.toDouble())
+        else -> result.toString()
+    }
+
+    private fun numberResult(value: Double): String =
+        if (value.isFinite() && value.toLong().toDouble() == value) value.toLong().toString() else value.toString()
 
     override fun evaluateJavaScript(script: String, callback: (String?) -> Unit) {
         webView.evaluateJavaScript(script) { result, _ ->
-            callback(if (result is platform.Foundation.NSNull) null else result?.toString())
+            callback(scriptResult(result))
         }
     }
 
-    override suspend fun evaluateJavaScriptAsync(script: String): String? = suspendCancellableCoroutine { continuation ->
-        webView.evaluateJavaScript(script) { result, error ->
-            if (error != null) {
-                continuation.resumeWith(Result.failure(KmpwrightException("WebKit JavaScript evaluation failed: ${error.localizedDescription}")))
-            } else {
-                continuation.resume(if (result is platform.Foundation.NSNull) null else result?.toString())
+    override suspend fun evaluateJavaScriptAsync(script: String): String? = withContext(Dispatchers.Main) {
+        if (disposed.value) throw KmpwrightException("Page is closed")
+        suspendCancellableCoroutine { continuation ->
+            val expression = script.trim().removeSuffix(";").removePrefix("return ")
+            fun run(asProgram: Boolean) {
+                val source = if (asProgram) "(async function() { $script\n })()" else "($expression)"
+                val body = """
+                    try {
+                        var result = await $source;
+                        return JSON.stringify({value: result});
+                    } catch (error) {
+                        return JSON.stringify({error: String(error && error.message || error)});
+                    }
+                """.trimIndent()
+                webView.callAsyncJavaScript(body, arguments = emptyMap<Any?, Any?>(), inFrame = null,
+                    inContentWorld = WKContentWorld.pageWorld) { result, error ->
+                    if (!continuation.isActive) return@callAsyncJavaScript
+                    if (error != null) {
+                        val message = error.userInfo["WKJavaScriptExceptionMessage"]?.toString() ?: error.localizedDescription
+                        // Runtime errors are serialized by the wrapper. Only a
+                        // parse failure can reach this expression-to-program fallback.
+                        if (!asProgram && message.contains("SyntaxError")) run(true)
+                        else continuation.resumeWith(Result.failure(KmpwrightException("WebKit JavaScript evaluation failed: $message")))
+                    } else try {
+                        val decoded = Json.parseToJsonElement(result?.toString() ?: "{}").let { it as? JsonObject }
+                            ?: throw KmpwrightException("WebKit returned an invalid evaluation result")
+                        (decoded["error"] as? JsonPrimitive)?.let { throw KmpwrightException("JavaScript evaluation failed: ${it.content}") }
+                        val value = decoded["value"]
+                        continuation.resume(when (value) {
+                            null, JsonNull -> null
+                            is JsonPrimitive -> value.content
+                            else -> value.toString()
+                        })
+                    } catch (failure: Exception) { continuation.resumeWith(Result.failure(failure)) }
+                }
             }
+            run(false)
         }
     }
 
@@ -357,7 +403,9 @@ class IOSWebViewController(
         webView.customUserAgent = userAgent
     }
 
-    override fun setDeviceScaleFactor(scale: Double) {}
+    override fun setDeviceScaleFactor(scale: Double) {
+        throw UnsupportedOperationException("WKWebView device scale is determined by the host screen")
+    }
 
     override fun injectJavaScript(script: String, callback: ((String?) -> Unit)?) {
         webView.evaluateJavaScript(script) { result, _ ->
@@ -365,7 +413,19 @@ class IOSWebViewController(
         }
     }
 
+    override suspend fun disposeAsync() = withContext(Dispatchers.Main) {
+        if (disposed.value) return@withContext
+        withTimeoutOrNull(500) { suspendCancellableCoroutine<Unit> { continuation ->
+            webView.evaluateJavaScript("if (window.__kmpwrightNetworkDispose) window.__kmpwrightNetworkDispose();") { _, _ ->
+                if (continuation.isActive) continuation.resume(Unit)
+            }
+        } }
+        dispose()
+    }
+
     override fun dispose() {
+        if (!disposed.compareAndSet(false, true)) return
+        webView.evaluateJavaScript("if (window.__kmpwrightNetworkDispose) window.__kmpwrightNetworkDispose();") { _, _ -> }
         webView.stopLoading()
         webView.navigationDelegate = previousNavigationDelegate
         webView.UIDelegate = previousUiDelegate
@@ -382,8 +442,18 @@ class IOSWebViewController(
         pendingRequests.clear()
         routeHandlers.clear()
         pendingRouteResults.clear()
+        schemeHandler?.dispose()
         schemeHandler = null
         scope.cancel()
+    }
+
+    override fun validatePdfOptions(options: PdfOptions) {
+        if (options.format != PdfFormat.Content || options.landscape || options.width != null || options.height != null ||
+            options.displayHeaderFooter || options.headerTemplate.isNotEmpty() || options.footerTemplate.isNotEmpty() ||
+            !options.printBackground || options.scale != 1.0 || options.pageRanges.isNotEmpty() ||
+            listOf(options.margin.top, options.margin.bottom, options.margin.left, options.margin.right).any { pdfLengthInches(it) != 0.0 }) {
+            throw UnsupportedOperationException("WKWebView PDF export supports Content format with zero margins only; print pagination/options are unavailable")
+        }
     }
 
     override fun generatePdf(options: PdfOptions, callback: (ByteArray?) -> Unit) {
@@ -405,12 +475,13 @@ class IOSWebViewController(
 
     override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {
         val regex = Regex(urlPattern)
+        routeHandlers.keys.filter { it.pattern == urlPattern }.forEach { routeHandlers.remove(it) }
         routeHandlers[regex] = handler
     }
 
     override fun removeRouteHandler(urlPattern: String) {
         val regex = Regex(urlPattern)
-        routeHandlers.remove(regex)
+        routeHandlers.keys.filter { it.pattern == urlPattern }.forEach { routeHandlers.remove(it) }
     }
 
     override fun removeAllRouteHandlers() { routeHandlers.clear() }
@@ -440,10 +511,11 @@ class IOSWebViewController(
         val props = mutableMapOf<Any?, Any?>()
         props[platform.Foundation.NSHTTPCookieName] = cookie.name
         props[platform.Foundation.NSHTTPCookieValue] = cookie.value
-        props[platform.Foundation.NSHTTPCookieDomain] = cookie.domain
+        props[platform.Foundation.NSHTTPCookieDomain] = if (cookie.hostOnly) cookie.domain.removePrefix(".") else ".${cookie.domain.removePrefix(".")}"
         props[platform.Foundation.NSHTTPCookiePath] = cookie.path
         if (cookie.secure) props[platform.Foundation.NSHTTPCookieSecure] = "TRUE"
-        cookie.expires?.let { props[platform.Foundation.NSHTTPCookieExpires] = it }
+        if (cookie.httpOnly) props["HttpOnly"] = "TRUE"
+        cookie.expires?.let { props[platform.Foundation.NSHTTPCookieExpires] = NSDate(timeIntervalSinceReferenceDate = it - APPLE_REFERENCE_TO_UNIX_EPOCH_SECONDS) }
         cookie.sameSite?.let { props[platform.Foundation.NSHTTPCookieSameSitePolicy] = it.lowercase() }
         val nsCookie = platform.Foundation.NSHTTPCookie.cookieWithProperties(props)
         if (nsCookie != null) {
@@ -456,10 +528,11 @@ class IOSWebViewController(
         val props = mutableMapOf<Any?, Any?>()
         props[platform.Foundation.NSHTTPCookieName] = cookie.name
         props[platform.Foundation.NSHTTPCookieValue] = cookie.value
-        props[platform.Foundation.NSHTTPCookieDomain] = cookie.domain
+        props[platform.Foundation.NSHTTPCookieDomain] = if (cookie.hostOnly) cookie.domain.removePrefix(".") else ".${cookie.domain.removePrefix(".")}"
         props[platform.Foundation.NSHTTPCookiePath] = cookie.path
         if (cookie.secure) props[platform.Foundation.NSHTTPCookieSecure] = "TRUE"
-        cookie.expires?.let { props[platform.Foundation.NSHTTPCookieExpires] = it }
+        if (cookie.httpOnly) props["HttpOnly"] = "TRUE"
+        cookie.expires?.let { props[platform.Foundation.NSHTTPCookieExpires] = NSDate(timeIntervalSinceReferenceDate = it - APPLE_REFERENCE_TO_UNIX_EPOCH_SECONDS) }
         cookie.sameSite?.let { props[platform.Foundation.NSHTTPCookieSameSitePolicy] = it.lowercase() }
         val nsCookie = platform.Foundation.NSHTTPCookie.cookieWithProperties(props)
         if (nsCookie == null) {
@@ -474,7 +547,7 @@ class IOSWebViewController(
         store.getAllCookies { cookies ->
             val list = cookies?.mapNotNull { it as? platform.Foundation.NSHTTPCookie }
                 ?: emptyList()
-            val match = list.firstOrNull { it.name == name && (domain.isEmpty() || it.domain == domain) }
+            val match = list.firstOrNull { it.name == name && (domain.isEmpty() || cookieDomainMatches(it.domain, domain)) }
             callback(match?.toKmpwrightCookie())
         }
     }
@@ -493,7 +566,7 @@ class IOSWebViewController(
         store.getAllCookies { cookies ->
             val list = cookies?.mapNotNull { it as? platform.Foundation.NSHTTPCookie }
                 ?: emptyList()
-            list.filter { it.name == name && (domain.isEmpty() || it.domain == domain) }
+            list.filter { it.name == name && (domain.isEmpty() || cookieDomainMatches(it.domain, domain)) }
                 .forEach { store.deleteCookie(it, completionHandler = {}) }
         }
     }
@@ -502,7 +575,7 @@ class IOSWebViewController(
         val store = webView.configuration.websiteDataStore.httpCookieStore
         store.getAllCookies { cookies ->
             val list = cookies?.mapNotNull { it as? platform.Foundation.NSHTTPCookie }
-                ?.filter { it.name == name && (domain.isEmpty() || it.domain == domain) }
+                ?.filter { it.name == name && (domain.isEmpty() || cookieDomainMatches(it.domain, domain)) }
                 ?: emptyList()
             if (list.isEmpty()) {
                 continuation.resume(Unit)
@@ -570,6 +643,7 @@ class IOSWebViewController(
     }
 
     private fun handleNetworkMessage(json: String, scriptMessage: WKScriptMessage) {
+
         if (scriptMessage.name != bridgeChannel) return
         if (json.length > bridgeLimits.maxPayloadChars || !acceptBridgeMessage()) return
         if (!isTrustedBridgeFrame(scriptMessage)) return
@@ -641,20 +715,27 @@ class IOSWebViewController(
     }
 
     private fun isTrustedBridgeFrame(message: WKScriptMessage): Boolean {
-        if (message.webView !== webView) return false
+
+        if (message.webView?.isEqual(webView) != true) return false
         val frame = message.frameInfo
         val expectedUrl = webView.URL ?: frame.request.URL ?: return false
         val expectedOrigin = expectedUrl.origin() ?: return false
         val securityOrigin = frame.securityOrigin
-        val actualOrigin = IOSBridgeOrigin(
+        val actualOrigin = if (expectedOrigin.protocol in setOf("about", "file") &&
+            securityOrigin.host.isEmpty() && securityOrigin.protocol.isEmpty()) expectedOrigin else IOSBridgeOrigin(
             securityOrigin.protocol.lowercase(),
             securityOrigin.host.lowercase(),
-            securityOrigin.port.toInt()
+            securityOrigin.port.toInt().takeIf { it != 0 } ?: when (securityOrigin.protocol.lowercase()) {
+                "https" -> 443
+                "http" -> 80
+                else -> 0
+            }
         )
+
         return isTrustedWebKitNetworkBridgeFrame(
             WebKitNetworkBridgeFrameMetadata(
                 isMainFrame = frame.isMainFrame(),
-                isExpectedWebView = message.webView === webView,
+                isExpectedWebView = message.webView?.isEqual(webView) == true,
                 frameOrigin = actualOrigin.serialized,
                 expectedOrigin = expectedOrigin.serialized
             )
@@ -728,9 +809,8 @@ class IOSWebViewController(
                         "action" to "continue",
                         "url" to requestOverride.url,
                         "method" to requestOverride.method,
-                        "headers" to requestOverride.headers,
-                        "body" to requestOverride.postData
-                    )
+                        "headers" to requestOverride.headers
+                    ) + if (response.postData != null) mapOf("body" to response.postData) else emptyMap()
                 )
             }
             is RouteAction.Fallthrough, null -> {
@@ -780,7 +860,9 @@ class IOSWebViewController(
     internal fun handleSchemeTask(
         task: WKURLSchemeTaskProtocol,
         schemeConfig: IosSchemeInterceptionConfig,
-        taskStore: MutableMap<Long, NSURLSessionDataTask>
+        taskStore: MutableMap<Long, NSURLSessionDataTask>,
+        isActive: () -> Boolean,
+        completed: () -> Unit
     ) {
         val originalUrl = task.request.URL ?: return
         val mappedUrl = mapSchemeUrl(originalUrl, schemeConfig)
@@ -805,6 +887,7 @@ class IOSWebViewController(
 
         scope.launch {
             val response = pendingRouteResults.remove(requestId) ?: resolveRouteAction(request)
+            if (!isActive()) { failPendingRequest(requestId, "Scheme task cancelled"); return@launch }
             when (response) {
                 is RouteAction.Fulfill -> {
                 val responseHeaders = response.headers.toMutableMap()
@@ -820,6 +903,7 @@ class IOSWebViewController(
                 task.didReceiveResponse(httpResponse)
                 task.didReceiveData(data)
                 task.didFinish()
+                completed()
                 completePendingRequest(
                     requestId = requestId,
                     url = mappedString,
@@ -831,6 +915,7 @@ class IOSWebViewController(
                 is RouteAction.Abort -> {
                 val error = NSError(domain = NSURLErrorDomain, code = -999, userInfo = null)
                 task.didFailWithError(error)
+                completed()
                 failPendingRequest(requestId, response.errorCode)
                 }
                 is RouteAction.Continue -> {
@@ -849,8 +934,10 @@ class IOSWebViewController(
                 val dataTask = NSURLSession.sharedSession.dataTaskWithRequest(mutableRequest) { data, responseObj, error ->
                     dispatch_async(dispatch_get_main_queue()) {
                         taskStore.remove(schemeTaskKey(task))
+                        if (!isActive()) { failPendingRequest(requestId, "Scheme task cancelled"); return@dispatch_async }
                         if (error != null) {
                             task.didFailWithError(error)
+                            completed()
                             failPendingRequest(requestId, error.localizedDescription)
                             return@dispatch_async
                         }
@@ -861,6 +948,7 @@ class IOSWebViewController(
                             task.didReceiveData(data)
                         }
                         task.didFinish()
+                        completed()
                         val httpResponse = responseObj as? NSHTTPURLResponse
                         if (httpResponse != null) {
                             completePendingRequest(
@@ -886,8 +974,10 @@ class IOSWebViewController(
                 val dataTask = NSURLSession.sharedSession.dataTaskWithRequest(mutableRequest) { data, responseObj, error ->
                     dispatch_async(dispatch_get_main_queue()) {
                         taskStore.remove(schemeTaskKey(task))
+                        if (!isActive()) { failPendingRequest(requestId, "Scheme task cancelled"); return@dispatch_async }
                         if (error != null) {
                             task.didFailWithError(error)
+                            completed()
                             failPendingRequest(requestId, error.localizedDescription)
                             return@dispatch_async
                         }
@@ -898,6 +988,7 @@ class IOSWebViewController(
                             task.didReceiveData(data)
                         }
                         task.didFinish()
+                        completed()
                         val httpResponse = responseObj as? NSHTTPURLResponse
                         if (httpResponse != null) {
                             completePendingRequest(
@@ -1030,6 +1121,7 @@ class IOSWebViewController(
             userContentController: WKUserContentController,
             didReceiveScriptMessage: WKScriptMessage
         ) {
+
             val body = didReceiveScriptMessage.body as? String ?: return
             this@IOSWebViewController.handleNetworkMessage(body, didReceiveScriptMessage)
         }
@@ -1071,15 +1163,27 @@ private class IOSSchemeHandler(
     private val controller: IOSWebViewController
 ) : NSObject(), WKURLSchemeHandlerProtocol {
     private val tasks = mutableMapOf<Long, NSURLSessionDataTask>()
+    private val active = mutableSetOf<Long>()
+
+    fun dispose() {
+        active.clear()
+        tasks.values.forEach { it.cancel() }
+        tasks.clear()
+    }
 
     @ObjCSignatureOverride
     override fun webView(webView: WKWebView, startURLSchemeTask: WKURLSchemeTaskProtocol) {
-        controller.handleSchemeTask(startURLSchemeTask, config, tasks)
+        val key = startURLSchemeTask.hashCode().toLong()
+        active.add(key)
+        controller.handleSchemeTask(startURLSchemeTask, config, tasks,
+            isActive = { key in active }, completed = { active.remove(key); tasks.remove(key) })
     }
 
     @ObjCSignatureOverride
     override fun webView(webView: WKWebView, stopURLSchemeTask: WKURLSchemeTaskProtocol) {
-        tasks.remove(stopURLSchemeTask.hashCode().toLong())?.cancel()
+        val key = stopURLSchemeTask.hashCode().toLong()
+        active.remove(key)
+        tasks.remove(key)?.cancel()
     }
 }
 
@@ -1111,6 +1215,23 @@ actual class Browser actual constructor(
         }
     }
 
+    private val ownedContexts = mutableListOf<BrowserContext>()
+    private var leaseContext: BrowserContext? = null
+
+    internal actual suspend fun beginIndependentLease() {
+        check(leaseContext == null) { "Browser already has an active lease" }
+        endIndependentLease()
+        leaseContext = newContext()
+    }
+
+    internal actual suspend fun endIndependentLease() {
+        ownedContexts.toList().forEach { it.closeAsync() }
+        ownedContexts.clear()
+        leaseContext = null
+        pages.toList().forEach { it.closeAsync() }
+        pages.clear()
+    }
+
     private val _isConnected = kotlinx.coroutines.flow.MutableStateFlow(true)
     actual val isConnected: kotlinx.coroutines.flow.StateFlow<Boolean> = _isConnected
 
@@ -1123,6 +1244,7 @@ actual class Browser actual constructor(
     }
 
     actual fun newPage(): Page {
+        leaseContext?.let { return it.newPage() }
         val controller = IOSWebViewController(config, websiteDataStore = websiteDataStore)
         return controller.createPage(tabRuntime).also { pages.add(it) }
     }
@@ -1138,9 +1260,9 @@ actual class Browser actual constructor(
     actual fun newContext(): BrowserContext = BrowserContext(
         IOSPlatformContext(websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore()),
         config
-    )
-    actual fun pages(): List<Page> = pages.toList()
-    actual fun page(): Page = pages.lastOrNull() ?: throw IllegalStateException("No page available")
+    ).also { ownedContexts.add(it) }
+    actual fun pages(): List<Page> = pages.toList() + ownedContexts.flatMap { it.pages() }
+    actual fun page(): Page = leaseContext?.let { it.pages().lastOrNull() ?: it.newPage() } ?: pages.lastOrNull() ?: throw IllegalStateException("No page available")
 
     actual fun closePage(page: Page) {
         if (pages.remove(page)) {
@@ -1153,6 +1275,10 @@ actual class Browser actual constructor(
     suspend actual fun versionAsync(): BrowserVersion = version()
 
     actual fun close() {
+        _isConnected.value = false
+        ownedContexts.toList().forEach { it.close() }
+        ownedContexts.clear()
+        leaseContext = null
         pages.forEach { it.close() }
         pages.clear()
         if (ownsWebsiteDataStore) {
@@ -1161,6 +1287,9 @@ actual class Browser actual constructor(
     }
 
     suspend actual fun closeAsync() {
+        ownedContexts.toList().forEach { it.closeAsync() }
+        ownedContexts.clear()
+        leaseContext = null
         pages.toList().forEach { it.closeAsync() }
         close()
     }
@@ -1224,8 +1353,17 @@ actual class BrowserContext actual constructor(
         }
     }
 
-    suspend actual fun clearCookiesAsync() {
-        clearCookies()
+    suspend actual fun clearCookiesAsync() = suspendCancellableCoroutine<Unit> { continuation ->
+        val store = websiteDataStore.httpCookieStore
+        store.getAllCookies { cookies ->
+            val list = cookies?.mapNotNull { it as? platform.Foundation.NSHTTPCookie }.orEmpty()
+            var remaining = list.size
+            if (remaining == 0 && continuation.isActive) continuation.resume(Unit)
+            list.forEach { cookie -> store.deleteCookie(cookie) {
+                remaining -= 1
+                if (remaining == 0 && continuation.isActive) continuation.resume(Unit)
+            } }
+        }
     }
 
     actual fun clearData() {
@@ -1236,8 +1374,11 @@ actual class BrowserContext actual constructor(
         ) {}
     }
 
-    suspend actual fun clearDataAsync() {
-        clearData()
+    suspend actual fun clearDataAsync() = suspendCancellableCoroutine<Unit> { continuation ->
+        websiteDataStore.removeDataOfTypes(WKWebsiteDataStore.allWebsiteDataTypes(),
+            modifiedSince = NSDate(timeIntervalSinceReferenceDate = -978307200.0)) {
+            if (continuation.isActive) continuation.resume(Unit)
+        }
     }
 
     actual fun close() {
@@ -1353,7 +1494,7 @@ internal fun iosPageCapabilities(): PageCapabilities = PageCapabilities(
     touchInput = SupportLevel.Partial,
     mouseInput = SupportLevel.Partial,
     keyboardInput = SupportLevel.Partial,
-    pdf = SupportLevel.Supported,
+    pdf = SupportLevel.Partial,
     browserContexts = SupportLevel.Partial,
     serviceWorkers = SupportLevel.Unsupported,
     domainFiltering = SupportLevel.Partial,
@@ -1390,7 +1531,7 @@ private fun platform.Foundation.NSHTTPCookie.toKmpwrightCookie(): Cookie {
         value = value,
         domain = domain,
         path = path,
-        expires = expiresDate?.description,
+        expires = expiresDate?.let { it.timeIntervalSinceReferenceDate + APPLE_REFERENCE_TO_UNIX_EPOCH_SECONDS },
         secure = isSecure(),
         httpOnly = isHTTPOnly(),
         sameSite = sameSitePolicy

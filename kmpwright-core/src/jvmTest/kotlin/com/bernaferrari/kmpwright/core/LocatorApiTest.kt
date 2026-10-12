@@ -289,9 +289,8 @@ class LocatorApiTest {
     }
 
     @Test
-    fun `screenshot executes without error`() = testBlocking {
-        val result = locator.screenshot()
-        assertNotNull(result)
+    fun `missing element screenshot fails explicitly`() = testBlocking {
+        kotlin.test.assertFailsWith<KmpwrightException> { locator.screenshot() }
     }
 
     @Test

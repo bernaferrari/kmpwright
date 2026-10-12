@@ -3,7 +3,6 @@ package com.bernaferrari.kmpwright.core
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
-import android.view.inputmethod.BaseInputConnection
 import android.webkit.WebView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -180,13 +179,9 @@ class AndroidKeyboard(
     private val keyDownTimes = mutableMapOf<String, Long>()
 
     override suspend fun insertText(text: String) {
-        val committed = runOnUiThread(webView) {
-            webView.requestFocus()
-            BaseInputConnection(webView, true).commitText(text, 1)
-        }
-        if (!committed) {
-            insertTextViaDom(text)
-        }
+        // A WebView InputConnection can still reference the previous editor
+        // after DOM focus changes. Insert atomically in the renderer instead.
+        insertTextViaDom(text)
     }
 
     override suspend fun type(text: String, options: TypeOptions) {
@@ -274,27 +269,33 @@ class AndroidKeyboard(
     }
 
     private suspend fun insertTextViaDom(text: String) {
-        suspendCancellableCoroutine<Unit> { continuation ->
-            controller.evaluateJavaScript(
-                """
-                (function() {
-                    var active = document.activeElement;
-                    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
-                        var start = active.selectionStart || 0;
-                        var end = active.selectionEnd || 0;
-                        var value = active.value || '';
-                        active.value = value.substring(0, start) + ${text.jsQuoted()} + value.substring(end);
-                        active.selectionStart = active.selectionEnd = start + ${text.length};
-                        active.dispatchEvent(new Event('input', { bubbles: true }));
-                        active.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                })()
-                """.trimIndent()
-            ) {
-                continuation.resume(Unit)
-            }
-        }
+        val result = controller.normalizeJavaScriptResult(controller.evaluateJavaScriptAsync("""
+            (function() {
+                var active = document.activeElement;
+                if (!active || active.disabled || active.readOnly) return 'No editable focused element';
+                if (active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA' && !active.isContentEditable) return 'No editable focused element';
+                if (document.execCommand('insertText', false, ${text.jsQuoted()})) return 'inserted';
+                if (active.isContentEditable) {
+                    var selection = window.getSelection();
+                    if (!selection.rangeCount) return 'Contenteditable has no selection';
+                    var range = selection.getRangeAt(0);
+                    if (!active.contains(range.commonAncestorContainer)) return 'Selection belongs to another editor';
+                    range.deleteContents();
+                    var node = document.createTextNode(${text.jsQuoted()});
+                    range.insertNode(node); range.setStartAfter(node); range.collapse(true);
+                    selection.removeAllRanges(); selection.addRange(range);
+                } else {
+                    if (active.selectionStart == null) return 'This input type does not support text insertion';
+                    var start = active.selectionStart, end = active.selectionEnd;
+                    active.setRangeText(${text.jsQuoted()}, start, end, 'end');
+                }
+                active.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${text.jsQuoted()} }));
+                return 'inserted';
+            })()
+        """.trimIndent()))
+        if (result != "inserted") throw KmpwrightException("Text insertion failed: $result")
     }
+
 }
 
 private suspend fun <T> runOnUiThread(webView: WebView, block: () -> T): T =

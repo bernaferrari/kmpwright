@@ -34,6 +34,9 @@ internal class CdpConnection(
     private val proxy: ProxyConfig? = null,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 ) : CdpEventTransport {
+    internal val downloadConfigurationMutex = kotlinx.coroutines.sync.Mutex()
+    internal val configuredDownloadContexts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    internal val tracingOwner = java.util.concurrent.atomic.AtomicReference<Any?>(null)
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected
     override val connectionState: StateFlow<Boolean> get() = isConnected

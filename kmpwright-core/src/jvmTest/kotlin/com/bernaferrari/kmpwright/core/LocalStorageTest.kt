@@ -158,7 +158,7 @@ class LocalStorageTest {
 
         fun executeLocalStorageJs(script: String): String? {
             val setItemRegex = Regex("""localStorage\.setItem\('([^']*)',\s*'([^']*)'\)""")
-            val getItemRegex = Regex("""return localStorage\.getItem\('([^']*)'\)""")
+            val getItemRegex = Regex("""localStorage\.getItem\('([^']*)'\)""")
             val removeItemRegex = Regex("""localStorage\.removeItem\('([^']*)'\)""")
             val clearRegex = Regex("""localStorage\.clear\(\)""")
             val getAllRegex = Regex("""JSON\.stringify\(items\)(?:\))?""")

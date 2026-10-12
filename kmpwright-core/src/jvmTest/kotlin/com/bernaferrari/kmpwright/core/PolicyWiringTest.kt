@@ -23,9 +23,9 @@ class PolicyWiringTest {
     }
 
     @Test
-    fun `locator has no policyChecker when policy is not set`() {
+    fun `locator has a live policyChecker before policy is set`() {
         val locator = testPage.locator(".btn") as TestLocator
-        assertSame(null, locator.policyChecker)
+        assertNotNull(locator.policyChecker)
     }
 
     @Test

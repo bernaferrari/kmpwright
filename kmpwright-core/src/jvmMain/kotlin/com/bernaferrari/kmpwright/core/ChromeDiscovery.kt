@@ -94,12 +94,21 @@ internal object ChromeDiscovery {
         val uri = runCatching { URI(endpoint) }.getOrNull() ?: return null
         if (uri.scheme != "http" && uri.scheme != "https") return null
         val host = uri.host ?: return null
-        val port = when {
-            uri.port > 0 -> uri.port
-            uri.scheme == "https" -> 443
-            else -> 80
+        val basePath = uri.rawPath.orEmpty().trimEnd('/').removeSuffix("/json/version").removeSuffix("/json/list")
+        val authority = uri.rawAuthority ?: return null
+        val query = uri.rawQuery?.let { "?$it" }.orEmpty()
+        for ((suffix, parser) in listOf("/json/version" to ::parseVersionWebSocketUrl, "/json/list" to ::parseListWebSocketUrl)) {
+            val discovery = "${uri.scheme}://$authority$basePath$suffix$query"
+            fetchText(discovery)?.let { body -> parser(body)?.let { advertised ->
+                val ws = runCatching { URI(advertised) }.getOrNull() ?: return@let
+                val scheme = if (uri.scheme == "https") "wss" else ws.scheme
+                val path = ws.rawPath.orEmpty().let { if (basePath.isNotEmpty() && !it.startsWith("$basePath/")) basePath + it else it }
+                val advertisedQuery = ws.rawQuery?.let { "?$it" }.orEmpty()
+                return appendQuery("$scheme://$authority$path$advertisedQuery", uri.rawQuery)
+            } }
         }
-        return discoverChromeWsUrl(host, port, uri.rawQuery)
+        val direct = appendQuery("${if (uri.scheme == "https") "wss" else "ws"}://$authority$basePath/devtools/browser", uri.rawQuery)
+        return direct.takeIf(::verifyDirectWebSocket)
     }
 
     internal fun parseActivePortFile(content: String): String? {

@@ -10,7 +10,14 @@ internal suspend fun awaitPageCondition(
     timeoutMs: Long
 ): Boolean {
     val started = kotlin.time.TimeSource.Monotonic.markNow()
-    val observed = withTimeoutOrNull(timeoutMs) {
+    val observed = if (!controller.supportsPromiseEvaluation) {
+        try {
+            PageScriptTask(controller).evaluate(BaseLocator.waitForConditionJs(condition, timeoutMs), timeoutMs)
+        } catch (failure: KmpwrightException) {
+            if (failure.message == "Timeout awaiting JavaScript task") return false
+            throw failure
+        }
+    } else withTimeoutOrNull(timeoutMs) {
         controller.normalizeJavaScriptResult(controller.evaluateJavaScriptAsync(BaseLocator.waitForConditionJs(condition, timeoutMs)))
     }
     when (observed) {

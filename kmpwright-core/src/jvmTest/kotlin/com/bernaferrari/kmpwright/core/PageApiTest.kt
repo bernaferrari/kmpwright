@@ -218,7 +218,7 @@ class PageApiTest {
     fun `metrics returns PageMetrics`() {
         runBlocking {
             val metrics = page.metrics()
-            assertEquals(1, metrics.frames)
+            assertNull(metrics.frames)
             assertTrue(metrics.networkIdle)
         }
     }
@@ -280,7 +280,7 @@ class PageApiTest {
     fun `getCookie retrieves stored cookie`() {
         runBlocking {
             page.goto("https://example.com")
-            val cookie = Cookie(name = "session", value = "abc123", domain = "https://example.com", path = "/")
+            val cookie = Cookie(name = "session", value = "abc123", domain = "example.com", path = "/")
             page.setCookie(cookie)
             val retrieved = page.getCookie("session")
             assertNotNull(retrieved)

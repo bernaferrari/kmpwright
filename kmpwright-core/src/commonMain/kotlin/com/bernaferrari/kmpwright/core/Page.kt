@@ -425,11 +425,11 @@ data class ResponseEvent(
 )
 
 data class PageMetrics(
-    val documents: Int = 0,
-    val frames: Int = 1,
-    val jsHeapUsedSize: Long = 0,
-    val jsHeapTotalSize: Long = 0,
-    val resources: Int = 0,
+    val documents: Int? = null,
+    val frames: Int? = null,
+    val jsHeapUsedSize: Long? = null,
+    val jsHeapTotalSize: Long? = null,
+    val resources: Int? = null,
     val networkIdle: Boolean = true
 )
 
@@ -480,7 +480,9 @@ enum class PdfFormat {
     A3,
     A4,
     A5,
-    A6
+    A6,
+    /** WKWebView's unpaginated content canvas; physical print layout options are unavailable. */
+    Content
 }
 
 data class PdfResult(

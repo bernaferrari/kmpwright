@@ -65,12 +65,15 @@ class AnnotatedScreenshotTest {
             controller.bboxResult = """[]"""
             val result = page.annotatedScreenshot(AnnotatedScreenshotOptions(format = ScreenshotFormat.JPEG, quality = 85))
             assertNotNull(result)
+            assertEquals(ScreenshotFormat.JPEG, page.capturedOptions!!.format)
+            assertEquals(85, page.capturedOptions!!.quality)
         }
     }
 
     private class TestPage(controller: MockAnnotatedController) : BasePage(
         controller, KmpwrightConfig()
     ) {
+        var capturedOptions: ScreenshotOptions? = null
         override fun createTouch(): Touch = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
@@ -81,6 +84,10 @@ class AnnotatedScreenshotTest {
                 override suspend fun evaluateJavaScriptAsync(script: String): String? = null
             }
         override fun createScreenshotController(): ScreenshotController = object : ScreenshotController {
+            override suspend fun capture(options: ScreenshotOptions): ScreenshotResult {
+                capturedOptions = options
+                return ScreenshotResult(ByteArray(0), 375, 667)
+            }
             override suspend fun captureViewport(scale: Double): ScreenshotResult = ScreenshotResult(ByteArray(0), 375, 667)
             override suspend fun captureFullPage(scale: Double): ScreenshotResult = ScreenshotResult(ByteArray(0), 375, 667)
             override suspend fun captureClip(x: Double, y: Double, width: Double, height: Double, scale: Double): ScreenshotResult = ScreenshotResult(ByteArray(0), 375, 667)

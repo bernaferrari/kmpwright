@@ -2,8 +2,6 @@ package com.bernaferrari.kmpwright.core
 
 import platform.Foundation.*
 
-private const val APPLE_REFERENCE_TO_UNIX_EPOCH_SECONDS = 978307200.0
-
 internal actual fun formatIso8601(timestamp: Long): String {
     val date = NSDate(
         timeIntervalSinceReferenceDate = (timestamp / 1000.0) - APPLE_REFERENCE_TO_UNIX_EPOCH_SECONDS

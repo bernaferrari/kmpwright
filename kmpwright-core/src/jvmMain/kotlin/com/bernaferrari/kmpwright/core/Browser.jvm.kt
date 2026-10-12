@@ -35,6 +35,23 @@ actual class Browser actual constructor(
     private val context: PlatformContext,
     private val config: KmpwrightConfig
 ) {
+    private val ownedContexts = java.util.concurrent.CopyOnWriteArrayList<BrowserContext>()
+    @Volatile private var leaseContext: BrowserContext? = null
+
+    internal actual suspend fun beginIndependentLease() {
+        check(leaseContext == null) { "Browser already has an active lease" }
+        endIndependentLease()
+        leaseContext = newContext()
+    }
+
+    internal actual suspend fun endIndependentLease() {
+        ownedContexts.toList().forEach { it.closeAsync() }
+        ownedContexts.clear()
+        leaseContext = null
+        val owned = pagesMutex.withLock { _pages.toList() }
+        owned.forEach { it.closeAsync() }
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _isConnected = MutableStateFlow(false)
@@ -47,6 +64,7 @@ actual class Browser actual constructor(
     private var connection: CdpConnection? = null
     private var providerSession: ProviderSession? = null
     private var endpointScope: CdpEndpointScope? = null
+    private var connectionMonitor: kotlinx.coroutines.Job? = null
     private val connectionMutex = Mutex()
     private val pagesMutex = Mutex()
     /** Test seam for exercising serialized bootstrap without requiring a Chrome process. */
@@ -81,6 +99,7 @@ actual class Browser actual constructor(
     }
 
     suspend actual fun newPageAsync(): Page {
+        leaseContext?.let { return it.newPageAsync() }
         return pagesMutex.withLock {
             val conn = ensureConnection()
             val epScope = endpointScope ?: CdpEndpointScope.Page
@@ -195,12 +214,14 @@ actual class Browser actual constructor(
         kotlinx.coroutines.runBlocking {
             ctx.initialize(ensureConnection(), scope)
         }
+        ownedContexts.add(ctx)
         return ctx
     }
 
-    actual fun pages(): List<Page> = _pages.toList()
+    actual fun pages(): List<Page> = _pages.toList() + ownedContexts.flatMap { it.pages() }
 
     actual fun page(): Page {
+        leaseContext?.let { return it.pages().lastOrNull() ?: it.newPage() }
         return runBlocking {
             val existing = pagesMutex.withLock { _pages.lastOrNull() }
             existing ?: newPageAsync()
@@ -241,6 +262,10 @@ actual class Browser actual constructor(
     }
 
     suspend actual fun closeAsync(): Unit = withContext(NonCancellable) {
+        ownedContexts.toList().forEach { it.closeAsync() }
+        ownedContexts.clear()
+        leaseContext = null
+
         val pagesToClose = pagesMutex.withLock { _pages.toList() }
         pagesToClose.forEach { page ->
             try {
@@ -248,6 +273,8 @@ actual class Browser actual constructor(
             } catch (_: Throwable) {
             }
         }
+        connectionMonitor?.cancel()
+        connectionMonitor = null
         try { providerSession?.let { providerSessionReleaser(it) } }
         finally {
             providerSession = null
@@ -266,6 +293,14 @@ actual class Browser actual constructor(
             connection?.let {
                 if (it.isConnected.value) return@withLock it
             }
+            connectionMonitor?.cancel()
+            connectionMonitor = null
+            connection?.close()
+            connection = null
+            providerSession?.let { previous ->
+                withContext(NonCancellable) { withTimeout(5_000) { providerSessionReleaser(previous) } }
+            }
+            providerSession = null
             val cdpConfig = config.cdp ?: throw KmpwrightException("No CDP config provided")
             val override = connectionBootstrapOverride
             val session: ProviderSession
@@ -280,8 +315,17 @@ actual class Browser actual constructor(
                 )
                 if (override == null) conn.connect()
                 connection = conn
-                _isConnected.value = true
+                _isConnected.value = conn.isConnected.value
                 _connectionError.value = null
+                val observedConnection = conn
+                connectionMonitor = scope.launch {
+                    observedConnection.isConnected.collect { connected ->
+                        if (connection === observedConnection) {
+                            _isConnected.value = connected
+                            if (!connected) _connectionError.value = "CDP connection disconnected"
+                        }
+                    }
+                }
                 endpointScope = endpointScopeResolverOverride?.invoke(conn)
                     ?: bootstrap?.endpointScope ?: detectCdpEndpointScope(conn)
                 conn
@@ -334,31 +378,8 @@ actual class BrowserContext actual constructor(
         val conn = connection ?: throw KmpwrightException("BrowserContext not initialized")
         val browserScope = scope ?: throw KmpwrightException("BrowserContext not initialized")
 
-        val params = mutableMapOf<String, Any>("url" to "about:blank")
-        browserContextId?.let { params["browserContextId"] = it }
-
-        val result = conn.send("Target.createTarget", params)
-        result.error?.let {
-            throw KmpwrightException("Failed to create target: ${it.message}")
-        }
-        val targetId = result.result?.get("targetId")?.toString()?.trim('"')
-            ?: throw KmpwrightException("No targetId in response")
-
-        val attachResult = conn.send("Target.attachToTarget", mapOf(
-            "targetId" to targetId,
-            "flatten" to true
-        ))
-        attachResult.error?.let {
-            throw KmpwrightException("Failed to attach to target: ${it.message}")
-        }
-        val sessionId = attachResult.result?.get("sessionId")?.toString()?.trim('"')
-            ?: throw KmpwrightException("No sessionId in response")
-
-        val session = CdpPageSession(
-            scope = CdpEndpointScope.Browser,
-            targetId = targetId,
-            sessionId = sessionId
-        )
+        val session = createCdpPageSession(conn, CdpEndpointScope.Browser, browserContextId = browserContextId)
+        val sessionId = session.sessionId
         val controller = CdpWebViewController(
             conn,
             sessionId,
@@ -385,9 +406,14 @@ actual class BrowserContext actual constructor(
                 }
             }
         }
-        val page = CdpPage(controller, config, browserScope, conn, session, tabRuntime)
-        pages.add(page)
-        page
+        try {
+            val page = CdpPage(controller, config, browserScope, conn, session, tabRuntime)
+            pages.add(page)
+            page
+        } catch (error: Throwable) {
+            withContext(NonCancellable) { controller.disposeAsync(); closeCdpPageSession(conn, session) }
+            throw error
+        }
         }
     }
 
@@ -468,7 +494,7 @@ private class CdpScreenshotController(
         )
     }
 
-    private suspend fun capture(options: ScreenshotOptions): ScreenshotResult =
+    override suspend fun capture(options: ScreenshotOptions): ScreenshotResult =
         kotlinx.coroutines.suspendCancellableCoroutine { cont ->
             controller.takeScreenshot(options) { bytes, width, height ->
                 if (!cont.isActive) return@takeScreenshot
@@ -555,8 +581,8 @@ internal class CdpPage(
     } }
     private val frameRuntime by frameRuntimeDelegate
     override fun frameLocator(selector: String): FrameLocator = CdpFrameLocator(frameRuntime,
-        selector.split(">>").map(String::trim).filter(String::isNotEmpty), config) { action, url -> checkPolicy(action, url) }
-    override fun mainFrame(): FrameLocator = CdpFrameLocator(frameRuntime, emptyList(), config) { action, url -> checkPolicy(action, url) }
+        selector.split(">>").map(String::trim).filter(String::isNotEmpty), config, closeSignal) { action, url -> checkPolicy(action, url) }
+    override fun mainFrame(): FrameLocator = CdpFrameLocator(frameRuntime, emptyList(), config, closeSignal) { action, url -> checkPolicy(action, url) }
     private val recordingMutex = Mutex()
     private var videoRecorder: CdpVideoRecorder? = null
     private var recordingPointer: CdpRecordingPointer? = null
@@ -694,6 +720,7 @@ internal class CdpPage(
             } catch (_: Throwable) {}
             tracingStream = null
         }
+        connection.tracingOwner.compareAndSet(this, null)
     }
 
     private suspend fun sendForPage(method: String, params: Map<String, Any?> = emptyMap()): CdpResponse =
@@ -734,6 +761,7 @@ internal class CdpPage(
 
     override suspend fun closeAsync(): Unit = withContext(NonCancellable) {
         if (!closed.compareAndSet(false, true)) return@withContext
+        beginPageClose()
 
         // Mark producers inactive before removing their callbacks.  An event
         // already in the CDP dispatch loop can then harmlessly observe the
@@ -786,6 +814,7 @@ internal class CdpPage(
         if (!config.enableTraceExport && options.path != null) {
             throw KmpwrightException("Trace export is disabled by KmpwrightConfig.enableTraceExport")
         }
+        if (!connection.tracingOwner.compareAndSet(null, this)) throw KmpwrightException("Tracing is already owned by another page on this browser")
         tracingEventChunks.clear()
         tracingStream = null
         tracingOutputPath = options.path
@@ -805,14 +834,23 @@ internal class CdpPage(
         if (options.screenshots && "disabled-by-default-devtools.screenshot" !in categories) {
             params["categories"] = "$categories,disabled-by-default-devtools.screenshot"
         }
-        connection.send(CdpMethods.TRACING_START, params)
+        try {
+            val response = connection.send(CdpMethods.TRACING_START, params)
+            response.error?.let { throw KmpwrightException("Tracing start failed: ${it.message}") }
+        } catch (failure: Throwable) {
+            tracingActive = false
+            cancelSubscriptions(tracingSubscriptions)
+            connection.tracingOwner.compareAndSet(this, null)
+            throw failure
+        }
     }
 
     override suspend fun stopTracing(): ByteArray? {
         var streamToClose: String? = null
         return try {
             if (!tracingActive) return null
-            connection.send(CdpMethods.TRACING_END)
+            val ended = connection.send(CdpMethods.TRACING_END)
+            ended.error?.let { throw KmpwrightException("Tracing stop failed: ${it.message}") }
             var attempts = 0
             while (tracingStream == null && tracingEventChunks.isEmpty() && attempts < 100) {
                 delay(50)
@@ -821,18 +859,10 @@ internal class CdpPage(
             val stream = tracingStream
             streamToClose = stream
             val bytes = if (stream != null) {
-                val data = StringBuilder()
-                while (true) {
-                    val result = connection.send(CdpMethods.IO_READ_FILE, mapOf("handle" to stream))
-                    result.result?.get("data")?.jsonPrimitive?.content?.let { data.append(it) }
-                    val eof = result.result?.get("eof")?.jsonPrimitive?.booleanOrNull == true
-                    if (eof) break
-                }
-                try {
-                    connection.send(CdpMethods.IO_CLOSE, mapOf("handle" to stream))
-                } catch (_: Exception) {}
+                val data = readCdpTraceStream(CdpConnectionTransport(connection), stream)
+                connection.send(CdpMethods.IO_CLOSE, mapOf("handle" to stream))
                 streamToClose = null
-                data.toString().encodeToByteArray()
+                data
             } else if (tracingEventChunks.isNotEmpty()) {
                 "[${tracingEventChunks.joinToString(",")}]".encodeToByteArray()
             } else {
@@ -846,15 +876,18 @@ internal class CdpPage(
                 }
             }
             bytes
-        } catch (_: Exception) {
-            null
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            throw KmpwrightException("Tracing stop failed: ${failure.message}")
         } finally {
             tracingActive = false
+            connection.tracingOwner.compareAndSet(this, null)
             streamToClose?.let { handle ->
                 try {
-                    withTimeoutOrNull(500) {
+                    withContext(NonCancellable) { withTimeoutOrNull(500) {
                         connection.send(CdpMethods.IO_CLOSE, mapOf("handle" to handle))
-                    }
+                    } }
                 } catch (_: Exception) {}
             }
             tracingStream = null
@@ -936,6 +969,8 @@ internal class CdpPage(
         if (cdpDownloadSetup) return
         cdpDownloadSetup = true
         downloadSubscriptions += connection.onEvent("Browser.downloadWillBegin") { params ->
+            val frame = params["frameId"]?.jsonPrimitive?.content ?: return@onEvent
+            if (!(controller as CdpWebViewController).ownsFrame(frame)) return@onEvent
             val url = params["url"]?.jsonPrimitive?.content ?: return@onEvent
             val suggestedFilename = params["suggestedFilename"]?.jsonPrimitive?.content ?: ""
             reportDownload(DownloadEvent(url = url, suggestedFilename = suggestedFilename))
@@ -945,35 +980,47 @@ internal class CdpPage(
         }
     }
 
+    private val downloadContextKey: String get() = session.browserContextId ?: "__default__"
+
+    private suspend fun configureDownloads(behavior: String, path: String? = null) {
+        connection.downloadConfigurationMutex.withLock {
+            val params = mutableMapOf<String, Any?>("behavior" to behavior, "eventsEnabled" to true)
+            session.browserContextId?.let { params["browserContextId"] = it }
+            path?.let { params["downloadPath"] = it }
+            val response = connection.send(CdpMethods.BROWSER_SET_DOWNLOAD_BEHAVIOR, params)
+            response.error?.let { throw KmpwrightException("Download configuration failed: ${it.message}") }
+            connection.configuredDownloadContexts.add(downloadContextKey)
+        }
+    }
+
+    override suspend fun waitForDownload(urlPattern: String?, timeoutMs: Long): DownloadEvent {
+        checkOpen()
+        ensureCdpDownloadSetup()
+        if (downloadContextKey !in connection.configuredDownloadContexts) configureDownloads("default")
+        return awaitPageOperation(closeSignal) { super.waitForDownload(urlPattern, timeoutMs) }
+    }
+
     override fun setDownloadPath(path: String) {
         checkOpen()
+        require(path.isNotBlank()) { "Download path must not be blank" }
+        ensureCdpDownloadSetup()
+        runBlocking { configureDownloads("allowAndName", path) }
         super.setDownloadPath(path)
         cdpDownloadPath = path
-        ensureCdpDownloadSetup()
-        scope.launch {
-            connection.send(CdpMethods.BROWSER_SET_DOWNLOAD_BEHAVIOR, mapOf(
-                "behavior" to "allowAndName",
-                "downloadPath" to path,
-                "eventsEnabled" to true
-            ))
-        }
     }
 
     override fun setDownloadBehavior(behavior: DownloadBehavior) {
         checkOpen()
-        super.setDownloadBehavior(behavior)
+        val path = if (behavior == DownloadBehavior.Deny) null else cdpDownloadPath
+            ?: throw KmpwrightException("Set a download path before allowing downloads")
         ensureCdpDownloadSetup()
-        val cdpBehavior = when (behavior) {
+        val value = when (behavior) {
             DownloadBehavior.Allow -> "allow"
             DownloadBehavior.SaveToDownloadPath -> "allowAndName"
             DownloadBehavior.Deny -> "deny"
         }
-        scope.launch {
-            val params = mutableMapOf<String, Any?>("behavior" to cdpBehavior, "eventsEnabled" to true)
-            if (behavior == DownloadBehavior.SaveToDownloadPath) {
-                cdpDownloadPath?.let { params["downloadPath"] = it }
-            }
-            connection.send(CdpMethods.BROWSER_SET_DOWNLOAD_BEHAVIOR, params)
-        }
+        runBlocking { configureDownloads(value, path) }
+        super.setDownloadBehavior(behavior)
     }
+
 }

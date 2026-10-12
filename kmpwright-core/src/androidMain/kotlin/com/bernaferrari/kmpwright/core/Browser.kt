@@ -1,7 +1,6 @@
 package com.bernaferrari.kmpwright.core
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Looper
 import android.util.Base64
@@ -9,6 +8,7 @@ import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,6 +29,9 @@ class AndroidWebViewController(
     private val delegateWebViewClient: android.webkit.WebViewClient? = null,
     private val delegateWebChromeClient: android.webkit.WebChromeClient? = null
 ) : WebViewController {
+    override val supportsPromiseEvaluation: Boolean get() = false
+    private val originalWebViewClient = webView.webViewClient
+    private val originalWebChromeClient = webView.webChromeClient
     private val initScripts = mutableMapOf<String, androidx.webkit.ScriptHandler>()
 
     override suspend fun addInitScript(script: String): String = kotlinx.coroutines.withContext(Dispatchers.Main) {
@@ -477,12 +480,13 @@ class AndroidWebViewController(
 
     override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {
         val regex = Regex(urlPattern)
+        routeHandlers.keys.filter { it.pattern == urlPattern }.forEach { routeHandlers.remove(it) }
         routeHandlers[regex] = handler
     }
 
     override fun removeRouteHandler(urlPattern: String) {
         val regex = Regex(urlPattern)
-        routeHandlers.remove(regex)
+        routeHandlers.keys.filter { it.pattern == urlPattern }.forEach { routeHandlers.remove(it) }
     }
 
     override fun removeAllRouteHandlers() {
@@ -541,8 +545,13 @@ class AndroidWebViewController(
     private fun cookieHeader(cookie: Cookie): String = buildString {
         append("${cookie.name}=${cookie.value}")
         append("; path=${cookie.path}")
-        if (cookie.domain.isNotEmpty()) append("; domain=${cookie.domain.removePrefix(".")}")
-        cookie.expires?.let { append("; expires=$it") }
+        if (!cookie.hostOnly) append("; domain=${cookie.domain.removePrefix(".")}")
+        cookie.expires?.let {
+            val date = java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US)
+                .apply { timeZone = java.util.TimeZone.getTimeZone("GMT") }
+                .format(java.util.Date((it * 1000).toLong()))
+            append("; expires=$date")
+        }
         if (cookie.secure) append("; secure")
         if (cookie.httpOnly) append("; HttpOnly")
         cookie.sameSite?.let { append("; SameSite=$it") }
@@ -550,7 +559,7 @@ class AndroidWebViewController(
 
     override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {
         for (candidateUrl in candidateCookieUrls(domain)) {
-            val cookie = parseCookieHeader(CookieManager.getInstance().getCookie(candidateUrl), candidateUrl)
+            val cookie = readCookieMetadata(candidateUrl)
                 .firstOrNull { it.name == name }
             if (cookie != null) {
                 callback(cookie)
@@ -564,7 +573,7 @@ class AndroidWebViewController(
         val cookieManager = CookieManager.getInstance()
         val cookiesByKey = LinkedHashMap<String, Cookie>()
         for (candidateUrl in candidateCookieUrls(null)) {
-            for (cookie in parseCookieHeader(cookieManager.getCookie(candidateUrl), candidateUrl)) {
+            for (cookie in readCookieMetadata(candidateUrl)) {
                 val key = "${cookie.domain}\u0000${cookie.path}\u0000${cookie.name}"
                 cookiesByKey.putIfAbsent(key, cookie)
             }
@@ -575,7 +584,7 @@ class AndroidWebViewController(
     override fun deleteCookie(name: String, domain: String) {
         val cookieManager = CookieManager.getInstance()
         for (candidateUrl in candidateCookieUrls(domain)) {
-            cookieManager.setCookie(candidateUrl, "$name=; Max-Age=0; path=/")
+            cookieManager.setCookie(candidateUrl, "$name=; Max-Age=0; path=/; domain=${Uri.parse(candidateUrl).host}")
         }
         cookieManager.flush()
     }
@@ -588,7 +597,7 @@ class AndroidWebViewController(
         }
         var remaining = urls.size
         urls.forEach { candidateUrl ->
-            CookieManager.getInstance().setCookie(candidateUrl, "$name=; Max-Age=0; path=/") {
+            CookieManager.getInstance().setCookie(candidateUrl, "$name=; Max-Age=0; path=/; domain=${Uri.parse(candidateUrl).host}") {
                 // A false result means that no matching cookie existed; the
                 // deletion command was still acknowledged successfully.
                 remaining -= 1
@@ -694,6 +703,7 @@ class AndroidWebViewController(
     }
 
     private fun candidateCookieUrls(domainOrUrl: String?): List<String> {
+        if (domainOrUrl != null) return listOfNotNull(normalizeCookieUrl(domainOrUrl))
         val candidates = LinkedHashSet<String>()
         normalizeCookieUrl(webView.url)?.let(candidates::add)
         normalizeCookieUrl(domainOrUrl)?.let(candidates::add)
@@ -705,13 +715,14 @@ class AndroidWebViewController(
 
     private fun resolveCookieTargetUrl(domainOrUrl: String, secure: Boolean): String? {
         val currentScheme = normalizeCookieUrl(webView.url)?.let { Uri.parse(it).scheme }
-        return normalizeCookieUrl(domainOrUrl, currentScheme ?: if (secure) "https" else "http")
+        return normalizeCookieUrl(domainOrUrl, if (secure) "https" else currentScheme ?: "http")
     }
 
     private fun normalizeCookieUrl(urlOrDomain: String?, fallbackScheme: String = "https"): String? {
         val trimmed = urlOrDomain?.trim().orEmpty()
         if (trimmed.isEmpty()) return null
         val parsed = Uri.parse(trimmed)
+        if (parsed.scheme != null && parsed.scheme !in setOf("http", "https")) return null
         if (!parsed.scheme.isNullOrBlank() && !parsed.host.isNullOrBlank()) {
             return parsed.buildUpon().path(parsed.path ?: "/").build().toString()
         }
@@ -719,6 +730,26 @@ class AndroidWebViewController(
         val host = trimmed.removePrefix(".").substringBefore("/").trim()
         if (host.isEmpty()) return null
         return "$fallbackScheme://$host/"
+    }
+
+    private fun readCookieMetadata(url: String): List<Cookie> {
+        if (!androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.GET_COOKIE_INFO)) {
+            throw UnsupportedOperationException("Cookie attribute reads require WebView GET_COOKIE_INFO support")
+        }
+        val requestUrl = url.toHttpUrl()
+        return androidx.webkit.CookieManagerCompat.getCookieInfo(CookieManager.getInstance(), url).mapNotNull { header ->
+            val parsed = okhttp3.Cookie.parse(requestUrl, header) ?: return@mapNotNull null
+            val attributes = header.split(';').drop(1).associate { field ->
+                val pair = field.trim().split('=', limit = 2)
+                pair[0].lowercase() to pair.getOrElse(1) { "" }
+            }
+            if ("partitioned" in attributes) throw UnsupportedOperationException("Partitioned cookie state export is unavailable on Android")
+            val domain = attributes["domain"] ?: parsed.domain
+            Cookie(parsed.name, parsed.value, domain, parsed.path,
+                expires = if (parsed.persistent) parsed.expiresAt / 1000.0 else null,
+                secure = parsed.secure, httpOnly = parsed.httpOnly, sameSite = attributes["samesite"],
+                hostOnly = !domain.startsWith("."))
+        }
     }
 
     private fun parseCookieHeader(cookieHeader: String?, sourceUrl: String): List<Cookie> {
@@ -800,12 +831,8 @@ class AndroidWebViewController(
         webView.settings.userAgentString = userAgent
     }
 
-    override fun setDeviceScaleFactor(scale: Double) {
-        webView.settings.displayZoomControls = false
-        webView.settings.builtInZoomControls = true
-        webView.settings.useWideViewPort = true
-        webView.settings.loadWithOverviewMode = true
-    }
+    override fun setDeviceScaleFactor(scale: Double): Unit =
+        throw UnsupportedOperationException("Android WebView device scale is determined by the host display")
 
     override fun injectJavaScript(script: String, callback: ((String?) -> Unit)?) {
         webView.evaluateJavascript(script) { result ->
@@ -825,8 +852,8 @@ class AndroidWebViewController(
 
         val cleanup = {
             webView.stopLoading()
-            webView.webChromeClient = android.webkit.WebChromeClient()
-            webView.webViewClient = android.webkit.WebViewClient()
+            webView.webChromeClient = originalWebChromeClient
+            webView.webViewClient = originalWebViewClient
             if (ownsWebView) {
                 webView.removeAllViews()
                 webView.destroy()
@@ -840,88 +867,16 @@ class AndroidWebViewController(
         scope.cancel()
     }
 
+    override fun validatePdfOptions(options: PdfOptions) = validateAndroidPdfOptions(options)
+
+    override suspend fun generatePdfAsync(options: PdfOptions): ByteArray = captureAndroidPdf(webView, options)
+
     override fun generatePdf(options: PdfOptions, callback: (ByteArray?) -> Unit) {
-        scope.launch(Dispatchers.Main) {
-            var bitmap: Bitmap? = null
-            var pdfDocument: android.graphics.pdf.PdfDocument? = null
-            try {
-                pdfDocument = android.graphics.pdf.PdfDocument()
-
-                val pageWidth = options.width?.toInt() ?: when (options.format) {
-                    PdfFormat.Letter -> if (options.landscape) 15840 else 12240
-                    PdfFormat.Legal -> if (options.landscape) 14400 else 10080
-                    PdfFormat.Tabloid -> if (options.landscape) 21600 else 15840
-                    PdfFormat.Ledger -> if (options.landscape) 21600 else 15840
-                    PdfFormat.A0 -> if (options.landscape) 33710 else 23840
-                    PdfFormat.A1 -> if (options.landscape) 23840 else 16850
-                    PdfFormat.A2 -> if (options.landscape) 16850 else 11910
-                    PdfFormat.A3 -> if (options.landscape) 11910 else 8420
-                    PdfFormat.A4 -> if (options.landscape) 8420 else 5950
-                    PdfFormat.A5 -> if (options.landscape) 5950 else 4190
-                    PdfFormat.A6 -> if (options.landscape) 4190 else 2970
-                }
-
-                val pageHeight = options.height?.toInt() ?: when (options.format) {
-                    PdfFormat.Letter -> if (options.landscape) 12240 else 15840
-                    PdfFormat.Legal -> if (options.landscape) 10080 else 14400
-                    PdfFormat.Tabloid -> if (options.landscape) 15840 else 21600
-                    PdfFormat.Ledger -> if (options.landscape) 15840 else 21600
-                    PdfFormat.A0 -> if (options.landscape) 23840 else 33710
-                    PdfFormat.A1 -> if (options.landscape) 16850 else 23840
-                    PdfFormat.A2 -> if (options.landscape) 11910 else 16850
-                    PdfFormat.A3 -> if (options.landscape) 8420 else 11910
-                    PdfFormat.A4 -> if (options.landscape) 5950 else 8420
-                    PdfFormat.A5 -> if (options.landscape) 4190 else 5950
-                    PdfFormat.A6 -> if (options.landscape) 2970 else 4190
-                }
-
-                val contentWidth = webView.measuredWidth.toFloat()
-                val contentHeight = (webView.contentHeight.takeIf { it > 0 } ?: webView.measuredHeight).toFloat()
-
-                if (contentWidth <= 0f || contentHeight <= 0f) {
-                    callback(null)
-                    return@launch
-                }
-
-                val scale = options.scale.coerceAtLeast(0.1).coerceAtMost(10.0)
-                val bitmapWidth = (contentWidth * scale).toInt()
-                val bitmapHeight = (contentHeight * scale).toInt()
-
-                bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
-                val canvas = android.graphics.Canvas(bitmap)
-                canvas.scale(scale.toFloat(), scale.toFloat())
-                webView.draw(canvas)
-
-                val pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(pageWidth, pageHeight, 1).create()
-                val page = pdfDocument.startPage(pageInfo)
-                val pageCanvas = page.canvas
-
-                val marginLeft = 0
-                val marginTop = 0
-                val maxContentWidth = pageWidth - marginLeft
-                val maxContentHeight = pageHeight - marginTop
-
-                if (bitmapWidth <= maxContentWidth && bitmapHeight <= maxContentHeight) {
-                    pageCanvas.drawBitmap(bitmap, marginLeft.toFloat(), marginTop.toFloat(), null)
-                } else {
-                    val srcRect = android.graphics.Rect(0, 0, bitmapWidth, bitmapHeight)
-                    val destRect = android.graphics.Rect(marginLeft, marginTop, maxContentWidth, maxContentHeight)
-                    pageCanvas.drawBitmap(bitmap, srcRect, destRect, null)
-                }
-
-                pdfDocument.finishPage(page)
-
-                val outputStream = java.io.ByteArrayOutputStream()
-                pdfDocument.writeTo(outputStream)
-                callback(outputStream.toByteArray())
-            } catch (e: Exception) {
-                callback(null)
-            } finally {
-                pdfDocument?.close()
-                bitmap?.recycle()
-            }
+        scope.launch {
+            callback(runCatching { generatePdfAsync(options) }.getOrNull())
         }
     }
+
 }
 
 class AndroidPlatformContext(
@@ -1006,6 +961,10 @@ actual class Browser @JvmOverloads actual constructor(
         val page = createPage(webView, ownsWebView = existing == null)
         pages.add(page)
     }
+
+    internal actual suspend fun beginIndependentLease(): Unit = throw UnsupportedOperationException(
+        "Independent browser-farm leases need isolated contexts. Android WebView requires a separate host process per owner.")
+    internal actual suspend fun endIndependentLease() {}
 
     actual fun newPage(): Page {
         val page = createPage(createManagedWebView(), ownsWebView = true)
@@ -1154,7 +1113,7 @@ internal fun androidPageCapabilities(): PageCapabilities = PageCapabilities(
     touchInput = SupportLevel.Supported,
     mouseInput = SupportLevel.Partial,
     keyboardInput = SupportLevel.Supported,
-    pdf = SupportLevel.Supported,
+    pdf = SupportLevel.Partial,
     browserContexts = SupportLevel.Unsupported,
     serviceWorkers = SupportLevel.Unsupported,
     domainFiltering = SupportLevel.Partial,

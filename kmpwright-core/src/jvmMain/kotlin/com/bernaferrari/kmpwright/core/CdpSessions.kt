@@ -30,7 +30,8 @@ internal data class CdpPageSession(
     val scope: CdpEndpointScope,
     val targetId: String? = null,
     val sessionId: String? = null,
-    val ownsTarget: Boolean = true
+    val ownsTarget: Boolean = true,
+    val browserContextId: String? = null
 )
 
 internal suspend fun detectCdpEndpointScope(connection: CdpConnection): CdpEndpointScope =
@@ -44,16 +45,19 @@ internal suspend fun detectCdpEndpointScope(transport: CdpSessionTransport): Cdp
 internal suspend fun createCdpPageSession(
     connection: CdpConnection,
     scope: CdpEndpointScope,
-    newWindow: Boolean = false
-): CdpPageSession = createCdpPageSession(CdpConnectionTransport(connection), scope, newWindow)
+    newWindow: Boolean = false,
+    browserContextId: String? = null
+): CdpPageSession = createCdpPageSession(CdpConnectionTransport(connection), scope, newWindow, browserContextId)
 
 internal suspend fun createCdpPageSession(
     transport: CdpSessionTransport,
     scope: CdpEndpointScope,
-    newWindow: Boolean = false
+    newWindow: Boolean = false,
+    browserContextId: String? = null
 ): CdpPageSession {
     return when (scope) {
         CdpEndpointScope.Page -> {
+            require(browserContextId == null) { "Browser contexts require a browser-scoped endpoint" }
             require(!newWindow) { "New windows require a browser-scoped endpoint" }
             enableCdpDomains(transport, sessionId = null)
             CdpPageSession(scope = CdpEndpointScope.Page)
@@ -61,7 +65,11 @@ internal suspend fun createCdpPageSession(
         CdpEndpointScope.Browser -> {
             val targetResult = transport.send(
                 CdpMethods.TARGET_CREATE_TARGET,
-                if (newWindow) mapOf("url" to "about:blank", "newWindow" to true) else mapOf("url" to "about:blank")
+                buildMap {
+                    put("url", "about:blank")
+                    if (newWindow) put("newWindow", true)
+                    browserContextId?.let { put("browserContextId", it) }
+                }
             )
             throwIfCdpError(targetResult, CdpMethods.TARGET_CREATE_TARGET)
             val targetId = targetResult.result?.get("targetId")?.jsonPrimitive?.content
@@ -70,7 +78,7 @@ internal suspend fun createCdpPageSession(
             try {
                 val session = attachCdpPageSession(transport, targetId, ownsTarget = true)
                 enableCdpDomains(transport, session.sessionId)
-                session
+                session.copy(browserContextId = browserContextId)
             } catch (error: Throwable) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                     kotlinx.coroutines.withTimeoutOrNull(1_000) { runCatching {

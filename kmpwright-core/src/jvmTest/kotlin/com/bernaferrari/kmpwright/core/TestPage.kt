@@ -24,6 +24,8 @@ class MockWebViewController : WebViewController {
 
     var evalHandler: ((String) -> String?)? = null
     var waitResultOverride: String? = null
+    var completeNavigationImmediately = true
+    private var committedUrl = "about:blank"
     var screenshotHandler: ((ScreenshotOptions) -> ScreenshotResult)? = null
     private var _navigationCallback: ((NavigationResult) -> Unit)? = null
     val executedScripts: MutableList<String> = mutableListOf()
@@ -49,10 +51,12 @@ class MockWebViewController : WebViewController {
     }
 
     override fun loadUrl(url: String) {
-        _navigationCallback?.invoke(NavigationResult(url, 200, true))
+        committedUrl = url
+        if (completeNavigationImmediately) _navigationCallback?.invoke(NavigationResult(url, 200, true))
     }
 
     override fun loadHtml(content: String, baseUrl: String?) {
+        committedUrl = baseUrl ?: "about:blank"
         _navigationCallback?.invoke(NavigationResult(baseUrl ?: "about:blank", 200, true))
     }
 
@@ -69,7 +73,7 @@ class MockWebViewController : WebViewController {
 
     override fun reload() {}
 
-    override fun getUrl(): String? = "about:blank"
+    override fun getUrl(): String? = committedUrl
 
     override fun getTitle(): String? = null
 
@@ -150,7 +154,7 @@ class MockWebViewController : WebViewController {
     }
 
     override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {
-        callback(cookies.find { it.name == name && it.domain == domain })
+        callback(cookies.find { it.name == name && cookieDomainMatches(it.domain, domain) })
     }
 
     override fun getAllCookies(callback: (List<Cookie>) -> Unit) {
@@ -158,7 +162,7 @@ class MockWebViewController : WebViewController {
     }
 
     override fun deleteCookie(name: String, domain: String) {
-        cookies.removeAll { it.name == name && it.domain == domain }
+        cookies.removeAll { it.name == name && cookieDomainMatches(it.domain, domain) }
     }
 
     override fun deleteAllCookies() {

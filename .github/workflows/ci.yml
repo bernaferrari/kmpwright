@@ -16,12 +16,12 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v4.0.4
+      - name: Install verification and browser contract tools
+        run: sudo apt-get update && sudo apt-get install -y ripgrep ffmpeg libnss3-tools
       - name: Verify repository metadata and documentation
         run: |
           ./scripts/verify-agent-browser-compatibility.sh
           ./scripts/verify-documentation.sh
-      - name: Install video encoder for browser contracts
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg libnss3-tools
       - name: Build Android
         run: |
           export KMPWRIGHT_TEST_CHROME="$(command -v google-chrome || command -v chromium)"
@@ -72,4 +72,14 @@ jobs:
         with:
           api-level: 35
           arch: x86_64
-          script: ./gradlew :kmpwright-test:connectedDebugAndroidTest --no-daemon
+          script: |
+            ./gradlew :kmpwright-test:connectedDebugAndroidTest --no-daemon || { adb logcat -d > android-instrumentation-logcat.txt; exit 1; }
+      - name: Upload instrumentation diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-instrumentation-diagnostics
+          path: |
+            kmpwright-test/build/reports/androidTests/
+            kmpwright-test/build/outputs/androidTest-results/
+            android-instrumentation-logcat.txt

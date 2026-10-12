@@ -4,6 +4,9 @@ import kotlinx.atomicfu.atomic
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +39,14 @@ abstract class BasePage protected constructor(
      * including pages whose controller's dispose implementation is best effort.
      */
     private val closed = atomic(false)
+    protected val closeSignal = CompletableDeferred<Unit>()
+    protected fun beginPageClose() {
+        closeSignal.complete(Unit)
+        pendingNavigation.getAndSet(null)?.completeExceptionally(KmpwrightException("Page closed during navigation"))
+    }
+    protected fun checkPageOpen() {
+        if (closed.value || closeSignal.isCompleted) throw KmpwrightException("Page is closed")
+    }
     private val inheritedSetup = PageSetupRegistry()
 
     protected fun rememberSetup(key: String, apply: suspend (Page) -> Unit) = inheritedSetup.remember(key, apply)
@@ -112,11 +123,48 @@ abstract class BasePage protected constructor(
         override val fileChooser = MutableSharedFlow<FileChooserEvent>(extraBufferCapacity = 8)
     }
 
-    private val routeHandlers = mutableMapOf<Regex, suspend (Route) -> RouteHandler>()
+    private val routeHandlers = mutableMapOf<String, suspend (Route) -> RouteHandler>()
     private val requestFlow = MutableSharedFlow<Request>(extraBufferCapacity = 64)
     private val responseFlow = MutableSharedFlow<Response>(extraBufferCapacity = 64)
     private val navigationResultFlow = MutableSharedFlow<NavigationResult>(extraBufferCapacity = 8)
     private var networkIdleSince: Long = 0
+    private val navigationMutex = Mutex()
+    private val pendingNavigation = atomic<CompletableDeferred<NavigationResult>?>(null)
+
+    private fun navigationCompleted(result: NavigationResult) {
+        if (closed.value) return
+        val allowed = result.url.isNotBlank() &&
+            (config.allowedOriginRules.isEmpty() || config.allowedOriginRules.any { originRuleMatches(it, result.url) }) &&
+            navigationGuardAllows(result.url)
+        val validated = if (!result.ok || allowed) result else result.copy(ok = false,
+            error = "Committed navigation origin is not allowed by KmpwrightConfig: ${result.url}")
+        invalidateOnNavigation()
+        _url.value = validated.url
+        _title.value = controller.getTitle()
+        approvedNavigationUrl = null
+        emitFromCallback(navigationResultFlow, validated)
+        emitFromCallback(events.navigation, NavigationEvent(validated.url, validated.status, NavigationType.NewDocument))
+        if (validated.ok) {
+            emitFromCallback(events.loadState, LoadState.DOMContentLoaded)
+            emitFromCallback(events.loadState, LoadState.Load)
+        }
+        pendingNavigation.value?.complete(validated)
+    }
+
+    private suspend fun navigate(timeoutMs: Long, url: String, start: () -> Unit): NavigationResult = navigationMutex.withLock {
+        if (closed.value) throw KmpwrightException("Page is closed")
+        val pending = CompletableDeferred<NavigationResult>()
+        pendingNavigation.value = pending
+        try {
+            controller.setNavigationCallback(::navigationCompleted)
+            start()
+            withTimeoutOrNull(timeoutMs) { pending.await() }
+                ?: NavigationResult(url, 0, false, "Navigation timeout")
+        } finally {
+            pendingNavigation.compareAndSet(pending, null)
+            approvedNavigationUrl = null
+        }
+    }
 
     private fun <T> emitFromCallback(flow: MutableSharedFlow<T>, value: T) {
         if (!flow.tryEmit(value)) {
@@ -271,6 +319,7 @@ abstract class BasePage protected constructor(
         controller.addRequestListener(requestListener)
         controller.addDialogListener(dialogListener)
         controller.setRequestIdleTimeout(500)
+        controller.setNavigationCallback(::navigationCompleted)
     }
 
     override suspend fun goto(url: String, options: GotoOptions): NavigationResult {
@@ -283,50 +332,7 @@ abstract class BasePage protected constructor(
         networkIdleSince = 0
         invalidateOnNavigation()
 
-        val result = suspendCancellableCoroutine { continuation ->
-            var timeoutJob: kotlinx.coroutines.Job? = null
-
-            continuation.invokeOnCancellation {
-                timeoutJob?.cancel()
-                controller.setNavigationCallback(null)
-                approvedNavigationUrl = null
-            }
-
-            controller.setNavigationCallback { result ->
-                timeoutJob?.cancel()
-                controller.setNavigationCallback(null)
-                val committedOriginAllowed = result.url.isNotBlank() &&
-                    (config.allowedOriginRules.isEmpty() || config.allowedOriginRules.any { originRuleMatches(it, result.url) }) &&
-                    navigationGuardAllows(result.url)
-                val validatedResult = if (committedOriginAllowed) result else result.copy(
-                    ok = false,
-                    error = "Committed navigation origin is not allowed by KmpwrightConfig: ${result.url}"
-                )
-                _url.value = validatedResult.url
-                _title.value = controller.getTitle()
-                approvedNavigationUrl = null
-                if (continuation.isActive) {
-                    navigationResultFlow.tryEmit(validatedResult)
-                    events.navigation.tryEmit(NavigationEvent(validatedResult.url, validatedResult.status, NavigationType.NewDocument))
-                    if (validatedResult.ok) {
-                        events.loadState.tryEmit(LoadState.DOMContentLoaded)
-                        events.loadState.tryEmit(LoadState.Load)
-                    }
-                    continuation.resume(validatedResult)
-                }
-            }
-
-            controller.loadUrl(url)
-
-            timeoutJob = pageScope.launch {
-                delay(options.timeoutMs)
-                if (continuation.isActive) {
-                    controller.setNavigationCallback(null)
-                    approvedNavigationUrl = null
-                    continuation.resume(NavigationResult(url, 0, false, "Navigation timeout"))
-                }
-            }
-        }
+        val result = navigate(options.timeoutMs, url) { controller.loadUrl(url) }
         // Platform navigation callbacks fire at the completed-load boundary. NetworkIdle
         // needs the additional request-quiescence wait; DOMContentLoaded/Load are already met.
         if (result.ok && options.waitUntil == LoadState.NetworkIdle) {
@@ -335,8 +341,11 @@ abstract class BasePage protected constructor(
         return result
     }
 
-    private suspend fun evalString(script: String): String? =
-        controller.normalizeJavaScriptResult(controller.evaluateJavaScriptAsync(script))
+    private suspend fun evalString(script: String): String? = awaitPageOperation(closeSignal) {
+        kotlinx.coroutines.withTimeout(config.timeouts.default) {
+            controller.normalizeJavaScriptResult(controller.evaluateJavaScriptAsync(script))
+        }
+    }
 
     override suspend fun reload(options: ReloadOptions) {
         checkPolicy(ActionType.Navigate, currentPageUrl())
@@ -361,7 +370,8 @@ abstract class BasePage protected constructor(
         _url.value = "about:blank"
         networkIdleSince = 0
         invalidateOnNavigation()
-        controller.loadHtmlAsync(html, null, options.timeoutMs)
+        val result = navigate(options.timeoutMs, "about:blank") { controller.loadHtml(html, null) }
+        if (!result.ok) throw KmpwrightException(result.error ?: "Failed to load HTML content")
         waitForLoadState(options.waitUntil, options.timeoutMs)
     }
 
@@ -373,12 +383,8 @@ abstract class BasePage protected constructor(
 
     final override fun locator(selector: String): Locator {
         val loc = createPlatformLocator(selector)
-        val policy = actionPolicy
-        if (policy != null) {
-            loc.policyChecker = { actionType ->
-                checkPolicy(actionType, currentPageUrl())
-            }
-        }
+        loc.policyChecker = { actionType -> checkPolicy(actionType, currentPageUrl()) }
+        loc.lifetime = closeSignal
         return loc
     }
 
@@ -402,19 +408,7 @@ abstract class BasePage protected constructor(
         val screenshotController = createScreenshotController()
 
         return try {
-            if (options.fullPage) {
-                screenshotController.captureFullPage(options.scale)
-            } else if (options.clip != null) {
-                screenshotController.captureClip(
-                    x = options.clip.x,
-                    y = options.clip.y,
-                    width = options.clip.width,
-                    height = options.clip.height,
-                    scale = options.scale
-                )
-            } else {
-                screenshotController.captureViewport(options.scale)
-            }
+            kotlinx.coroutines.withTimeout(options.timeoutMs) { screenshotController.capture(options) }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             throw KmpwrightException("Screenshot failed: ${e.message}")
@@ -452,26 +446,19 @@ abstract class BasePage protected constructor(
                 throw KmpwrightException("Timeout waiting for load")
             }
             LoadState.NetworkIdle -> {
-                if (controller.getPendingRequestCount() == 0) {
-                    networkIdleSince = currentTimeMillis()
-                } else {
-                    val remaining = (timeoutMs - (currentTimeMillis() - startTime)).coerceAtLeast(0)
-                    if (withTimeoutOrNull(remaining) {
-                            events.loadState.first { it == LoadState.NetworkIdle }
-                        } == null) {
-                        throw KmpwrightException("Timeout waiting for network idle")
+                var quietSince = if (controller.getPendingRequestCount() == 0) currentTimeMillis() else 0L
+                while (currentTimeMillis() - startTime < timeoutMs) {
+                    if (closed.value) throw KmpwrightException("Page is closed")
+                    val now = currentTimeMillis()
+                    if (controller.getPendingRequestCount() != 0) quietSince = 0L
+                    if (controller.getPendingRequestCount() == 0) {
+                        if (quietSince == 0L) quietSince = now
+                        // A request can start and finish between probes; its completion
+                        // timestamp resets the continuous quiet interval as well.
+                        quietSince = maxOf(quietSince, networkIdleSince)
+                        if (now - quietSince >= 500) return
                     }
-                }
-                val idleFor = currentTimeMillis() - networkIdleSince
-                if (idleFor < 500) {
-                    val remaining = (timeoutMs - (currentTimeMillis() - startTime)).coerceAtLeast(0)
-                    if (remaining < 500 - idleFor) {
-                        throw KmpwrightException("Timeout waiting for network idle")
-                    }
-                    delay(500 - idleFor)
-                }
-                if (controller.getPendingRequestCount() == 0) {
-                    return
+                    delay(minOf(25L, (timeoutMs - (now - startTime)).coerceAtLeast(1)))
                 }
                 throw KmpwrightException("Timeout waiting for network idle")
             }
@@ -582,16 +569,14 @@ abstract class BasePage protected constructor(
     }
 
     override fun route(urlPattern: String, handler: suspend (Route) -> RouteHandler) {
-        val regex = routeUrlPatternToRegex(urlPattern)
-        routeHandlers[regex] = handler
+        routeHandlers[urlPattern] = handler
         rememberSetup("route:$urlPattern") { it.route(urlPattern, handler) }
         syncRoutesToController()
     }
 
     override fun unroute(urlPattern: String?) {
         if (urlPattern != null) {
-            val regex = routeUrlPatternToRegex(urlPattern)
-            routeHandlers.remove(regex)
+            routeHandlers.remove(urlPattern)
             forgetSetup("route:$urlPattern")
         } else {
             routeHandlers.clear()
@@ -603,7 +588,7 @@ abstract class BasePage protected constructor(
     private fun syncRoutesToController() {
         controller.removeAllRouteHandlers()
         routeHandlers.forEach { (pattern, handler) ->
-            controller.addRouteHandler(pattern.pattern) { route ->
+            controller.addRouteHandler(routeUrlPatternToRegex(pattern).pattern) { route ->
                 handler(route)
             }
         }
@@ -680,12 +665,19 @@ abstract class BasePage protected constructor(
     }
 
     override suspend fun metrics(): PageMetrics {
+        if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled")
+        val values = evalString("""
+            JSON.stringify({
+                resources: performance.getEntriesByType('resource').length,
+                jsHeapUsedSize: performance.memory ? performance.memory.usedJSHeapSize : null,
+                jsHeapTotalSize: performance.memory ? performance.memory.totalJSHeapSize : null
+            })
+        """.trimIndent())?.let { runCatching { Json.parseToJsonElement(it).jsonObject }.getOrNull() }
+        fun number(name: String) = values?.get(name)?.jsonPrimitive?.content?.toLongOrNull()
         return PageMetrics(
-            documents = 1,
-            frames = 1,
-            jsHeapUsedSize = 0,
-            jsHeapTotalSize = 0,
-            resources = requestFlow.subscriptionCount.value,
+            resources = number("resources")?.toInt(),
+            jsHeapUsedSize = number("jsHeapUsedSize"),
+            jsHeapTotalSize = number("jsHeapTotalSize"),
             networkIdle = controller.getPendingRequestCount() == 0
         )
     }
@@ -722,11 +714,9 @@ abstract class BasePage protected constructor(
     }
 
     override suspend fun pdf(options: PdfOptions): PdfResult {
-        return suspendCancellableCoroutine { cont ->
-            controller.generatePdf(options) { bytes ->
-                cont.resume(PdfResult(bytes ?: ByteArray(0)))
-            }
-        }
+        checkPolicy(ActionType.Screenshot, currentPageUrl())
+        controller.validatePdfOptions(options)
+        return kotlinx.coroutines.withTimeout(config.timeouts.default) { PdfResult(controller.generatePdfAsync(options)) }
     }
 
     override suspend fun addInitScript(script: String): String {
@@ -745,6 +735,7 @@ abstract class BasePage protected constructor(
 
     override suspend fun addScriptTag(options: ScriptTagOptions): String {
         checkPolicy(ActionType.AddScriptTag, currentPageUrl())
+        if (!config.allowEval) throw KmpwrightException("Script insertion is disabled by KmpwrightConfig.allowEval")
         val scriptId = options.id.ifEmpty { "script-${currentTimeMillis()}" }
         val url = options.url?.let { escapeJsString(it) }
         val content = options.content?.let { escapeJsString(it) }
@@ -758,13 +749,13 @@ abstract class BasePage protected constructor(
                     try {
                         var node = document.createElement('script');
                         node.type = '$type';
-                        node.id = '$scriptId';
+                        node.id = ${jsStringLiteral(scriptId)};
                         node.async = ${asyncAttr.toString()};
                         node.defer = ${deferAttr.toString()};
                         if (${url != null}) { node.src = '${url ?: ""}'; }
                         if (${content != null}) { node.text = '${content ?: ""}'; }
                         document.head.appendChild(node);
-                        return '$scriptId';
+                        return ${jsStringLiteral(scriptId)};
                     } catch (e) {
                         return 'error: ' + e.message;
                     }
@@ -796,16 +787,16 @@ abstract class BasePage protected constructor(
                             var link = document.createElement('link');
                             link.rel = 'stylesheet';
                             link.href = '${url ?: ""}';
-                            link.id = '$styleId';
+                            link.id = ${jsStringLiteral(styleId)};
                             document.head.appendChild(link);
-                            return '$styleId';
+                            return ${jsStringLiteral(styleId)};
                         }
                         if (${content != null}) {
                             var style = document.createElement('style');
-                            style.id = '$styleId';
+                            style.id = ${jsStringLiteral(styleId)};
                             style.textContent = '${content ?: ""}';
                             document.head.appendChild(style);
-                            return '$styleId';
+                            return ${jsStringLiteral(styleId)};
                         }
                         return 'error: Either url or content must be provided for addStyleTag';
                     } catch (e) {
@@ -827,23 +818,16 @@ abstract class BasePage protected constructor(
 
     override suspend fun setCookie(cookie: Cookie) {
         checkPolicy(ActionType.SetCookie, currentPageUrl())
+        validateCookie(cookie)
         controller.setCookieAsync(cookie)
     }
 
-    override suspend fun getCookie(name: String): Cookie? {
-        return suspendCancellableCoroutine { cont ->
-            controller.getCookie(name, _url.value ?: "") { cookie ->
-                cont.resume(cookie)
-            }
-        }
+    override suspend fun getCookie(name: String): Cookie? = awaitPageOperation(closeSignal) {
+        kotlinx.coroutines.withTimeout(config.timeouts.default) { controller.getCookieAsync(name, currentPageUrl().orEmpty()) }
     }
 
-    override suspend fun getAllCookies(): List<Cookie> {
-        return suspendCancellableCoroutine { cont ->
-            controller.getAllCookies { cookies ->
-                cont.resume(cookies)
-            }
-        }
+    override suspend fun getAllCookies(): List<Cookie> = awaitPageOperation(closeSignal) {
+        kotlinx.coroutines.withTimeout(config.timeouts.default) { controller.getAllCookiesAsync() }
     }
 
     override suspend fun deleteCookie(name: String, domain: String) {
@@ -950,6 +934,7 @@ abstract class BasePage protected constructor(
     }
 
     internal suspend fun checkPolicy(action: ActionType, url: String? = null) {
+        checkPageOpen()
         val policy = actionPolicy ?: return
         val result = policy.check(action, url)
         when (result) {
@@ -1115,12 +1100,14 @@ abstract class BasePage protected constructor(
     override fun frameLocator(selector: String): FrameLocator {
         return BaseFrameLocator(controller, selector, config).also {
             it.policyChecker = { action -> checkPolicy(action, currentPageUrl()) }
+            it.lifetime = closeSignal
         }
     }
 
     override fun mainFrame(): FrameLocator {
         return BaseFrameLocator(controller, "", config).also {
             it.policyChecker = { action -> checkPolicy(action, currentPageUrl()) }
+            it.lifetime = closeSignal
         }
     }
 
@@ -1141,8 +1128,9 @@ abstract class BasePage protected constructor(
     override suspend fun diffUrls(url1: String, url2: String, timeoutMs: Long): SnapshotDiffResult {
         return try {
             kotlinx.coroutines.withTimeout(timeoutMs) {
-                val html1 = platformHttpGetText(url1)
-                val html2 = platformHttpGetText(url2)
+                if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled")
+                val html1 = read(url1, ReadOptions(raw = true, timeoutMs = timeoutMs)).content
+                val html2 = read(url2, ReadOptions(raw = true, timeoutMs = timeoutMs)).content
                 val text1 = htmlToSnapshotText(html1)
                 val text2 = htmlToSnapshotText(html2)
                 AccessibilitySnapshotEngine.diffSnapshots(text1, text2)
@@ -1218,19 +1206,18 @@ abstract class BasePage protected constructor(
         localStorage: Map<String, String>,
         sessionStorage: Map<String, String>
     ) {
+        cookies.forEach { validateCookie(it) }
+        val restoreUrl = stateUrl?.takeIf(::supportsOriginScopedStateRestore)
+        if (restoreUrl == null && (localStorage.isNotEmpty() || sessionStorage.isNotEmpty())) {
+            throw KmpwrightException("Cannot restore localStorage/sessionStorage without a saved http(s) or file URL.")
+        }
         deleteAllCookies()
         for (cookie in cookies) {
             setCookie(cookie)
         }
 
-        if (localStorage.isEmpty() && sessionStorage.isEmpty()) {
-            return
-        }
-
-        val restoreUrl = stateUrl?.takeIf(::supportsOriginScopedStateRestore)
-            ?: throw KmpwrightException(
-                "Cannot restore localStorage/sessionStorage without a saved http(s) or file URL."
-            )
+        // A saved empty map clears later storage for the saved origin too.
+        if (restoreUrl == null) return
 
         if (currentPageUrl() != restoreUrl) {
             val navigation = goto(restoreUrl)
@@ -1254,6 +1241,7 @@ abstract class BasePage protected constructor(
     private fun currentPageUrl(): String? = controller.getUrl() ?: url.value
 
     private fun navigationGuardAllows(targetUrl: String): Boolean {
+        if (closed.value) throw KmpwrightException("Page is closed")
         val policy = actionPolicy ?: return true
         return when (policy.check(ActionType.Navigate, targetUrl)) {
             PolicyResult.Allow -> true
@@ -1342,12 +1330,14 @@ abstract class BasePage protected constructor(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        beginPageClose()
         if (reactDelegate.isInitialized()) runCatching { reactDelegate.value.dispose() }
         finishClose()
     }
 
     override suspend fun closeAsync() {
         if (!closed.compareAndSet(false, true)) return
+        beginPageClose()
         try {
             if (reactDelegate.isInitialized()) reactDelegate.value.disposeAsync()
         } finally {
@@ -1357,6 +1347,8 @@ abstract class BasePage protected constructor(
     }
 
     private fun finishClose() {
+        beginPageClose()
+        pendingNavigation.getAndSet(null)?.completeExceptionally(KmpwrightException("Page closed during navigation"))
         inheritedSetup.clear()
         networkHistory.clear()
         harCapture.dispose()

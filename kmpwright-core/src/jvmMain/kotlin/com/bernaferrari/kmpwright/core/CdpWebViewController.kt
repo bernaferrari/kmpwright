@@ -26,24 +26,29 @@ internal class CdpWebViewController(
     private val hideScrollbarsForScreenshots: Boolean = false,
     private val allowedOriginRules: Set<String> = emptySet()
 ) : WebViewController, CdpInputBridge {
+    override val inputState = CdpInputState()
 
     private val childNetworkLock = Any()
     private val networkSessionSubscriptions = mutableMapOf<String?, List<CdpEventSubscription>>()
     internal var childSessionReady: suspend (String) -> Unit = {}
     internal var childSessionGone: (String) -> Unit = {}
     internal fun observedChildSessions(): List<String> = synchronized(childNetworkLock) { networkSessionSubscriptions.keys.filterNotNull().filter { it != sessionId } }
+    internal fun ownsFrame(frameId: String): Boolean = frameId == mainFrameId || webMcpRuntime.ownsFrame(frameId)
     internal suspend fun observeFrames() = webMcpRuntime.observeBeforeNavigation()
     private val webMcpRuntime = CdpWebMcp(connection, sessionId, allowedOriginRules,
         frameReady = { child ->
             ensureNetworkEventListeners(child)
             val enabled = connection.sendSession(child, "Network.enable")
             enabled.error?.let { throw KmpwrightException("Could not observe iframe network: ${it.message}") }
+            ensureFetchPausedListener(child)
+            refreshFetchPatterns()
             childSessionReady(child)
         }, frameGone = { child ->
             synchronized(childNetworkLock) { networkSessionSubscriptions.remove(child)?.forEach { it.cancel() } }
             pendingRequests.keys.filter { it.startsWith("frame:$child:") }.forEach { id ->
                 pendingRequests.remove(id)?.let { request -> requestListeners.forEach { it.onRequestFailed(request, "Frame session detached") } }
             }
+            synchronized(childNetworkLock) { childFetchSubscriptions.remove(child)?.cancel() }
             childSessionGone(child)
         })
     override val webMcp: WebMcp get() = webMcpRuntime
@@ -56,6 +61,15 @@ internal class CdpWebViewController(
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     @Volatile private var requestListeners = persistentListOf<RequestListener>()
     private val routeHandlers = java.util.concurrent.ConcurrentHashMap<String, suspend (Route) -> RouteHandler>()
+    init {
+        connection.connectionState?.let { state -> scope.launch {
+            state.collect { connected ->
+                if (!connected && !disposed.get()) navigationCallback?.invoke(
+                    NavigationResult(_url.orEmpty(), 0, false, "CDP connection disconnected"))
+            }
+        } }
+    }
+
     @Volatile private var navigationCallback: ((NavigationResult) -> Unit)? = null
     @Volatile private var dialogListener: DialogListener? = null
 
@@ -70,6 +84,7 @@ internal class CdpWebViewController(
     @Volatile private var fetchPausedListenerInstalled = false
     @Volatile private var domainFilter: DomainFilter? = null
     private var fetchPausedSubscription: CdpEventSubscription? = null
+    private val childFetchSubscriptions = mutableMapOf<String, CdpEventSubscription>()
     private val navigationSubscriptions = mutableListOf<CdpEventSubscription>()
     @Volatile private var mainFrameId: String? = null
     @Volatile private var pendingNavigationUrl: String? = null
@@ -138,6 +153,7 @@ internal class CdpWebViewController(
     override fun loadUrl(url: String) {
         scope.launch {
             try {
+                fetchConfiguration?.join()
                 if (allowedOriginRules.isNotEmpty() && !allowedOriginRules.any { originRuleMatches(it, url) }) {
                     navigationCallback?.invoke(NavigationResult(url, 0, false, "Navigation origin is not allowed by KmpwrightConfig: $url"))
                     return@launch
@@ -181,6 +197,7 @@ internal class CdpWebViewController(
     override fun normalizeJavaScriptResult(raw: String?): String? = raw
 
     override fun evaluateJavaScript(script: String, callback: (String?) -> Unit) {
+        if (disposed.get()) { callback(null); return }
         scope.launch {
             try {
                 callback(evaluateJavaScriptAsync(script))
@@ -191,6 +208,8 @@ internal class CdpWebViewController(
     }
 
     override suspend fun evaluateJavaScriptAsync(script: String): String? {
+        if (disposed.get()) throw KmpwrightException("Page is closed")
+        fetchConfiguration?.join()
         // Page delegates use JavaScript snippets with a leading `return`.
         // Runtime.evaluate accepts expressions, so execute those snippets as
         // a function body while preserving ordinary expressions/statements.
@@ -249,16 +268,31 @@ internal class CdpWebViewController(
             try {
                 val shouldRestoreScrollbars = hideScrollbarsForScreenshots && installHiddenScrollbarStyle()
                 val params = mutableMapOf<String, Any?>(
-                    "format" to options.format.name.lowercase(),
-                    "quality" to options.quality
+                    "format" to options.format.name.lowercase()
                 )
+                require(options.scale.isFinite() && options.scale > 0) { "Screenshot scale must be positive" }
+                require(options.quality in 0..100) { "Screenshot quality must be between 0 and 100" }
+                if (options.format != ScreenshotFormat.PNG) params["quality"] = options.quality
+                if (options.omitBackground) {
+                    val response = cdpSend("Emulation.setDefaultBackgroundColorOverride", mapOf("color" to mapOf("r" to 0, "g" to 0, "b" to 0, "a" to 0)))
+                    response.error?.let { throw KmpwrightException(it.message) }
+                }
                 try {
-                    if (options.clip != null) {
+                    val clip = options.clip ?: if (options.scale != 1.0) {
+                        val metrics = cdpSend(CdpMethods.PAGE_GET_LAYOUT_METRICS)
+                        metrics.error?.let { throw KmpwrightException(it.message) }
+                        val dimensions = metrics.result?.get(if (options.fullPage) "cssContentSize" else "cssLayoutViewport")?.jsonObject
+                            ?: throw KmpwrightException("Screenshot dimensions unavailable")
+                        fun number(name: String) = dimensions[name]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.0
+                        if (options.fullPage) Rectangle(number("x"), number("y"), number("width"), number("height"))
+                        else Rectangle(number("pageX"), number("pageY"), number("clientWidth"), number("clientHeight"))
+                    } else null
+                    if (clip != null) {
                         params["clip"] = mapOf(
-                            "x" to options.clip.x,
-                            "y" to options.clip.y,
-                            "width" to options.clip.width,
-                            "height" to options.clip.height,
+                            "x" to clip.x,
+                            "y" to clip.y,
+                            "width" to clip.width,
+                            "height" to clip.height,
                             "scale" to options.scale
                         )
                     } else {
@@ -275,6 +309,7 @@ internal class CdpWebViewController(
                         callback(null, 0, 0)
                     }
                 } finally {
+                    if (options.omitBackground) cdpSend("Emulation.setDefaultBackgroundColorOverride")
                     if (shouldRestoreScrollbars) {
                         restoreHiddenScrollbarStyle()
                     }
@@ -329,14 +364,32 @@ internal class CdpWebViewController(
         }
     }
 
+    override suspend fun setViewportSizeAsync(width: Int, height: Int) {
+        require(width > 0 && height > 0) { "Viewport dimensions must be positive" }
+        cachedViewportSize = width to height
+        applyDeviceMetrics()
+    }
+
+    override suspend fun setDeviceScaleFactorAsync(scale: Double) {
+        require(scale.isFinite() && scale > 0) { "Device scale factor must be positive" }
+        cachedDeviceScaleFactor = scale
+        applyDeviceMetrics()
+    }
+
+    override suspend fun setUserAgentAsync(userAgent: String) {
+        val response = cdpSend(CdpMethods.NETWORK_SET_USER_AGENT_OVERRIDE, mapOf("userAgent" to userAgent))
+        response.error?.let { throw KmpwrightException("User agent configuration failed: ${it.message}") }
+    }
+
     private suspend fun applyDeviceMetrics() {
         val (width, height) = cachedViewportSize
-        cdpSend(CdpMethods.EMULATION_SET_DEVICE_METRICS_OVERRIDE, mapOf(
+        val response = cdpSend(CdpMethods.EMULATION_SET_DEVICE_METRICS_OVERRIDE, mapOf(
             "width" to width.coerceAtLeast(1),
             "height" to height.coerceAtLeast(1),
             "deviceScaleFactor" to cachedDeviceScaleFactor,
             "mobile" to false
         ))
+        response.error?.let { throw KmpwrightException("Viewport configuration failed: ${it.message}") }
     }
 
     init {
@@ -347,7 +400,7 @@ internal class CdpWebViewController(
                 val cssContentSize = result.result?.get("cssContentSize")?.jsonObject
                 val width = cssContentSize?.get("width")?.jsonPrimitive?.longOrNull?.toInt() ?: 0
                 val height = cssContentSize?.get("height")?.jsonPrimitive?.longOrNull?.toInt() ?: 0
-                cachedViewportSize = width to height
+                if (cachedViewportSize == 0 to 0) cachedViewportSize = width to height
             } catch (_: Exception) {}
         }
     }
@@ -379,12 +432,14 @@ internal class CdpWebViewController(
         val params = mutableMapOf<String, Any>(
             "name" to cookie.name,
             "value" to cookie.value,
-            "domain" to cookie.domain,
             "path" to cookie.path,
             "secure" to cookie.secure,
             "httpOnly" to cookie.httpOnly
         )
-        cookie.sameSite?.let { params["sameSite"] = it }
+        validateCookie(cookie)
+        if (cookie.hostOnly) params["url"] = "${if (cookie.secure) "https" else "http"}://${cookie.domain.removePrefix(".")}${cookie.path}"
+        else params["domain"] = cookie.domain
+        cookie.sameSite?.let { params["sameSite"] = it.lowercase().replaceFirstChar(Char::uppercase) }
         cookie.expires?.let { params["expires"] = it }
         val response = cdpSend(CdpMethods.NETWORK_SET_COOKIE, params)
         response.error?.let { throw KmpwrightException("CDP error ${it.code}: ${it.message}") }
@@ -392,18 +447,34 @@ internal class CdpWebViewController(
         if (result?.get("success")?.jsonPrimitive?.content == "false") {
             throw KmpwrightException("CDP failed to set cookie: ${result["errorMessage"] ?: "unknown error"}")
         }
-        _cookies = _cookies.removingAll { it.name == cookie.name && it.domain == cookie.domain }.adding(cookie)
+        _cookies = _cookies.removingAll { it.name == cookie.name && it.domain == cookie.domain && it.path == cookie.path }.adding(cookie)
     }
 
+    private suspend fun readCookies(url: String? = null): List<Cookie> {
+        if (disposed.get()) throw KmpwrightException("Page is closed")
+        val response = cdpSend(CdpMethods.NETWORK_GET_COOKIES,
+            if (url != null) mapOf("urls" to listOf(url)) else emptyMap())
+        response.error?.let { throw KmpwrightException("Cookie read failed: ${it.message}") }
+        val cookies = response.result?.get("cookies")?.jsonArray ?: throw KmpwrightException("Cookie read returned no cookie data")
+        return cookies.map { parseCdpCookie(it.jsonObject) }
+    }
+
+    override suspend fun getCookieAsync(name: String, domain: String): Cookie? =
+        readCookies(domain.takeIf { it.contains("://") }).filter { it.name == name && cookieDomainMatches(it.domain, domain) }
+            .maxByOrNull { it.path.length }
+
+    override suspend fun getAllCookiesAsync(): List<Cookie> = readCookies()
+
     override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {
+        if (disposed.get()) { callback(null); return }
         scope.launch {
             try {
                 val result = cdpSend(CdpMethods.NETWORK_GET_COOKIES)
-                val cookies = result.result?.get("cookies")?.jsonArray ?: return@launch
+                val cookies = result.result?.get("cookies")?.jsonArray.orEmpty()
                 val found = cookies.firstOrNull { c ->
                     val cName = c.jsonObject["name"]?.jsonPrimitive?.content
                     val cDomain = c.jsonObject["domain"]?.jsonPrimitive?.content
-                    cName == name && cDomain == domain
+                    cName == name && cDomain != null && cookieDomainMatches(cDomain, domain)
                 }
                 callback(found?.let { parseCdpCookie(it.jsonObject) })
             } catch (_: Exception) {
@@ -413,10 +484,11 @@ internal class CdpWebViewController(
     }
 
     override fun getAllCookies(callback: (List<Cookie>) -> Unit) {
+        if (disposed.get()) { callback(emptyList()); return }
         scope.launch {
             try {
                 val result = cdpSend(CdpMethods.NETWORK_GET_COOKIES)
-                val cookies = result.result?.get("cookies")?.jsonArray ?: return@launch
+                val cookies = result.result?.get("cookies")?.jsonArray.orEmpty()
                 callback(cookies.map { parseCdpCookie(it.jsonObject) })
             } catch (_: Exception) {
                 callback(emptyList())
@@ -484,7 +556,7 @@ internal class CdpWebViewController(
             value = obj["value"]?.jsonPrimitive?.content ?: "",
             domain = obj["domain"]?.jsonPrimitive?.content ?: "",
             path = obj["path"]?.jsonPrimitive?.content ?: "/",
-            expires = obj["expires"]?.jsonPrimitive?.content,
+            expires = obj["expires"]?.jsonPrimitive?.content?.toDoubleOrNull()?.takeIf { it >= 0 },
             secure = obj["secure"]?.jsonPrimitive?.booleanOrNull ?: false,
             httpOnly = obj["httpOnly"]?.jsonPrimitive?.booleanOrNull ?: false,
             sameSite = obj["sameSite"]?.jsonPrimitive?.content
@@ -518,7 +590,14 @@ internal class CdpWebViewController(
 
     override fun removeAllRouteHandlers() {
         routeHandlers.clear()
-        scope.launch { refreshFetchPatterns() }
+        queueFetchRefresh()
+    }
+
+    @Volatile private var fetchConfiguration: kotlinx.coroutines.Job? = null
+    private fun queueFetchRefresh() {
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) { refreshFetchPatterns() }
+        fetchConfiguration = job
+        job.start()
     }
 
     private suspend fun refreshFetchPatterns() {
@@ -534,17 +613,25 @@ internal class CdpWebViewController(
                     // inexpensive for normal pages.
                     mapOf("urlPattern" to "*", "resourceType" to "Document")
                 }
-                cdpSend(CdpMethods.FETCH_ENABLE, mapOf("patterns" to listOf(pattern)))
+                (listOf(sessionId) + observedChildSessions()).forEach { target ->
+                    ensureFetchPausedListener(target)
+                    fetchSend(target, CdpMethods.FETCH_ENABLE, mapOf("patterns" to listOf(pattern)))
+                }
             } else {
-                cdpSend(CdpMethods.FETCH_DISABLE)
+                (listOf(sessionId) + observedChildSessions()).forEach { target -> fetchSend(target, CdpMethods.FETCH_DISABLE) }
             }
         }
     }
 
-    private fun ensureFetchPausedListener() {
-        if (fetchPausedListenerInstalled) return
-        fetchPausedListenerInstalled = true
-        fetchPausedSubscription = connection.onEvent("Fetch.requestPaused", sessionId) { params ->
+    private suspend fun fetchSend(target: String?, method: String, params: Map<String, Any?> = emptyMap()): CdpResponse =
+        if (target == null) connection.send(method, params) else connection.sendSession(target, method, params)
+
+    private fun ensureFetchPausedListener(targetSession: String? = sessionId) {
+        synchronized(childNetworkLock) {
+        if (targetSession == sessionId && fetchPausedListenerInstalled) return
+        if (targetSession != sessionId && childFetchSubscriptions.containsKey(targetSession)) return
+        if (targetSession == sessionId) fetchPausedListenerInstalled = true
+        val subscription = connection.onEvent("Fetch.requestPaused", targetSession) { params ->
             val requestId = params["requestId"]?.jsonPrimitive?.content ?: return@onEvent
             val requestObj = params["request"]?.jsonObject ?: return@onEvent
             val url = requestObj["url"]?.jsonPrimitive?.content ?: return@onEvent
@@ -557,7 +644,7 @@ internal class CdpWebViewController(
                 ?: requestObj["resourceType"]?.jsonPrimitive?.content
             if (resourceType == "Document" && !isMainFrameNavigationAllowed(url)) {
                 scope.launch {
-                    cdpSend(CdpMethods.FETCH_FAIL_REQUEST, buildFetchFailParams(requestId, "BlockedByResponse"))
+                    fetchSend(targetSession, CdpMethods.FETCH_FAIL_REQUEST, buildFetchFailParams(requestId, "BlockedByResponse"))
                 }
                 return@onEvent
             }
@@ -565,7 +652,7 @@ internal class CdpWebViewController(
             val hostname = canonicalHttpHost(url)
             if (filter != null && (hostname == null || !filter.isAllowed(hostname))) {
                 scope.launch {
-                    cdpSend(CdpMethods.FETCH_FAIL_REQUEST, buildFetchFailParams(requestId, "BlockedByResponse"))
+                    fetchSend(targetSession, CdpMethods.FETCH_FAIL_REQUEST, buildFetchFailParams(requestId, "BlockedByResponse"))
                 }
                 return@onEvent
             }
@@ -579,7 +666,7 @@ internal class CdpWebViewController(
                     if (continuationHeaders != null) {
                         params["headers"] = continuationHeaders.map { (name, value) -> mapOf("name" to name, "value" to value) }
                     }
-                    cdpSend(CdpMethods.FETCH_CONTINUE_REQUEST, params)
+                    fetchSend(targetSession, CdpMethods.FETCH_CONTINUE_REQUEST, params)
                 }
                 return@onEvent
             }
@@ -588,7 +675,7 @@ internal class CdpWebViewController(
             val route = CdpPausedRoute(request)
             scope.launch {
                 val handlerResult = try {
-                    routeEntry.value(route)
+                    withTimeoutOrNull(5_000) { routeEntry.value(route) } ?: RouteHandler.Abort("TimedOut")
                 } catch (_: Exception) {
                     RouteHandler.Fallthrough
                 }
@@ -609,8 +696,11 @@ internal class CdpWebViewController(
                     )
                     is RouteHandler.Fallthrough -> RouteAction.Fallthrough
                 }
-                dispatchRouteAction(requestId, action, url, headers)
+                dispatchRouteAction(requestId, action, url, headers, targetSession)
             }
+        }
+        if (targetSession == sessionId) fetchPausedSubscription = subscription
+        else if (targetSession != null) childFetchSubscriptions[targetSession] = subscription
         }
     }
 
@@ -631,31 +721,32 @@ internal class CdpWebViewController(
         requestId: String,
         action: RouteAction,
         originalUrl: String,
-        originalHeaders: Map<String, String>
+        originalHeaders: Map<String, String>,
+        targetSession: String? = sessionId
     ) {
         when (action) {
-            is RouteAction.Fulfill -> cdpSend(CdpMethods.FETCH_FULFILL_REQUEST, buildFetchFulfillParams(requestId, action.toFulfillOptions()))
-            is RouteAction.Abort -> cdpSend(CdpMethods.FETCH_FAIL_REQUEST, buildFetchFailParams(requestId, action.errorCode))
+            is RouteAction.Fulfill -> fetchSend(targetSession, CdpMethods.FETCH_FULFILL_REQUEST, buildFetchFulfillParams(requestId, action.toFulfillOptions()))
+            is RouteAction.Abort -> fetchSend(targetSession, CdpMethods.FETCH_FAIL_REQUEST, buildFetchFailParams(requestId, action.errorCode))
             is RouteAction.Continue -> {
                 val targetUrl = action.url ?: originalUrl
                 val filter = domainFilter
                 if (filter != null) {
                     val hostname = canonicalHttpHost(targetUrl)
                     if (hostname == null || !filter.isAllowed(hostname)) {
-                        cdpSend(CdpMethods.FETCH_FAIL_REQUEST, buildFetchFailParams(requestId, "BlockedByResponse"))
+                        fetchSend(targetSession, CdpMethods.FETCH_FAIL_REQUEST, buildFetchFailParams(requestId, "BlockedByResponse"))
                         return
                     }
                 }
-                val headers = credentialHeaders(targetUrl, action.headers ?: originalHeaders)
+                val headers = credentialHeaders(targetUrl, action.headers ?: originalHeaders) ?: action.headers
                 val options = action.toContinueOptions().copy(headers = headers)
-                cdpSend(CdpMethods.FETCH_CONTINUE_REQUEST, buildFetchContinueParams(requestId, options))
+                fetchSend(targetSession, CdpMethods.FETCH_CONTINUE_REQUEST, buildFetchContinueParams(requestId, options))
             }
             is RouteAction.Fallthrough -> {
                 val headers = credentialHeaders(originalUrl, originalHeaders)
                 if (headers == null) {
-                    cdpSend(CdpMethods.FETCH_CONTINUE_REQUEST, mapOf("requestId" to requestId))
+                    fetchSend(targetSession, CdpMethods.FETCH_CONTINUE_REQUEST, mapOf("requestId" to requestId))
                 } else {
-                    cdpSend(
+                    fetchSend(targetSession,
                         CdpMethods.FETCH_CONTINUE_REQUEST,
                         mapOf(
                             "requestId" to requestId,
@@ -946,16 +1037,28 @@ internal class CdpWebViewController(
 
     // --- PDF ---
 
+    override fun validatePdfOptions(options: PdfOptions) {
+        options.paperSizeInches()
+        require(options.scale.isFinite() && options.scale in 0.1..2.0) { "PDF scale must be between 0.1 and 2.0" }
+        listOf(options.margin.top, options.margin.bottom, options.margin.left, options.margin.right).forEach(::pdfLengthInches)
+    }
+
     override fun generatePdf(options: PdfOptions, callback: (ByteArray?) -> Unit) {
         scope.launch {
             try {
+                val size = options.copy(landscape = false).paperSizeInches()
                 val params = mutableMapOf<String, Any>(
                     "landscape" to options.landscape,
                     "displayHeaderFooter" to options.displayHeaderFooter,
-                    "printBackground" to options.printBackground
+                    "printBackground" to options.printBackground,
+                    "paperWidth" to size.first, "paperHeight" to size.second,
+                    "headerTemplate" to options.headerTemplate, "footerTemplate" to options.footerTemplate,
+                    "scale" to options.scale, "pageRanges" to options.pageRanges,
+                    "marginTop" to pdfLengthInches(options.margin.top),
+                    "marginBottom" to pdfLengthInches(options.margin.bottom),
+                    "marginLeft" to pdfLengthInches(options.margin.left),
+                    "marginRight" to pdfLengthInches(options.margin.right)
                 )
-                options.width?.let { params["paperWidth"] = it }
-                options.height?.let { params["paperHeight"] = it }
                 val result = cdpSend(CdpMethods.PAGE_PRINT_TO_PDF, params)
                 val data = result.result?.get("data")?.jsonPrimitive?.content
                 callback(data?.let { java.util.Base64.getDecoder().decode(it) })
@@ -997,6 +1100,7 @@ internal class CdpWebViewController(
         fetchPausedListenerInstalled = false
         val fetchSubscription = fetchPausedSubscription
         fetchPausedSubscription = null
+        synchronized(childNetworkLock) { childFetchSubscriptions.values.forEach { it.cancel() }; childFetchSubscriptions.clear() }
         try {
             fetchSubscription?.cancel()
         } catch (_: Throwable) {

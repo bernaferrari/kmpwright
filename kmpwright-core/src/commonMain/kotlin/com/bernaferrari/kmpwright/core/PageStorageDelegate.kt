@@ -15,7 +15,7 @@ internal class PageStorageDelegate(
 
     suspend fun getLocalStorage(key: String): String? {
         val escapedKey = escapeJsString(key)
-        return evalString("return localStorage.getItem('$escapedKey');")
+        return evalString("localStorage.getItem('$escapedKey');")
     }
 
     suspend fun removeLocalStorage(key: String) {
@@ -44,7 +44,7 @@ internal class PageStorageDelegate(
 
     suspend fun getSessionStorage(key: String): String? {
         val escapedKey = escapeJsString(key)
-        return evalString("return sessionStorage.getItem('$escapedKey');")
+        return evalString("sessionStorage.getItem('$escapedKey');")
     }
 
     suspend fun removeSessionStorage(key: String) {

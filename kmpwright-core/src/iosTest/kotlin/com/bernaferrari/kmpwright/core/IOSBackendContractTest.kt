@@ -26,7 +26,7 @@ class IOSBackendContractTest {
                 PageCapability.TouchInput to SupportLevel.Partial,
                 PageCapability.MouseInput to SupportLevel.Partial,
                 PageCapability.KeyboardInput to SupportLevel.Partial,
-                PageCapability.Pdf to SupportLevel.Supported,
+                PageCapability.Pdf to SupportLevel.Partial,
                 PageCapability.BrowserContexts to SupportLevel.Partial,
                 PageCapability.ServiceWorkers to SupportLevel.Unsupported,
                 PageCapability.DomainFiltering to SupportLevel.Partial,

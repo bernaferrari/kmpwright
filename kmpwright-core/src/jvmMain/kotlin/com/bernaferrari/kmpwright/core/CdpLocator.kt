@@ -68,32 +68,16 @@ internal class CdpLocator(
         return bridge.pointerInRoot(point.getValue("x").jsonPrimitive.double, point.getValue("y").jsonPrimitive.double, force)
     }
 
-    override suspend fun waitFor(state: SelectorState, timeoutMs: Long) {
-        if (selector.split(">>").none { it.trim().startsWith("role=") }) return super.waitFor(state, timeoutMs)
-        try {
-            withTimeout(timeoutMs) {
-                while (true) {
-                    val ready = when (state) {
-                        SelectorState.Visible -> isVisible()
-                        SelectorState.Hidden -> !isVisible()
-                        SelectorState.Attached -> count() > 0
-                        SelectorState.Detached -> count() == 0
-                    }
-                    if (ready) return@withTimeout
-                    kotlinx.coroutines.delay(100)
-                }
-            }
-        } catch (_: TimeoutCancellationException) {
-            currentCoroutineContext().ensureActive()
-            throw KmpwrightException("Timeout waiting for selector '$selector' state: $state")
-        }
-    }
-
     override suspend fun click(options: ClickOptions) = nativeAction(options.timeoutMs) {
+        if (config.inputMode == InputMode.JsOnly) return@nativeAction super.click(options)
         policyChecker?.invoke(ActionType.Click)
         if (parseRef(selector) != null) evalOnElement("return true;", requireElement = true)
         if (!options.force) waitFor(SelectorState.Visible, options.timeoutMs)
         val (x, y) = pointerPosition(options.force)
+        if (config.inputMode == InputMode.TouchOnly) {
+            CdpTouch(bridge).tap(x, y, TapOptions(timeoutMs = options.timeoutMs, force = options.force))
+            return@nativeAction
+        }
         mouse.click(x, y, MouseClickOptions(timeoutMs = options.timeoutMs, button = options.button, clickCount = options.clickCount, delayMs = options.delayMs))
     }
 
@@ -103,6 +87,7 @@ internal class CdpLocator(
     }
 
     override suspend fun tap(options: TapOptions) = nativeAction(options.timeoutMs) {
+        if (config.inputMode == InputMode.JsOnly) return@nativeAction super.tap(options)
         policyChecker?.invoke(ActionType.Click)
         if (parseRef(selector) != null) evalOnElement("return true;", requireElement = true)
         if (!options.force) waitFor(SelectorState.Visible, options.timeoutMs)
@@ -111,6 +96,7 @@ internal class CdpLocator(
     }
 
     override suspend fun hover() = nativeAction(config.timeouts.waitForSelector) {
+        if (config.inputMode != InputMode.Hybrid) return@nativeAction super.hover()
         policyChecker?.invoke(ActionType.Hover)
         waitFor(SelectorState.Visible, config.timeouts.waitForSelector)
         val (x, y) = pointerPosition(false)
@@ -135,6 +121,7 @@ internal class CdpLocator(
     }
 
     override suspend fun fill(text: String, options: FillOptions) = nativeAction(options.timeoutMs) {
+        if (config.inputMode != InputMode.Hybrid) return@nativeAction super.fill(text, options)
         policyChecker?.invoke(ActionType.Fill)
         if (parseRef(selector) != null) evalOnElement("return true;", requireElement = true)
         if (!options.force) waitFor(SelectorState.Visible, options.timeoutMs)
@@ -143,6 +130,7 @@ internal class CdpLocator(
     }
 
     override suspend fun type(text: String, options: TypeOptions) = nativeAction(options.timeoutMs) {
+        if (config.inputMode != InputMode.Hybrid) return@nativeAction super.type(text, options)
         policyChecker?.invoke(ActionType.Type)
         waitFor(SelectorState.Visible, options.timeoutMs)
         focusForInput(selectAll = false)
@@ -150,12 +138,14 @@ internal class CdpLocator(
     }
 
     override suspend fun press(key: String, options: PressOptions) = nativeAction(options.timeoutMs) {
+        if (config.inputMode != InputMode.Hybrid) return@nativeAction super.press(key, options)
         policyChecker?.invoke(ActionType.Press)
         focusForInput(selectAll = false)
         keyboard.press(key, options)
     }
 
     override suspend fun dragTo(target: Locator, options: DragOptions) = nativeAction(options.timeoutMs) {
+        if (config.inputMode != InputMode.Hybrid) return@nativeAction super.dragTo(target, options)
         policyChecker?.invoke(ActionType.Drag)
         require(target is CdpLocator && target.controller === controller) { "Drag target must belong to the same page" }
         val (x1, y1) = pointerPosition(false, options.sourcePosition)
@@ -182,13 +172,11 @@ internal class CdpLocator(
         }
         ensureHelpersInjected(controller, config.installMode)
         val bridge = controller as? CdpInputBridge ?: throw KmpwrightException("File upload requires CDP")
-        val nth = this.options?.nth
         val result = bridge.sendCdpCommand(CdpMethods.RUNTIME_EVALUATE, mapOf(
             "expression" to """(function() {
                 var list = window.__kmpwright_resolveAll(${selectorPartsJs()});
-                if (${config.strictSelectors} && list.length > 1 && ${nth == null}) throw new Error('Strict selector matched more than one element');
-                var index = ${nth ?: 0};
-                return list[index < 0 ? list.length + index : index] || null;
+                if (${config.strictSelectors} && list.length > 1) throw new Error('Strict selector matched more than one element');
+                return list[0] || null;
             })()""",
             "returnByValue" to false
         ))

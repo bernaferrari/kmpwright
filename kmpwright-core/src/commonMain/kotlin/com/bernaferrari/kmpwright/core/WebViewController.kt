@@ -33,10 +33,12 @@ data class Cookie(
     val value: String,
     val domain: String,
     val path: String = "/",
-    val expires: String? = null,
+    /** Unix epoch seconds; null denotes a session cookie. */
+    val expires: Double? = null,
     val secure: Boolean = false,
     val httpOnly: Boolean = false,
-    val sameSite: String? = null
+    val sameSite: String? = null,
+    val hostOnly: Boolean = !domain.startsWith(".")
 )
 
 interface RequestListener {

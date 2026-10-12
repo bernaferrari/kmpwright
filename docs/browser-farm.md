@@ -7,9 +7,15 @@ it is not a hosted queue or service.
 
 ## Safe leases
 
-Build slots with `browserFarmSlot`. Releasing a lease runs the browser reset
-workflow (`about:blank`, cookies, storage, headers, routes, and extra pages)
-before another caller can acquire that slot.
+Build slots with `browserFarmSlot`. Each lease uses a fresh disposable Chromium
+context or nonpersistent WKWebView data store. Release closes all pages and
+contexts created by that borrower, including their saved states, init scripts
+and background jobs. The next borrower receives a new context.
+
+Android WebView shares process-wide cookie/storage state and cannot provide this
+isolation in one process. Independent farm leases reject Android WebView; use a
+separate host process for each owner. `resetPageForReuse` is only a same-owner
+convenience that clears the active origin, not an isolation boundary.
 
 ```kotlin
 val farm = BrowserFarmScheduler(

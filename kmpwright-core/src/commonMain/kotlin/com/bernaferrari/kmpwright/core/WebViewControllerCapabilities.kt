@@ -38,6 +38,8 @@ interface WebViewNavigationController {
 
 /** Script evaluation and injection capability. */
 interface WebViewScriptController {
+    /** Whether the native evaluate callback awaits JavaScript Promises. */
+    val supportsPromiseEvaluation: Boolean get() = true
     val nativeAccessibility: Boolean get() = false
     val webMcp: WebMcp get() = UnavailableWebMcp
     fun evaluateJavaScript(script: String, callback: (String?) -> Unit)
@@ -139,7 +141,13 @@ interface WebViewCookieStateController {
     fun setCookie(cookie: Cookie)
     suspend fun setCookieAsync(cookie: Cookie) { setCookie(cookie) }
     fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit)
+    suspend fun getCookieAsync(name: String, domain: String): Cookie? = kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+        getCookie(name, domain) { cookie -> if (continuation.isActive) continuation.resume(cookie) }
+    }
     fun getAllCookies(callback: (List<Cookie>) -> Unit)
+    suspend fun getAllCookiesAsync(): List<Cookie> = kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+        getAllCookies { cookies -> if (continuation.isActive) continuation.resume(cookies) }
+    }
     fun deleteCookie(name: String, domain: String)
     suspend fun deleteCookieAsync(name: String, domain: String) { deleteCookie(name, domain) }
     fun deleteAllCookies()
@@ -151,11 +159,23 @@ interface WebViewCaptureController {
     fun takeScreenshot(options: ScreenshotOptions, callback: (ByteArray?, Int, Int) -> Unit)
     fun getViewportSize(): Pair<Int, Int>
     fun setViewportSize(width: Int, height: Int)
+    suspend fun setViewportSizeAsync(width: Int, height: Int) { setViewportSize(width, height) }
     fun setZoomScale(scale: Double)
     fun getZoomScale(): Double
     fun setUserAgent(userAgent: String)
+    suspend fun setUserAgentAsync(userAgent: String) { setUserAgent(userAgent) }
     fun setDeviceScaleFactor(scale: Double)
+    suspend fun setDeviceScaleFactorAsync(scale: Double) { setDeviceScaleFactor(scale) }
+    fun validatePdfOptions(options: PdfOptions) {}
     fun generatePdf(options: PdfOptions, callback: (ByteArray?) -> Unit)
+    suspend fun generatePdfAsync(options: PdfOptions): ByteArray = kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+        generatePdf(options) { bytes ->
+            if (continuation.isActive) {
+                if (bytes == null || bytes.isEmpty()) continuation.resumeWith(Result.failure(KmpwrightException("PDF capture returned no data")))
+                else continuation.resume(bytes)
+            }
+        }
+    }
 }
 
 /** Lifecycle capability owned by a controller instance. */

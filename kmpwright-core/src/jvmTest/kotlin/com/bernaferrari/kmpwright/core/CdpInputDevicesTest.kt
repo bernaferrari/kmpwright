@@ -10,6 +10,29 @@ import org.junit.Test
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class CdpInputDevicesTest {
 
+    @Test fun `cancelling long tap and downAndUp releases input`() = kotlinx.coroutines.test.runTest {
+        val bridge = RecordingCdpInputBridge()
+        val touch = CdpTouch(bridge)
+        val tap = launch { touch.longTap(10.0, 20.0, LongTapOptions(durationMs = 60_000)) }
+        runCurrent()
+        tap.cancel(); tap.join()
+        assertEquals("touchEnd", bridge.commands.last().params["type"])
+        val keyboard = CdpKeyboard(bridge)
+        val key = launch { keyboard.downAndUp("Control", TypeOptions(delayMs = 60_000)) }
+        runCurrent()
+        key.cancel(); key.join()
+        assertEquals("keyUp", bridge.commands.last().params["type"])
+        assertEquals(emptySet<String>(), keyboard.modifiers())
+    }
+
+    @Test fun `pinch increases touch capacity after tap`() = runBlocking {
+        val bridge = RecordingCdpInputBridge()
+        val touch = CdpTouch(bridge)
+        touch.tap(10.0, 20.0)
+        touch.pinch(10.0, 20.0, 2.0)
+        assertEquals(listOf(1, 2), bridge.commands.filter { it.method == CdpMethods.EMULATION_SET_TOUCH_EMULATION_ENABLED }.map { it.params["maxTouchPoints"] })
+    }
+
     @Test
     fun `base page reuses cached input devices`() {
         val page = object : BasePage(MockWebViewController(), KmpwrightConfig()) {
@@ -128,6 +151,7 @@ class CdpInputDevicesTest {
     fun `failed drag releases its acquired button`() = runBlocking {
         val commands = mutableListOf<Map<String, Any?>>()
         val bridge = object : CdpInputBridge {
+            override val inputState = CdpInputState()
             override suspend fun sendCdpCommand(method: String, params: Map<String, Any?>): CdpResponse {
                 commands += params
                 if (params["type"] == "mouseMoved" && commands.size > 2) throw IllegalStateException("move failed")
@@ -154,6 +178,7 @@ class CdpInputDevicesTest {
 }
 
 private class RecordingCdpInputBridge : CdpInputBridge {
+    override val inputState = CdpInputState()
     val commands = mutableListOf<RecordedCdpCommand>()
 
     override suspend fun sendCdpCommand(method: String, params: Map<String, Any?>): CdpResponse {

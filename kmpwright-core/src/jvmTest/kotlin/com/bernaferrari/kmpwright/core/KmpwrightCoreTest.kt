@@ -623,7 +623,7 @@ class PdfOptionsTest {
 
     @Test
     fun `pdf format enum has all values`() {
-        assertEquals(11, PdfFormat.entries.size)
+        assertEquals(12, PdfFormat.entries.size)
         assertTrue(PdfFormat.entries.contains(PdfFormat.Letter))
         assertTrue(PdfFormat.entries.contains(PdfFormat.A4))
         assertTrue(PdfFormat.entries.contains(PdfFormat.A3))

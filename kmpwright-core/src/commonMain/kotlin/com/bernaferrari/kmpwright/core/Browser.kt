@@ -8,6 +8,9 @@ expect class Browser {
 
     constructor(context: PlatformContext, config: KmpwrightConfig = KmpwrightConfig())
 
+    internal suspend fun beginIndependentLease()
+    internal suspend fun endIndependentLease()
+
     fun newPage(): Page
     suspend fun newPageAsync(): Page
     /** Enumerate actual browser tabs, including pages not created by this library (CDP only). */

@@ -55,17 +55,8 @@ class IOSTouch(
         injectTouchEvent("touchend", x2, y2)
     }
 
-    override suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions) {
-        controller.evaluateJavaScript("""
-            (function() {
-                var el = document.elementFromPoint($x, $y);
-                if (el) {
-                    var event = new Event('touchstart', { bubbles: true, touches: [new Touch({ identifier: 0, target: el, clientX: $x, clientY: $y })] });
-                    el.dispatchEvent(event);
-                }
-            })()
-        """.trimIndent()) { }
-    }
+    override suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions): Unit =
+        throw UnsupportedOperationException("WKWebView cannot synthesize a trusted native pinch gesture")
 
     private fun injectTouchEvent(type: String, x: Double, y: Double) {
         val jsType = jsStringLiteral(type)

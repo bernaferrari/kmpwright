@@ -75,6 +75,40 @@ class KmpwrightInstrumentedTest {
     }
 
     @Test
+    fun keyboardTypesIntoActualEditors() = runPageTest {
+        page.setContent("<input id=input><textarea id=area></textarea><div id=editable contenteditable=true></div>")
+        for (id in listOf("input", "area", "editable")) {
+            page.locator("#$id").focus()
+            page.keyboard.type("Hello")
+            page.keyboard.insertText(" world")
+            val expression = "document.getElementById('$id')." + if (id == "editable") "textContent" else "value"
+            assertEquals(id, "Hello world", page.evaluate(expression).value)
+        }
+    }
+
+    @Test
+    fun pdfUsesPhysicalPaperDimensionsAndMultiplePages() = runPageTest {
+        page.setContent("<div style='height:3000px;background:#fdd'>First page</div><h1>Last page</h1>")
+        page.scrollDown(100.0)
+        val before = page.evaluate("window.scrollY").value
+        val result = page.pdf(com.bernaferrari.kmpwright.core.PdfOptions(format = com.bernaferrari.kmpwright.core.PdfFormat.A4))
+        assertEquals(before, page.evaluate("window.scrollY").value)
+        val file = java.io.File.createTempFile("kmpwright-pdf-test-", ".pdf", InstrumentationRegistry.getInstrumentation().targetContext.cacheDir)
+        try {
+            file.writeBytes(result.bytes)
+            android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+                android.graphics.pdf.PdfRenderer(descriptor).use { renderer ->
+                    assertTrue("Long documents must be paginated", renderer.pageCount > 1)
+                    renderer.openPage(0).use { printed ->
+                        assertTrue(printed.width in 594..596)
+                        assertTrue(printed.height in 840..843)
+                    }
+                }
+            }
+        } finally { file.delete() }
+    }
+
+    @Test
     fun documentStartScriptsRunBeforePageScriptsAndCanBeRemoved() = runPageTest {
         val first = page.addInitScript("window.initValue = 'registered';")
         val retained = page.addInitScript("window.retainedValue = 7;")

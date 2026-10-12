@@ -29,6 +29,7 @@ abstract class BaseLocator(
      * Policy checker invoked before actions. Set by BasePage.locator().
      */
     internal var policyChecker: (suspend (ActionType) -> Unit)? = null
+    internal var lifetime: kotlinx.coroutines.Deferred<Unit>? = null
 
     private fun selectorParts(): List<String> {
         return if (selector.contains(">>")) {
@@ -38,32 +39,41 @@ abstract class BaseLocator(
         }
     }
 
-    protected fun selectorPartsJs(): String {
-        val parts = selectorParts().map { part -> parseRef(part)?.let { "ref=$it" } ?: part }
-        val encoded = parts.joinToString(
-            separator = ",",
-            prefix = "[",
-            postfix = "]"
-        ) { "'${escapeJsString(it)}'" }
-        return encoded
+    // A query is an immutable sequence: selection, filtering and indexing keep
+    // their position when another selector is appended.
+    private var querySteps: List<String> = selectorParts().map {
+        "'${escapeJsString(parseRef(it)?.let { ref -> "ref=$ref" } ?: it)}'"
+    } + listOfNotNull(filterOptions?.let { filterStep(it) })
+
+    private fun filterStep(options: FilterOptions): String {
+        fun field(name: String, value: String?) = value?.let { "$name:'${escapeJsString(it)}'" }
+        return listOfNotNull(
+            field("hasText", options.hasText), field("hasNotText", options.hasNotText),
+            field("has", options.has), field("hasNot", options.hasNot),
+            options.nth?.let { "nth:$it" }
+        ).joinToString(",", "{", "}")
     }
 
-    protected suspend fun evalOnElement(body: String, requireElement: Boolean = false): String? {
+    protected fun selectorPartsJs(): String = querySteps.joinToString(",", "[", "]")
+
+    private fun derived(newSelector: String, steps: List<String>): Locator =
+        createLocator(newSelector).also {
+            (it as? BaseLocator)?.apply {
+                querySteps = steps
+                policyChecker = this@BaseLocator.policyChecker
+                lifetime = this@BaseLocator.lifetime
+            }
+        }
+
+    protected suspend fun evalOnElement(body: String, requireElement: Boolean = false): String? = awaitPageOperation(lifetime) {
         ensureHelpersInjected(controller, config.installMode)
         val parts = selectorPartsJs()
-        val nthIndex = filterOptions?.nth
-        val nthExpr = nthIndex?.toString() ?: "null"
         val script = """
             (function() {
                 var list = window.__kmpwright_resolveAll($parts);
                 if (!list || list.length === 0) return ${if (requireElement) "'__kmpwright_missing_element__'" else "null"};
-                if (${config.strictSelectors} && list.length > 1 && $nthExpr === null) return '__kmpwright_strict_violation__';
-                var el = (function() {
-                    if ($nthExpr === null) return list[0];
-                    var idx = $nthExpr;
-                    if (idx < 0) idx = list.length + idx;
-                    return list[idx] || null;
-                })();
+                if (${config.strictSelectors} && list.length > 1) return '__kmpwright_strict_violation__';
+                var el = list[0];
                 if (!el) return ${if (requireElement) "'__kmpwright_missing_element__'" else "null"};
                 $body
             })()
@@ -75,7 +85,7 @@ abstract class BaseLocator(
         if (result == "__kmpwright_strict_violation__") {
             throw KmpwrightException("Strict selector matched more than one element: $selector")
         }
-        return result
+        return@awaitPageOperation result
     }
 
     private suspend fun evalActionOnElement(body: String): String? = evalOnElement(body, requireElement = true)
@@ -273,10 +283,12 @@ abstract class BaseLocator(
     }
 
     override suspend fun textContent(): String? {
+        if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled by KmpwrightConfig.allowDomExtraction")
         return evalOnElement("return el.textContent;")
     }
 
     override suspend fun innerText(): String {
+        if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled by KmpwrightConfig.allowDomExtraction")
         return evalOnElement("return el.innerText;") ?: ""
     }
 
@@ -285,15 +297,18 @@ abstract class BaseLocator(
     }
 
     override suspend fun getAttribute(name: String): String? {
+        if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled by KmpwrightConfig.allowDomExtraction")
         val escapedName = escapeJsString(name)
         return evalOnElement("return el.getAttribute('$escapedName');")
     }
 
     override suspend fun inputValue(): String? {
+        if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled by KmpwrightConfig.allowDomExtraction")
         return evalOnElement("return el.value;")
     }
 
     override suspend fun computedStyles(): Map<String, String> {
+        if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled by KmpwrightConfig.allowDomExtraction")
         val raw = evalOnElement("""
             var s = window.getComputedStyle(el);
             var result = {};
@@ -310,7 +325,8 @@ abstract class BaseLocator(
         }
     }
 
-    override suspend fun count(): Int {
+    override suspend fun count(): Int = awaitPageOperation(lifetime) {
+        if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled by KmpwrightConfig.allowDomExtraction")
         ensureHelpersInjected(controller, config.installMode)
         val parts = selectorPartsJs()
         val script = """
@@ -319,7 +335,7 @@ abstract class BaseLocator(
                 return list.length;
             })()
         """.trimIndent()
-        return evaluateJavaScriptAsync(script)?.toIntOrNull() ?: 0
+        return@awaitPageOperation evaluateJavaScriptAsync(script)?.toDoubleOrNull()?.toInt() ?: 0
     }
 
     override suspend fun isVisible(): Boolean {
@@ -359,43 +375,26 @@ abstract class BaseLocator(
     )
 
     override suspend fun boundingBox(): Rectangle? {
-        ensureHelpersInjected(controller, config.installMode)
-        val script = """
-            (function() {
-                var el = window.__kmpwright_resolveFirst(${selectorPartsJs()});
-                if (!el) return null;
-                var rect = el.getBoundingClientRect();
-                return JSON.stringify({ "x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height });
-            })()
-        """.trimIndent()
-
-        return suspendCancellableCoroutine { cont ->
-            controller.evaluateJavaScript(script) { result ->
-                try {
-                    val normalized = controller.normalizeJavaScriptResult(result)
-                    if (normalized == null || !normalized.startsWith("{")) {
-                        cont.resume(null)
-                        return@evaluateJavaScript
-                    }
-
-                    val parsed = Json.decodeFromString<BoundingBoxJson>(normalized)
-                    cont.resume(Rectangle(parsed.x, parsed.y, parsed.width, parsed.height))
-                } catch (e: Exception) {
-                    cont.resume(null)
-                }
-            }
-        }
+        if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled by KmpwrightConfig.allowDomExtraction")
+        val result = evalOnElement("""
+            var rect = el.getBoundingClientRect();
+            return JSON.stringify({x:rect.x, y:rect.y, width:rect.width, height:rect.height});
+        """) ?: return null
+        val parsed = Json.decodeFromString<BoundingBoxJson>(result)
+        return Rectangle(parsed.x, parsed.y, parsed.width, parsed.height)
     }
 
     override suspend fun screenshot(options: ScreenshotOptions): ScreenshotResult {
         policyChecker?.invoke(ActionType.Screenshot)
         scrollIntoViewIfNeeded()
-        val box = boundingBox() ?: return ScreenshotResult(ByteArray(0), 0, 0)
+        val box = boundingBox() ?: throw KmpwrightException("No element found for screenshot: $selector")
         val clip = Rectangle(box.x, box.y, box.width, box.height)
 
         return suspendCancellableCoroutine { cont ->
             controller.takeScreenshot(options.copy(fullPage = false, clip = clip)) { bytes, width, height ->
-                cont.resume(ScreenshotResult(bytes ?: ByteArray(0), width, height))
+                if (!cont.isActive) return@takeScreenshot
+                if (bytes == null) cont.resumeWith(Result.failure(KmpwrightException("Element screenshot returned no data: $selector")))
+                else cont.resume(ScreenshotResult(bytes, width, height))
             }
         }
     }
@@ -425,8 +424,22 @@ abstract class BaseLocator(
         """.trimIndent())
     }
 
-    override suspend fun waitFor(state: SelectorState, timeoutMs: Long) {
+    override suspend fun waitFor(state: SelectorState, timeoutMs: Long) = awaitPageOperation(lifetime) {
         ensureHelpersInjected(controller, config.installMode)
+        if (controller.nativeAccessibility && selectorParts().any { it.startsWith("role=") }) {
+            val started = currentTimeMillis()
+            do {
+                val satisfied = when (state) {
+                    SelectorState.Visible -> isVisible()
+                    SelectorState.Hidden -> !isVisible()
+                    SelectorState.Attached -> count() > 0
+                    SelectorState.Detached -> count() == 0
+                }
+                if (satisfied) return@awaitPageOperation
+                delay(minOf(50L, (timeoutMs - (currentTimeMillis() - started)).coerceAtLeast(1)))
+            } while (currentTimeMillis() - started < timeoutMs)
+            throw KmpwrightException("Timeout waiting for selector '$selector' state: $state")
+        }
         val conditionJs = when (state) {
             SelectorState.Visible -> {
                 val parts = selectorPartsJs()
@@ -467,16 +480,18 @@ abstract class BaseLocator(
      * The existing polling path remains available for custom Locator
      * implementations which are not backed by [BaseLocator].
      */
-    internal suspend fun waitForExpectation(conditionJs: String, timeoutMs: Long): Boolean? {
-        if (controller.nativeAccessibility && selectorParts().any { it.startsWith("role=") }) return null
+    internal suspend fun waitForExpectation(conditionJs: String, timeoutMs: Long): Boolean? = awaitPageOperation(lifetime) {
+        if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled by KmpwrightConfig.allowDomExtraction")
+        if (controller.nativeAccessibility && selectorParts().any { it.startsWith("role=") }) return@awaitPageOperation null
         ensureHelpersInjected(controller, config.installMode)
+        if (!controller.supportsPromiseEvaluation) return@awaitPageOperation awaitPageCondition(controller, conditionJs, timeoutMs)
         val observerScript = waitForConditionJs(conditionJs, timeoutMs)
         val result = suspendCancellableCoroutine<String?> { cont ->
             controller.evaluateJavaScript(observerScript) { value ->
                 if (cont.isActive) cont.resume(controller.normalizeJavaScriptResult(value))
             }
         }
-        return when (result) {
+        return@awaitPageOperation when (result) {
             "true" -> true
             "__kmpwright_timeout__" -> false
             // A custom controller may not support evaluating Promise-returning
@@ -485,14 +500,15 @@ abstract class BaseLocator(
         }
     }
 
-    override fun first(): Locator = createLocator(selector, FilterOptions(nth = 0)).apply { (this as? BaseLocator)?.policyChecker = this@BaseLocator.policyChecker }
-    override fun nth(index: Int): Locator = createLocator(selector, FilterOptions(nth = index)).apply { (this as? BaseLocator)?.policyChecker = this@BaseLocator.policyChecker }
-    override fun last(): Locator = createLocator(selector, FilterOptions(nth = -1)).apply { (this as? BaseLocator)?.policyChecker = this@BaseLocator.policyChecker }
-    override fun locator(selector: String): Locator = createLocator("${this.selector} >> $selector").apply { (this as? BaseLocator)?.policyChecker = this@BaseLocator.policyChecker }
-    override fun filter(options: FilterOptions): Locator = createLocator(selector, options).apply { (this as? BaseLocator)?.policyChecker = this@BaseLocator.policyChecker }
+    override fun first(): Locator = nth(0)
+    override fun nth(index: Int): Locator = derived(selector, querySteps + filterStep(FilterOptions(nth = index)))
+    override fun last(): Locator = nth(-1)
+    override fun locator(selector: String): Locator = derived("${this.selector} >> $selector",
+        querySteps + selector.split(">>").map { "'${escapeJsString(it.trim())}'" })
+    override fun filter(options: FilterOptions): Locator = derived(selector, querySteps + filterStep(options))
 
     override fun frameLocator(selector: String): FrameLocator {
-        return BaseFrameLocator(controller, selector, config)
+        return BaseFrameLocator(controller, selector, config).also { it.policyChecker = policyChecker; it.lifetime = lifetime }
     }
 
     override fun expect(): KmpwrightExpect = KmpwrightExpect(this, config)
@@ -678,7 +694,7 @@ abstract class BaseLocator(
                             if (matcher && matcher.test(t)) out.push(nodes[i]);
                             else if (t.indexOf(needle) !== -1) out.push(nodes[i]);
                         }
-                        return out;
+                        return out.filter(function(node) { return !out.some(function(other) { return other !== node && node.contains(other); }); });
                     }
                     if (selector.startsWith('exact_text=')) {
                         var exactText = selector.slice(11);
@@ -688,7 +704,7 @@ abstract class BaseLocator(
                             var exactValue = (exactNodes[e].innerText || exactNodes[e].textContent || '').trim();
                             if (exactValue === exactText) exactOut.push(exactNodes[e]);
                         }
-                        return exactOut;
+                        return exactOut.filter(function(node) { return !exactOut.some(function(other) { return other !== node && node.contains(other); }); });
                     }
                     if (selector.startsWith('placeholder=')) {
                         return window.__kmpwright_byAttribute(base, 'placeholder', selector.slice(12));
@@ -718,19 +734,38 @@ abstract class BaseLocator(
                     }
                 };
                 window.__kmpwright_resolveFirst = function(parts) {
-                    var root = document;
-                    var el = null;
-                    for (var i = 0; i < parts.length; i++) {
-                        el = window.__kmpwright_queryOne(parts[i], root);
-                        if (!el) return null;
-                        root = el;
-                    }
-                    return el;
+                    return window.__kmpwright_resolveAll(parts)[0] || null;
                 };
                 window.__kmpwright_resolveAll = function(parts) {
                     var root = document;
                     var current = [];
                     for (var i = 0; i < parts.length; i++) {
+                        var step = parts[i];
+                        if (typeof step !== 'string') {
+                            current = current.filter(function(el) {
+                                var text = el.innerText || el.textContent || '';
+                                if (step.hasText != null && text.indexOf(step.hasText) === -1) return false;
+                                if (step.hasNotText != null && text.indexOf(step.hasNotText) !== -1) return false;
+                                function descendants(selector) {
+                                    var result = [el];
+                                    selector.split('>>').forEach(function(part) {
+                                        var next = [];
+                                        result.forEach(function(root) { next = next.concat(window.__kmpwright_queryAll(part.trim(), root)); });
+                                        result = next;
+                                    });
+                                    return result.length > 0;
+                                }
+                                if (step.has != null && !descendants(step.has)) return false;
+                                if (step.hasNot != null && descendants(step.hasNot)) return false;
+                                return true;
+                            });
+                            if (step.nth != null) {
+                                var index = step.nth < 0 ? current.length + step.nth : step.nth;
+                                current = current[index] ? [current[index]] : [];
+                            }
+                            if (!current.length) return [];
+                            continue;
+                        }
                         var next = [];
                         var baseList = current.length ? current : [root];
                         for (var j = 0; j < baseList.length; j++) {
@@ -753,7 +788,6 @@ abstract class BaseLocator(
             if (installMode == InstallMode.Disabled) {
                 throw KmpwrightException("Selector helpers are disabled by KmpwrightConfig.installMode")
             }
-            if (installMode != InstallMode.AlwaysEvaluate && controller in injectedControllers) return
             suspendCancellableCoroutine<Unit> { cont ->
                 controller.evaluateJavaScript(helpersJsSource()) { _ ->
                     if (installMode != InstallMode.AlwaysEvaluate) injectedControllers = injectedControllers.adding(controller)
@@ -843,6 +877,7 @@ class BaseFrameLocator(
         this(controller as WebViewLocatorController, selector, config)
 
     internal var policyChecker: (suspend (ActionType) -> Unit)? = null
+    internal var lifetime: kotlinx.coroutines.Deferred<Unit>? = null
 
     private fun frameSetupJs(): String {
         val selectors = selector.split(">>").map(String::trim).filter(String::isNotEmpty)
@@ -873,6 +908,7 @@ class BaseFrameLocator(
     }
 
     private val frameController = object : WebViewLocatorController, WebViewCaptureController by controller {
+        override val supportsPromiseEvaluation get() = controller.supportsPromiseEvaluation
         override fun normalizeJavaScriptResult(raw: String?): String? = raw
         override fun evaluateJavaScript(script: String, callback: (String?) -> Unit) {
             controller.evaluateJavaScript(scopedScript(script), callback)
@@ -890,7 +926,7 @@ class BaseFrameLocator(
         object : BaseLocator(frameController, selector, config.copy(
             installMode = if (config.installMode == InstallMode.Disabled) InstallMode.Disabled else InstallMode.AlwaysEvaluate
         ), options) {
-            init { policyChecker = this@BaseFrameLocator.policyChecker }
+            init { policyChecker = this@BaseFrameLocator.policyChecker; lifetime = this@BaseFrameLocator.lifetime }
             override fun createLocator(newSelector: String, options: FilterOptions?): Locator =
                 this@BaseFrameLocator.createLocator(newSelector, options)
             override suspend fun evaluateJavaScriptAsync(script: String): String? =
@@ -899,7 +935,7 @@ class BaseFrameLocator(
 
     override fun frameLocator(selector: String): FrameLocator =
         BaseFrameLocator(controller, listOf(this.selector, selector).filter(String::isNotEmpty).joinToString(" >> "), config)
-            .also { it.policyChecker = policyChecker }
+            .also { it.policyChecker = policyChecker; it.lifetime = lifetime }
 
     private suspend fun inspectFrame(body: String): String? = checkedResult(controller.evaluateJavaScriptAsync("""
         (function() { ${frameSetupJs()} $body })()
@@ -908,6 +944,7 @@ class BaseFrameLocator(
     override suspend fun name(): String? = inspectFrame("return frame ? frame.getAttribute('name') || frame.id || null : null;")
     override suspend fun url(): String? = inspectFrame("return frame ? frameDocument.location.href : document.location.href;")
     override suspend fun boundingBox(): Rectangle? {
+        if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled by KmpwrightConfig.allowDomExtraction")
         val value = inspectFrame("if (!frame) return null; var r = frame.getBoundingClientRect(); return JSON.stringify({x:r.x,y:r.y,width:r.width,height:r.height});") ?: return null
         val box = Json.decodeFromString<BaseLocator.BoundingBoxJson>(value)
         return Rectangle(box.x, box.y, box.width, box.height)

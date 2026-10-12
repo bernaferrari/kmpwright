@@ -107,6 +107,7 @@ internal class CdpFrameRuntime(private val transport: CdpSessionTransport, priva
 
     fun controller(path: List<String>): WebViewLocatorController = object : WebViewLocatorController,
         WebViewCaptureController by rootController, CdpInputBridge {
+        override val inputState get() = (rootController as CdpInputBridge).inputState
         override val nativeAccessibility: Boolean get() = true
         override suspend fun prepareAccessibilitySnapshot() = CdpAccessibility.prepare(this)
         override fun normalizeJavaScriptResult(raw: String?): String? = raw
@@ -150,12 +151,12 @@ internal class CdpFrameRuntime(private val transport: CdpSessionTransport, priva
 }
 
 internal class CdpFrameLocator(private val runtime: CdpFrameRuntime, private val path: List<String>,
-    private val config: KmpwrightConfig, private val policy: suspend (ActionType, String?) -> Unit) : FrameLocator {
+    private val config: KmpwrightConfig, private val lifetime: Deferred<Unit>? = null, private val policy: suspend (ActionType, String?) -> Unit) : FrameLocator {
     private val controller = runtime.controller(path)
     override fun locator(selector: String): Locator = CdpLocator(controller, selector,
         config.copy(installMode = if (config.installMode == InstallMode.Disabled) InstallMode.Disabled else InstallMode.AlwaysEvaluate))
-        .also { it.policyChecker = { action -> policy(action, url()) } }
-    override fun frameLocator(selector: String): FrameLocator = CdpFrameLocator(runtime, path + selector, config, policy)
+        .also { it.policyChecker = { action -> policy(action, url()) }; it.lifetime = lifetime }
+    override fun frameLocator(selector: String): FrameLocator = CdpFrameLocator(runtime, path + selector, config, lifetime, policy)
     override suspend fun url(): String? = runtime.evaluate(path, "location.href")
     override suspend fun name(): String? = runtime.ownerInfo(path, "return el.getAttribute('name') || el.id || null;")
     override suspend fun boundingBox(): Rectangle? {

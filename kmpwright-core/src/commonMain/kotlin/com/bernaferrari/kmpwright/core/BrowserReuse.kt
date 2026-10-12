@@ -11,8 +11,8 @@ fun browserFarmSlot(
         id = id,
         metadata = metadata,
         connect = connect,
-        prepare = prepare,
-        cleanup = { browser -> resetBrowserForReuse(browser) },
+        prepare = { browser -> browser.beginIndependentLease(); prepare(browser) },
+        cleanup = { browser -> browser.endIndependentLease() },
         close = close
     )
 }
@@ -28,6 +28,7 @@ suspend fun resetBrowserForReuse(browser: Browser) {
     resetPageForReuse(primary)
 }
 
+/** Clears the active origin for same-owner reuse; does not establish tenant isolation. */
 suspend fun resetPageForReuse(page: Page) {
     page.unroute()
     page.setDomainFilter(emptySet())

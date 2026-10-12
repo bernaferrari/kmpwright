@@ -8,7 +8,20 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
+internal class CdpInputState {
+    val pressedModifiers = linkedSetOf<String>()
+    var configuredTouchPoints = 0
+    fun modifierMask(): Int = pressedModifiers.fold(0) { mask, key -> mask or when (key) {
+        KeyboardModifiers.ALT -> 1
+        KeyboardModifiers.CONTROL -> 2
+        KeyboardModifiers.META -> 4
+        KeyboardModifiers.SHIFT -> 8
+        else -> 0
+    } }
+}
+
 internal interface CdpInputBridge {
+    val inputState: CdpInputState
     suspend fun rectangleInRoot(rect: Rectangle): Rectangle = rect
     suspend fun prepareFrameScreenshot() {}
     suspend fun pointerInRoot(x: Double, y: Double, force: Boolean): Pair<Double, Double> = x to y
@@ -124,6 +137,7 @@ internal class CdpMouse(
                 "deltaX" to deltaX,
                 "deltaY" to deltaY,
                 "button" to "none",
+                "modifiers" to bridge.inputState.modifierMask(),
                 "buttons" to pressedButtons
             )
         )
@@ -155,6 +169,7 @@ internal class CdpMouse(
                 "x" to x,
                 "y" to y,
                 "button" to "none",
+                "modifiers" to bridge.inputState.modifierMask(),
                 "buttons" to pressedButtons
             )
         )
@@ -175,6 +190,7 @@ internal class CdpMouse(
                 "x" to x,
                 "y" to y,
                 "button" to button.cdpName(),
+                "modifiers" to bridge.inputState.modifierMask(),
                 "buttons" to buttons,
                 "clickCount" to clickCount
             )
@@ -197,7 +213,7 @@ internal class CdpMouse(
 internal class CdpKeyboard(
     private val bridge: CdpInputBridge
 ) : Keyboard {
-    private val pressedKeys = linkedSetOf<String>()
+    private val pressedKeys get() = bridge.inputState.pressedModifiers
 
     override suspend fun insertText(text: String) {
         bridge.sendOrThrow(CdpMethods.INPUT_INSERT_TEXT, mapOf("text" to text))
@@ -269,11 +285,13 @@ internal class CdpKeyboard(
     }
 
     override suspend fun downAndUp(key: String, options: TypeOptions) {
-        down(key)
-        if (options.delayMs > 0) {
-            delay(options.delayMs)
+        val acquired = !isModifierPressed(key)
+        try {
+            if (acquired) down(key)
+            if (options.delayMs > 0) delay(options.delayMs)
+        } finally {
+            if (acquired) withContext(NonCancellable) { withTimeout(1_000) { up(key) } }
         }
-        up(key)
     }
 
     override fun isModifierPressed(key: String): Boolean = pressedKeys.contains(canonicalModifierKey(key))
@@ -329,26 +347,32 @@ internal class CdpKeyboard(
 internal class CdpTouch(
     private val bridge: CdpInputBridge
 ) : Touch {
-    private var touchEmulationEnabled = false
 
     override suspend fun tap(x: Double, y: Double, options: TapOptions) {
         ensureTouchEmulation(maxTouchPoints = 1)
         sendTouchEvent("touchStart", listOf(touchPoint(0, x, y)), options.modifiers)
+        try {
         delay(10)
-        sendTouchEvent("touchEnd", emptyList(), options.modifiers)
+        } finally {
+            withContext(NonCancellable) { withTimeout(1_000) { sendTouchEvent("touchEnd", emptyList(), options.modifiers) } }
+        }
     }
 
     override suspend fun longTap(x: Double, y: Double, options: LongTapOptions) {
         ensureTouchEmulation(maxTouchPoints = 1)
         sendTouchEvent("touchStart", listOf(touchPoint(0, x, y)))
+        try {
         delay(options.durationMs)
-        sendTouchEvent("touchEnd", emptyList())
+        } finally {
+            withContext(NonCancellable) { withTimeout(1_000) { sendTouchEvent("touchEnd", emptyList(), 0) } }
+        }
     }
 
     override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, options: ScrollOptions) {
         ensureTouchEmulation(maxTouchPoints = 1)
         val steps = options.steps.coerceAtLeast(1)
         sendTouchEvent("touchStart", listOf(touchPoint(0, x, y)))
+        try {
         for (step in 1..steps) {
             val progress = step.toDouble() / steps
             sendTouchEvent(
@@ -363,7 +387,9 @@ internal class CdpTouch(
             )
             delay(8)
         }
-        sendTouchEvent("touchEnd", emptyList())
+        } finally {
+            withContext(NonCancellable) { withTimeout(1_000) { sendTouchEvent("touchEnd", emptyList(), 0) } }
+        }
     }
 
     override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, options: SwipeOptions) {
@@ -374,6 +400,7 @@ internal class CdpTouch(
         val durationMs = ((distance / options.speed.coerceAtLeast(1.0)) * 1000.0).toLong().coerceAtLeast(16L)
         val steps = (durationMs / 16L).coerceAtLeast(1L).toInt()
         sendTouchEvent("touchStart", listOf(touchPoint(0, x1, y1)))
+        try {
         for (step in 1..steps) {
             val progress = step.toDouble() / steps
             sendTouchEvent(
@@ -382,7 +409,9 @@ internal class CdpTouch(
             )
             delay(16)
         }
-        sendTouchEvent("touchEnd", emptyList())
+        } finally {
+            withContext(NonCancellable) { withTimeout(1_000) { sendTouchEvent("touchEnd", emptyList(), 0) } }
+        }
     }
 
     override suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions) {
@@ -397,6 +426,7 @@ internal class CdpTouch(
                 touchPoint(1, x + startOffset, y)
             )
         )
+        try {
         for (step in 1..steps) {
             val progress = step.toDouble() / steps
             val currentOffset = startOffset + ((endOffset - startOffset) * progress)
@@ -409,16 +439,18 @@ internal class CdpTouch(
             )
             delay(16)
         }
-        sendTouchEvent("touchEnd", emptyList())
+        } finally {
+            withContext(NonCancellable) { withTimeout(1_000) { sendTouchEvent("touchEnd", emptyList(), 0) } }
+        }
     }
 
     private suspend fun ensureTouchEmulation(maxTouchPoints: Int) {
-        if (touchEmulationEnabled) return
+        if (bridge.inputState.configuredTouchPoints >= maxTouchPoints) return
         bridge.sendOrThrow(
             CdpMethods.EMULATION_SET_TOUCH_EMULATION_ENABLED,
             mapOf("enabled" to true, "maxTouchPoints" to maxTouchPoints)
         )
-        touchEmulationEnabled = true
+        bridge.inputState.configuredTouchPoints = maxTouchPoints
     }
 
     private suspend fun sendTouchEvent(type: String, touchPoints: List<Map<String, Any>>, modifiers: Int = 0) {

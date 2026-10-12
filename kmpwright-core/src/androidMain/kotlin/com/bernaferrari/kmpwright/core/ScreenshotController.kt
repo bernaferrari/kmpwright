@@ -228,6 +228,16 @@ class AndroidScreenshotController(
         }
     }
 
+    internal suspend fun measurePageDimensions(): PageDimensions {
+        ensureLaidOut()
+        val dimensions = queryPageDimensions()
+        if (webView.isAttachedToWindow) withTimeoutOrNull(500) { awaitVisualState() }
+        awaitFrame()
+        return dimensions
+    }
+
+    internal suspend fun scrollForCapture(x: Int, y: Int) = scrollToAndWait(x, y)
+
     private suspend fun queryPageDimensions(): PageDimensions {
         val fallback = getPageDimensions()
         val raw = evaluateJavaScript(DIMENSIONS_SCRIPT) ?: return fallback
@@ -282,7 +292,15 @@ class AndroidScreenshotController(
     }
 
     private suspend fun scrollToAndWait(x: Int, y: Int) {
-        webView.scrollTo(x, y)
+        @Suppress("DEPRECATION")
+        val pixelScale = webView.scale.takeIf { it > 0 } ?: 1f
+        evaluateJavaScript("""
+            (function() {
+                window.scrollTo({left: Math.floor($x / $pixelScale),
+                    top: Math.floor($y / $pixelScale), behavior: 'instant'});
+                return true;
+            })()
+        """.trimIndent())
         webView.invalidate()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && webView.isAttachedToWindow) {
             withTimeoutOrNull(500) {

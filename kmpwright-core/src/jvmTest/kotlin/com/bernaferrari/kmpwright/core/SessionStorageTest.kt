@@ -131,7 +131,7 @@ class SessionStorageTest {
 
         fun executeJs(script: String): String? {
             val setItemRegex = Regex("""(localStorage|sessionStorage)\.setItem\('([^']*)',\s*'([^']*)'\)""")
-            val getItemRegex = Regex("""return (localStorage|sessionStorage)\.getItem\('([^']*)'\)""")
+            val getItemRegex = Regex("""(localStorage|sessionStorage)\.getItem\('([^']*)'\)""")
             val removeItemRegex = Regex("""(localStorage|sessionStorage)\.removeItem\('([^']*)'\)""")
             val clearRegex = Regex("""(localStorage|sessionStorage)\.clear\(\)""")
             val getAllRegex = Regex("""JSON\.stringify\(items\)(?:\))?""")
