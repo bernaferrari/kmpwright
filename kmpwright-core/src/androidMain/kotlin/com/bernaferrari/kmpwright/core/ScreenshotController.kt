@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.view.Choreographer
 import android.view.PixelCopy
 import android.webkit.WebView
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -61,8 +62,7 @@ class AndroidScreenshotController(
         val scaledHeight = (pageDims.contentHeight * pageScale).toInt().coerceAtLeast(1)
         validateBitmapSize(scaledWidth, scaledHeight, "full-page screenshot")
 
-        val originalContentOffsetY = webView.scrollY
-        val originalContentOffsetX = webView.scrollX
+        val originalScroll = readScrollPosition()
         val originalVerticalScrollbars = webView.isVerticalScrollBarEnabled
         val originalHorizontalScrollbars = webView.isHorizontalScrollBarEnabled
 
@@ -140,7 +140,7 @@ class AndroidScreenshotController(
         } finally {
             webView.isVerticalScrollBarEnabled = originalVerticalScrollbars
             webView.isHorizontalScrollBarEnabled = originalHorizontalScrollbars
-            webView.scrollTo(originalContentOffsetX, originalContentOffsetY)
+            withContext(NonCancellable) { restoreScrollPosition(originalScroll) }
         }
     }
 
@@ -238,6 +238,17 @@ class AndroidScreenshotController(
 
     internal suspend fun scrollForCapture(x: Int, y: Int) = scrollToAndWait(x, y)
 
+    internal suspend fun readScrollPosition(): Pair<Double, Double> {
+        val raw = evaluateJavaScript("JSON.stringify({x: window.scrollX, y: window.scrollY})")
+            ?: throw KmpwrightException("Unable to read scroll position before capture")
+        val position = JSONObject(raw)
+        return position.getDouble("x") to position.getDouble("y")
+    }
+
+    internal suspend fun restoreScrollPosition(position: Pair<Double, Double>) {
+        scrollCssAndWait(position.first, position.second)
+    }
+
     private suspend fun queryPageDimensions(): PageDimensions {
         val fallback = getPageDimensions()
         val raw = evaluateJavaScript(DIMENSIONS_SCRIPT) ?: return fallback
@@ -294,10 +305,14 @@ class AndroidScreenshotController(
     private suspend fun scrollToAndWait(x: Int, y: Int) {
         @Suppress("DEPRECATION")
         val pixelScale = webView.scale.takeIf { it > 0 } ?: 1f
+        scrollCssAndWait(x / pixelScale.toDouble(), y / pixelScale.toDouble())
+    }
+
+    private suspend fun scrollCssAndWait(x: Double, y: Double) {
         evaluateJavaScript("""
             (function() {
-                window.scrollTo({left: Math.floor($x / $pixelScale),
-                    top: Math.floor($y / $pixelScale), behavior: 'instant'});
+                window.scrollTo({left: $x,
+                    top: $y, behavior: 'instant'});
                 return true;
             })()
         """.trimIndent())

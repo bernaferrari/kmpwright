@@ -16,7 +16,7 @@ behavioral boundary. Native host checks must be distinguished from mocks.
       navigation, URL/title tracking, close/cancellation/concurrent deadlines.
 - [ ] Default iOS network bridge: normalize default ports, Fetch URL/body
       semantics, terminal errors/timeouts, 204/205/304 null bodies, XHR.
-- [ ] Android keyboard typing/insertText through the actual editor connection;
+- [ ] Android keyboard typing/insertText through the actual WebView editor;
       input, textarea and contenteditable device contracts.
 - [ ] Cookies: numeric/session expiry, URL/domain/path identity, targeted Android
       deletion, iOS HttpOnly, validation before destructive state restoration.
@@ -57,3 +57,18 @@ behavioral boundary. Native host checks must be distinguished from mocks.
 
 Keep KMPwright as the brand. Freeze feature expansion while repairing these
 contracts. Do not mark the entire review solved from mock/string tests alone.
+
+## Physical Android verification — 2026-10-12
+
+The 57-test instrumentation suite passed on a Samsung SM-S931B running
+Android 17 (API 37), with Android System WebView 154.0.8037.106.
+This exercises real inputs, textareas and contenteditable typing, full-page
+screenshots, and physical A4 PDF dimensions with multiple pages.
+
+The first phone run exposed fractional CSS scroll coordinates being truncated
+during PDF restoration. Capture now saves and restores the renderer's exact CSS
+coordinates, and the original failing assertion passes without a tolerance.
+Capture tile positioning also retains fractional CSS coordinates to reach the
+final physical pixels. The navigation and event tests now trigger navigation and
+assert the result, instead of waiting for timeouts and unconditionally passing. These results do
+not establish completion of the remaining review contracts or green CI.

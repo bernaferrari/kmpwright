@@ -463,16 +463,22 @@ class KmpwrightInstrumentedTest {
     @Test
     fun testPageWaitForNavigation() {
         runPageTest {
-            page.waitForNavigation()
-            assertTrue(true) // If we get here, no exception was thrown
+            val navigation = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                page.waitForNavigation(com.bernaferrari.kmpwright.core.WaitForNavigationOptions(timeoutMs = 3_000))
+            }
+            page.setContent("<h1>Navigation waiter fixture</h1>")
+            assertTrue("Navigation must complete successfully", navigation.await()?.ok == true)
         }
     }
 
     @Test
     fun testPageWaitForEvent() {
         runPageTest {
-            page.waitForEvent("domcontentloaded")
-            assertTrue(true)
+            val event = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                page.waitForEvent("domcontentloaded", com.bernaferrari.kmpwright.core.WaitForEventOptions(timeoutMs = 3_000))
+            }
+            page.setContent("<h1>Navigation event fixture</h1>")
+            assertEquals(com.bernaferrari.kmpwright.core.LoadState.DOMContentLoaded, event.await())
         }
     }
 

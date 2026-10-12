@@ -37,8 +37,7 @@ internal suspend fun captureAndroidPdf(webView: WebView, options: PdfOptions): B
     if (dimensions.contentWidth.toLong() * dimensions.contentHeight > 16L * 1024 * 1024) {
         throw KmpwrightException("Android PDF capture exceeds the 16-megapixel document limit")
     }
-    val originalX = webView.scrollX
-    val originalY = webView.scrollY
+    val originalScroll = capture.readScrollPosition()
     val vertical = webView.isVerticalScrollBarEnabled
     val horizontal = webView.isHorizontalScrollBarEnabled
     val document = PdfDocument()
@@ -105,7 +104,7 @@ internal suspend fun captureAndroidPdf(webView: WebView, options: PdfOptions): B
         withContext(NonCancellable + Dispatchers.Main) {
             webView.isVerticalScrollBarEnabled = vertical
             webView.isHorizontalScrollBarEnabled = horizontal
-            capture.scrollForCapture(originalX, originalY)
+            capture.restoreScrollPosition(originalScroll)
         }
     }
 }
