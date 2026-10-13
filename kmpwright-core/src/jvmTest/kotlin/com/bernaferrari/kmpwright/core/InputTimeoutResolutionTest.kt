@@ -27,26 +27,25 @@ class InputTimeoutResolutionTest {
     @Test
     fun `null option timeouts use the configured action timeout`() = runBlocking {
         val keyboard = CdpKeyboard(NoopBridge(), shortAction)
-        assertTimesOut(50) { keyboard.type("abc", TypeOptions(delayMs = 5_000)) }
-        assertTimesOut(50) { keyboard.press("a", PressOptions(delayMs = 5_000)) }
+        assertTimesOut(50) { keyboard.type("abc", delayMs = 5_000) }
+        assertTimesOut(50) { keyboard.press("a", delayMs = 5_000) }
         assertEquals(emptySet<String>(), keyboard.modifiers())
     }
 
     @Test
     fun `an explicit option timeout wins over the configured action timeout`() = runBlocking {
         val keyboard = CdpKeyboard(NoopBridge(), shortAction)
-        assertTimesOut(80) { keyboard.type("abc", TypeOptions(delayMs = 5_000, timeoutMs = 80)) }
+        assertTimesOut(80) { keyboard.type("abc", delayMs = 5_000, timeoutMs = 80) }
         // A generous explicit timeout lets a slow-but-finite action complete.
-        CdpKeyboard(NoopBridge(), shortAction).type("ab", TypeOptions(delayMs = 60, timeoutMs = 2_000))
-        CdpTouch(NoopBridge(), shortAction).tap(1.0, 2.0, TapOptions(timeoutMs = 2_000))
+        CdpKeyboard(NoopBridge(), shortAction).type("ab", delayMs = 60, timeoutMs = 2_000)
+        CdpTouch(NoopBridge(), shortAction).tap(1.0, 2.0, timeoutMs = 2_000)
     }
 
     @Test
     fun `default config keeps the thirty second action timeout`() {
-        assertEquals(30_000L, KmpwrightConfig().actionTimeout(ClickOptions().timeoutMs))
-        assertEquals(30_000L, KmpwrightConfig().actionTimeout(FillOptions().timeoutMs))
-        assertEquals(30_000L, KmpwrightConfig().actionTimeout(DragOptions().timeoutMs))
-        assertEquals(50L, shortAction.actionTimeout(TapOptions().timeoutMs))
-        assertEquals(7L, shortAction.actionTimeout(PressOptions(timeoutMs = 7).timeoutMs))
+        // Every action's timeoutMs parameter defaults to null, which resolves to TimeoutConfig.action.
+        assertEquals(30_000L, KmpwrightConfig().actionTimeout(null))
+        assertEquals(50L, shortAction.actionTimeout(null))
+        assertEquals(7L, shortAction.actionTimeout(7))
     }
 }

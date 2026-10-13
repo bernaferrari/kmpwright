@@ -13,7 +13,7 @@ package com.bernaferrari.kmpwright.core
  *   default port removed, `/` appended to a bare origin) so `"https://Example.com"` matches `https://example.com/`;
  * - an empty pattern matches every URL;
  * - KMPwright extension: a `regex:` prefix makes the rest a regular expression searched in the URL
- *   (for String-only parameters such as [WaitForNavigationOptions.url]).
+ *   (for String-only parameters such as the `url` of [Page.waitForNavigation]).
  *
  * Relative patterns are not resolved: Playwright resolves them only against a context `baseURL`, which
  * KMPwright does not have.

@@ -19,3 +19,9 @@ internal class NativeScroll(val x: Float, val y: Float, val viewWidth: Float)
 
 /** Reads the WebView's scroll without touching JavaScript; cheap enough to call every frame. */
 internal expect fun readNativeScroll(platformContext: PlatformContext): NativeScroll?
+
+/**
+ * Hides the soft keyboard if the *page* has it (automation focused an input), without touching
+ * other text fields such as the agent composer.
+ */
+internal expect fun releaseWebViewKeyboard(platformContext: PlatformContext)

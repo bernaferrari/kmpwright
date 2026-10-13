@@ -57,7 +57,7 @@ suspend fun checkExample(page: Page): ScreenshotResult {
 }
 ```
 
-Browser interactions are `suspend` functions; options are data classes; assertions retry until they hold or time out. See [Coming from Playwright](/docs/coming-from-playwright).
+Browser interactions are `suspend` functions; options are named parameters with defaults; assertions retry until they hold or time out. See [Coming from Playwright](/docs/coming-from-playwright).
 
 </Tab>
 </Tabs>
@@ -68,7 +68,7 @@ Browser interactions are `suspend` functions; options are data classes; assertio
 | --- | --- | --- |
 | Android `WebView` | `Browser(AndroidPlatformContext(activity, webView))` | `browser.page()` attaches to your `WebView` |
 | iOS `WKWebView` | `Browser(IOSPlatformContext(webView = webView))` | `browser.page()` attaches to your `WKWebView` |
-| JVM Chromium (owned) | `launchBrowser(BrowserLaunchOptions(executablePath))` | `launched.browser.newPage()` |
+| JVM Chromium (owned) | `launchBrowser(executablePath)` | `launched.browser.newPage()` |
 | JVM Chromium (existing or cloud) | `Browser(JvmPlatformContext(), KmpwrightConfig(cdp = CdpConfig(...)))` | `browser.newPage()` or `browser.attachTarget(id)` |
 
 Step-by-step setup is in the [Quick start](/docs/quick-start).

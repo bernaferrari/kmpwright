@@ -4,18 +4,22 @@
   <img src="docs/assets/kmpwright-opengraph-v3.jpg" alt="KMPwright — Browser automation for Kotlin Multiplatform. One Kotlin workflow connects Android, iOS and Chromium browsers." width="1200" />
 </p>
 
-Write browser automation in shared Kotlin with a Playwright-style page and
-locator API. Run it against your application's Android `WebView` or iOS
-`WKWebView`, or launch and connect to Chromium on JVM.
+**Playwright-style browser automation and [agent-browser](https://agent-browser.dev) commands
+for Kotlin Multiplatform.** Drive your app's Android `WebView` or iOS `WKWebView` — or
+Chromium on the JVM — from one shared Kotlin API, and hand any of them to an LLM agent.
 
 ```kotlin
-import com.bernaferrari.kmpwright.core.*
+// Playwright-style
+page.goto("https://example.com/login")
+page.getByLabel("Email").fill("ada@example.com")
+page.getByRole("button", name = "Sign in").click()
+expect(page.locator(".greeting")).toHaveText("Welcome, Ada")
 
-suspend fun checkExample(page: Page): ScreenshotResult {
-    page.goto("https://example.com")
-    expect(page.locator("h1")).toHaveText("Example Domain")
-    return page.screenshot()
-}
+// agent-browser-style: one tool an LLM can drive
+page.runCommand("snapshot -i")
+// @e1 [heading] "Welcome, Ada" [level=1]
+// @e2 [link] "Settings"
+page.runCommand("click @e2")
 ```
 
 > [!IMPORTANT]
@@ -23,42 +27,48 @@ suspend fun checkExample(page: Page): ScreenshotResult {
 > published yet. Try the examples or build from source. APIs and platform
 > coverage may change before the first release.
 
+**[Documentation](website/content/docs/index.mdx)** ·
 [Try the demo](#try-the-demo) · [Installation](#installation) ·
 [Connect a browser](#connect-a-browser) ·
 [Coming from Playwright / agent-browser](#coming-from-playwright--agent-browser) · [Recipes](#recipes) ·
-[Platform support](#platform-support) · [Build and test](#build-and-test) ·
-[Documentation website](website/README.md)
+[Platform support](#platform-support) · [Build and test](#build-and-test)
 
-## What you can do
+The full documentation — every API, every agent command, per-platform behavior and a
+capability matrix — lives in [`website/`](website/README.md) (Fumadocs). It is written for people
+and coding agents alike: run `pnpm --dir website dev`, then fetch `/llms.txt`, `/llms-full.txt`
+or any page as Markdown. Coding agents can also load the [KMPwright skill](skills/kmpwright/SKILL.md).
 
-- **Automate flows:** semantic locators, form input, navigation, assertions and waits.
-- **Inspect pages:** accessibility snapshots and audits, Web Vitals, React components and WebMCP tools.
-- **Capture results:** viewport, element and full-page screenshots; visual diffs; CDP video with cursors and contact sheets.
-- **Work with data:** cookies, storage, saved sessions, HTTP Markdown reading, request history and HAR export.
-- **Choose your browser:** embedded mobile WebViews, owned Chromium processes, existing CDP targets or cloud providers.
-- **Set boundaries:** allowed origins, allowed domains, action policies and encrypted storage-state files.
+## Why KMPwright
 
-Features follow each backend's capabilities. The [platform overview](#platform-support)
-and [browser feature guide](docs/browser-features.md) explain where behavior differs.
+- **Agents get a real browser on the device.** `page.snapshot()` returns a compact
+  accessibility tree with `@e` refs in agent-browser's exact format; `page.runCommand("click @e3")`
+  speaks its command grammar, so one tool call wires an on-device or cloud LLM to the page.
+- **Playwright knowledge transfers.** `goto`, `getByRole`, `fill`, `expect(locator)`,
+  `route.fulfill`, `storageState()` — same names, same auto-waiting and actionability checks,
+  as suspend functions with named arguments.
+- **Your WebView, not an emulator farm.** Attach to the `WebView` / `WKWebView` your app
+  already shows. Your existing `WebViewClient`, `WebChromeClient` and delegates keep working.
+- **Honest about platforms.** Every feature reports `Supported`, `Partial` or `Unsupported`
+  per backend through `page.capabilities()`, with notes explaining the gaps.
+- **Boundaries for unattended runs.** Allowed origins and domains enforced below JavaScript,
+  action policies with confirmation callbacks, eval switches and encrypted storage state.
 
 ## Try the demo
 
-The shared Compose Multiplatform app puts automation controls beside a live
-browser. Explore selectors, input, screenshots, cookies, storage state,
-network capture and page inspection without writing a test harness.
+**In your browser:** the home page of [kmpwright.dev](https://kmpwright.dev) runs KMPwright itself,
+compiled to JavaScript, against a live page. Type `snapshot -i`, then `click @e9`. No install needed.
+
+The sample app (Compose Multiplatform, Material 3 Expressive) is a browser you drive like an
+agent. Every interactive element gets a live `@e` badge — tap one to click it — while an
+on-device console speaks agent-browser commands. Recipes run real scripts with a step
+timeline, and Inspect shows console, network, storage and an axe audit. On iOS 26 it uses the
+native Liquid Glass tab bar and navigation.
 
 <p align="center">
-  <img src="docs/assets/kmpwright-android-large-layout.png" alt="Android example with automation controls beside the live browser" width="100%" />
+  <img src="docs/assets/kmpwright-android-agent.png" alt="Android sample: live @e ref badges over the page and the agent console" height="560" />
+  &nbsp;
+  <img src="docs/assets/kmpwright-ipad-liquid-glass.png" alt="iPad sample with Liquid Glass tabs: an agent-loop recipe that snapshots the page and acts on refs" height="560" />
 </p>
-
-<details>
-<summary>iOS phone layout</summary>
-
-<p align="center">
-  <img src="docs/assets/kmpwright-ios-phone.png" alt="KMPwright example on an iPhone simulator, with controls below the browser" width="360" />
-</p>
-
-</details>
 
 Build requirements: JDK 17, the Android SDK for Android, and macOS with Xcode
 for iOS. Run these commands from the repository root.
@@ -128,18 +138,25 @@ arm64 device and arm64 simulator, with iOS 15 as the minimum.
 Navigation, actions, assertions, `newPage()` and `close()` are suspending APIs;
 `dispose()` is the non-suspending best-effort teardown. Run the
 examples below in a coroutine; create and operate mobile WebViews on the main thread.
-The `checkExample(page)` function above works with each backend.
+Each example below runs the same shared function:
+
+```kotlin
+import com.bernaferrari.kmpwright.core.*
+
+suspend fun checkExample(page: Page): ScreenshotResult {
+    page.goto("https://example.com")
+    expect(page.locator("h1")).toHaveText("Example Domain")
+    return page.screenshot()
+}
+```
 
 ### Android WebView
 
 Attach to a `WebView` your application displays:
 
 ```kotlin
-val browser = Browser(AndroidPlatformContext(activity, webView))
-try {
+Browser(AndroidPlatformContext(activity, webView)).use { browser ->
     checkExample(browser.page())
-} finally {
-    browser.close()
 }
 ```
 
@@ -148,11 +165,8 @@ try {
 From `iosMain`, attach to your application's `WKWebView`:
 
 ```kotlin
-val browser = Browser(IOSPlatformContext(webView = webView))
-try {
+Browser(IOSPlatformContext(webView = webView)).use { browser ->
     checkExample(browser.page())
-} finally {
-    browser.close()
 }
 ```
 
@@ -166,18 +180,13 @@ Supply the path to an installed Chrome or Chromium executable. KMPwright launche
 it headless by default and owns the process and temporary profile:
 
 ```kotlin
-suspend fun checkInChromium(executablePath: String): ScreenshotResult {
-    val launched = launchBrowser(BrowserLaunchOptions(executablePath))
-    try {
-        val page = launched.browser.newPage()
-        return checkExample(page)
-    } finally {
-        launched.close()
+suspend fun checkInChromium(executablePath: String): ScreenshotResult =
+    launchBrowser(executablePath).use { launched ->
+        checkExample(launched.browser.newPage())
     }
-}
 ```
 
-Use `headless = false` for a visible browser. Launch options also support persistent
+Use `headless = false` for a visible browser. `launchBrowser` parameters also support persistent
 automation profiles, copies of existing Chrome profiles, extensions and a WebGPU
 preset. See [launch and profile recipes](docs/browser-features.md#owned-chromium-launch-and-profiles).
 
@@ -186,16 +195,13 @@ preset. See [launch and profile recipes](docs/browser-features.md#owned-chromium
 Connect to an existing browser-scoped WebSocket endpoint:
 
 ```kotlin
-val browser = Browser(
+Browser(
     JvmPlatformContext(),
     KmpwrightConfig(cdp = CdpConfig(
         websocketUrl = "ws://localhost:9222/devtools/browser/<id>"
     ))
-)
-try {
+).use { browser ->
     checkExample(browser.newPage())
-} finally {
-    browser.close()
 }
 ```
 
@@ -220,7 +226,7 @@ KMPwright follows one naming rule set, so existing knowledge transfers:
 - **Playwright JS names and shapes** first: `goto`, `goBack`, `locator`, `getByRole`, `fill`, `pressSequentially`, `expect(locator)`, `route.fulfill`, `storageState()`.
 - **Playwright-Java names** where Kotlin can't use the JS name: `route.resume()` for `route.continue()`.
 - **agent-browser names** for agent features: `page.snapshot()`, `@e3` refs in `page.locator("@e3")`, `setAllowedDomains`, `runCommand`.
-- **Kotlin idioms** only where required: `suspend` instead of Promise, option data classes and default arguments instead of option objects, `StateFlow`/`SharedFlow` (`page.events`) instead of `page.on(...)`, and `timeoutMs: Long?` where `null` means the configured default.
+- **Kotlin idioms** only where required: `suspend` instead of Promise, named and default arguments instead of option objects, `StateFlow`/`SharedFlow` (`page.events`) instead of `page.on(...)`, and `timeoutMs: Long?` where `null` means the configured default.
 
 ```kotlin
 // Playwright (TypeScript)                        // KMPwright (Kotlin)
@@ -273,7 +279,7 @@ narrow a result. Snapshot references can also be addressed with `page.locator("@
 ### Wait for the result you need
 
 ```kotlin
-page.goto("https://example.com", GotoOptions(waitUntil = LoadState.DOMContentLoaded))
+page.goto("https://example.com", waitUntil = LoadState.DOMContentLoaded)
 page.locator("h1").waitFor()
 ```
 
@@ -292,11 +298,11 @@ that an application has finished updating.
 
 ```kotlin
 val viewport = page.screenshot()
-val fullPage = page.screenshot(ScreenshotOptions(fullPage = true))
+val fullPage = page.screenshot(fullPage = true)
 val chart = page.locator(".chart").screenshot()
-val snapshot = page.snapshot(SnapshotOptions(interactive = true))
-val annotated = page.screenshot(ScreenshotOptions(annotate = true)) // labels each @eN ref
-val audit = page.accessibilityAudit(AccessibilityAuditOptions(tags = setOf("wcag2aa")))
+val snapshot = page.snapshot(interactive = true)
+val annotated = page.screenshot(annotate = true) // labels each @eN ref
+val audit = page.accessibilityAudit(tags = setOf("wcag2aa"))
 ```
 
 `snapshot.tree` uses [agent-browser's snapshot format](https://agent-browser.dev/snapshots),
@@ -344,11 +350,11 @@ can make CDP bodies unavailable.
 
 ```kotlin
 page.requireCapabilities(PageCapability.VideoRecording)
-page.video.start(RecordingOptions(
+page.video.start(
     path = "capture.mp4",
     fps = 30,
     contactSheetPath = "contact.png"
-))
+)
 page.locator("button").click()
 val recording = page.video.stop()
 ```

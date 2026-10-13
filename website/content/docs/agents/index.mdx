@@ -73,7 +73,7 @@ suspend fun Page.browserTool(command: String): String = try {
     throw e
 } catch (e: Exception) {
     // KmpwrightException messages are written for the model. Other failures, such as
-    // UnsupportedOperationException for a feature the backend lacks, are returned the same way.
+    // KmpwrightUnsupportedException for a feature the backend lacks, are returned the same way.
     "Error: ${e.message ?: e.toString()}"
 }
 ```
@@ -181,11 +181,8 @@ Create the `Browser` on the main thread, and do not `runBlocking` on the main th
 Launch Chromium and drive a new page:
 
 ```kotlin
-val launched = launchBrowser(BrowserLaunchOptions(executablePath))
-try {
-    val answer = runAgent(launched.browser.newPage(), llm, "Find the pricing page")
-} finally {
-    launched.close()
+val answer = launchBrowser(executablePath).use { launched ->
+    runAgent(launched.browser.newPage(), llm, "Find the pricing page")
 }
 ```
 
@@ -313,7 +310,7 @@ agent-browser: `--content-boundaries`.
 
 <Cards>
   <Card title="Commands" href="/docs/agents/commands" description="Every runCommand command, flag, default and output format." />
-  <Card title="Snapshots and refs" href="/docs/agents/snapshots" description="SnapshotOptions, the tree format, ref lifetime and diffing." />
+  <Card title="Snapshots and refs" href="/docs/agents/snapshots" description="Snapshot parameters, the tree format, ref lifetime and diffing." />
   <Card title="LLM tools" href="/docs/agents/llm-tools" description="Wire the browser tool into Koog, Firebase AI Logic or any HTTP API." />
   <Card title="Skills for coding agents" href="/docs/agents/skills" description="Teach Claude Code, Cursor or Codex to write KMPwright code." />
 </Cards>

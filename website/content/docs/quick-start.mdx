@@ -128,13 +128,11 @@ import kotlinx.coroutines.runBlocking
 import java.io.File
 
 fun main() = runBlocking {
-    val launched = launchBrowser(BrowserLaunchOptions(executablePath = "/path/to/chrome"))
-    try {
+    // use {} closes pages, the process and the temporary profile, even on failure.
+    launchBrowser("/path/to/chrome").use { launched ->
         val page = launched.browser.newPage()
         val shot = checkExample(page)
         File("example.png").writeBytes(shot.bytes)
-    } finally {
-        launched.close() // closes pages, the process and the temporary profile
     }
 }
 ```
@@ -205,11 +203,12 @@ Wrap page text for the model in a content boundary so it can tell page content f
 
 On Android and iOS, closing a page you attached to your own `WebView`/`WKWebView` detaches automation (and restores your original Android clients); the view stays yours. A page backed by a WebView KMPwright created is destroyed.
 
-`Browser.use` runs a block on a fresh page and always closes it:
+`use {}` runs a block and always closes the receiver afterwards, even on failure or cancellation. It works on `Browser`, `BrowserContext`, `Page` and the JVM `LaunchedBrowser`:
 
 ```kotlin
-browser.use("https://example.com") {
-    getByText("Learn more").click()
+browser.newPage().use { page ->
+    page.goto("https://example.com")
+    page.getByText("Learn more").click()
 }
 ```
 

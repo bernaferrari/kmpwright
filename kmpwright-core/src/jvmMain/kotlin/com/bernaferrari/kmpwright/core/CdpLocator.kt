@@ -78,46 +78,54 @@ internal class CdpLocator(
         }
     }
 
-    override suspend fun click(options: ClickOptions) {
-        if (config.inputMode == InputMode.JsOnly) return super.click(options)
+    override suspend fun click(button: MouseButton, clickCount: Int, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?) {
+        if (config.inputMode == InputMode.JsOnly) return super.click(button, clickCount, delayMs, position, force, timeoutMs)
         policyChecker?.invoke(ActionType.Click)
-        nativeClick(options, options.clickCount.coerceAtLeast(1), "click")
+        nativeClick(button, clickCount.coerceAtLeast(1), delayMs, position, force, timeoutMs, "click")
     }
 
     /** Playwright `dblclick`: one press/release pair per click (`click` detail 1, `click` detail 2, `dblclick`). */
-    override suspend fun dblclick(options: ClickOptions) {
-        if (config.inputMode == InputMode.JsOnly) return super.dblclick(options)
+    override suspend fun dblclick(button: MouseButton, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?) {
+        if (config.inputMode == InputMode.JsOnly) return super.dblclick(button, delayMs, position, force, timeoutMs)
         policyChecker?.invoke(ActionType.Click)
-        nativeClick(options, 2, "double-click")
+        nativeClick(button, 2, delayMs, position, force, timeoutMs, "double-click")
     }
 
-    private suspend fun nativeClick(options: ClickOptions, clickCount: Int, label: String) {
-        val timeoutMs = timeoutOf(options.timeoutMs)
+    private suspend fun nativeClick(
+        button: MouseButton,
+        clickCount: Int,
+        delayMs: Long,
+        position: Position?,
+        force: Boolean,
+        timeoutMs: Long?,
+        label: String
+    ) {
+        val timeout = timeoutOf(timeoutMs)
         requireLiveRef()
-        val (x, y) = actionPoint(label, timeoutMs, options.force, options.position)
+        val (x, y) = actionPoint(label, timeout, force, position)
         if (config.inputMode == InputMode.TouchOnly) {
             val touch = CdpTouch(bridge, config)
-            repeat(clickCount) { touch.tap(x, y, TapOptions(timeoutMs = timeoutMs, force = options.force)) }
+            repeat(clickCount) { touch.tap(x, y, timeoutMs = timeout) }
             return
         }
         // delayMs is the time between mousedown and mouseup of each click (Playwright semantics).
-        mouse.click(x, y, MouseClickOptions(timeoutMs = timeoutMs, button = options.button, clickCount = clickCount, delayMs = options.delayMs))
+        mouse.click(x, y, button, clickCount, delayMs, timeout)
     }
 
-    override suspend fun tap(options: TapOptions) {
-        if (config.inputMode == InputMode.JsOnly) return super.tap(options)
+    override suspend fun tap(force: Boolean, modifiers: Int, timeoutMs: Long?) {
+        if (config.inputMode == InputMode.JsOnly) return super.tap(force, modifiers, timeoutMs)
         policyChecker?.invoke(ActionType.Click)
-        val timeoutMs = timeoutOf(options.timeoutMs)
+        val timeout = timeoutOf(timeoutMs)
         requireLiveRef()
-        val (x, y) = actionPoint("tap", timeoutMs, options.force)
-        CdpTouch(bridge, config).tap(x, y, options.copy(timeoutMs = timeoutMs))
+        val (x, y) = actionPoint("tap", timeout, force)
+        CdpTouch(bridge, config).tap(x, y, modifiers, timeout)
     }
 
-    override suspend fun hover(options: HoverOptions) {
-        if (config.inputMode != InputMode.Hybrid) return super.hover(options)
+    override suspend fun hover(force: Boolean, timeoutMs: Long?) {
+        if (config.inputMode != InputMode.Hybrid) return super.hover(force, timeoutMs)
         policyChecker?.invoke(ActionType.Hover)
-        val (x, y) = actionPoint("hover", timeoutOf(options.timeoutMs), options.force, checks = Checks(enabled = false))
-        mouse.move(x, y, MoveOptions())
+        val (x, y) = actionPoint("hover", timeoutOf(timeoutMs), force, checks = Checks(enabled = false))
+        mouse.move(x, y)
     }
 
     /** Focuses an element that already passed the editable checks; selects its content for [fill]. */
@@ -137,63 +145,63 @@ internal class CdpLocator(
         if (result != null && result != "true") throw KmpwrightException("Cannot $label '$displayName': element is $result")
     }
 
-    override suspend fun fill(value: String, options: FillOptions) {
-        if (config.inputMode != InputMode.Hybrid) return super.fill(value, options)
+    override suspend fun fill(value: String, force: Boolean, timeoutMs: Long?) {
+        if (config.inputMode != InputMode.Hybrid) return super.fill(value, force, timeoutMs)
         policyChecker?.invoke(ActionType.Fill)
         requireLiveRef()
         // The same editability checks and errors as the WebView backends.
-        performAction("noop", JsonObject(emptyMap()), timeoutOf(options.timeoutMs), options.force,
+        performAction("noop", JsonObject(emptyMap()), timeoutOf(timeoutMs), force,
             Checks(editable = true, stable = false, hit = false), actionLabel = "fill")
         focusForInput(selectAll = true, label = "fill")
         if (value.isEmpty()) keyboard.press("Backspace") else keyboard.insertText(value)
     }
 
-    override suspend fun pressSequentially(text: String, options: PressSequentiallyOptions) {
-        if (config.inputMode != InputMode.Hybrid) return super.pressSequentially(text, options)
+    override suspend fun pressSequentially(text: String, delayMs: Long, timeoutMs: Long?) {
+        if (config.inputMode != InputMode.Hybrid) return super.pressSequentially(text, delayMs, timeoutMs)
         policyChecker?.invoke(ActionType.Type)
         if (text.isEmpty()) return
-        val timeoutMs = timeoutOf(options.timeoutMs)
-        performAction("focus", JsonObject(emptyMap()), timeoutMs, force = false,
+        val timeout = timeoutOf(timeoutMs)
+        performAction("focus", JsonObject(emptyMap()), timeout, force = false,
             Checks(stable = false, hit = false), actionLabel = "type into")
-        keyboard.type(text, TypeOptions(options.delayMs, timeoutMs))
+        keyboard.type(text, delayMs, timeout)
     }
 
-    override suspend fun press(key: String, options: PressOptions) {
-        if (config.inputMode != InputMode.Hybrid) return super.press(key, options)
+    override suspend fun press(key: String, delayMs: Long, timeoutMs: Long?) {
+        if (config.inputMode != InputMode.Hybrid) return super.press(key, delayMs, timeoutMs)
         policyChecker?.invoke(ActionType.Press)
-        val timeoutMs = timeoutOf(options.timeoutMs)
+        val timeout = timeoutOf(timeoutMs)
         // Like Playwright: focus the element (no visibility/enabled checks), then press natively.
-        performAction("focus", JsonObject(emptyMap()), timeoutMs, force = false,
+        performAction("focus", JsonObject(emptyMap()), timeout, force = false,
             Checks(visible = false, enabled = false, stable = false, hit = false, scroll = false), actionLabel = "press $key on")
-        keyboard.press(key, options.copy(timeoutMs = timeoutMs))
+        keyboard.press(key, delayMs, timeout)
     }
 
-    override suspend fun dragTo(target: Locator, options: DragOptions) {
-        if (config.inputMode != InputMode.Hybrid) return super.dragTo(target, options)
+    override suspend fun dragTo(target: Locator, sourcePosition: Position?, targetPosition: Position?, timeoutMs: Long?) {
+        if (config.inputMode != InputMode.Hybrid) return super.dragTo(target, sourcePosition, targetPosition, timeoutMs)
         policyChecker?.invoke(ActionType.Drag)
         require(target is CdpLocator && target.controller === controller) { "Drag target must belong to the same page" }
-        val timeoutMs = timeoutOf(options.timeoutMs)
+        val timeout = timeoutOf(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
-        val (x1, y1) = actionPoint("drag", timeoutMs, force = false, position = options.sourcePosition, checks = Checks(enabled = false))
-        mouse.move(x1, y1, MoveOptions())
+        val (x1, y1) = actionPoint("drag", timeout, force = false, position = sourcePosition, checks = Checks(enabled = false))
+        mouse.move(x1, y1)
         mouse.down()
         try {
-            val remaining = (timeoutMs - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(FINAL_PROBE_MARGIN_MS + 1)
+            val remaining = (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(FINAL_PROBE_MARGIN_MS + 1)
             // The pressed source may cover the target's hit point while dragging; only require visibility.
-            val (x2, y2) = target.actionPoint("drop", remaining, force = false, position = options.targetPosition,
+            val (x2, y2) = target.actionPoint("drop", remaining, force = false, position = targetPosition,
                 checks = Checks(enabled = false, stable = false, hit = false))
-            mouse.move(x2, y2, MoveOptions(steps = 10))
+            mouse.move(x2, y2, steps = 10)
         } finally {
             withContext(NonCancellable) { withTimeout(1_000) { mouse.up() } }
         }
     }
 
-    override suspend fun setInputFiles(files: List<String>, options: ActionOptions) {
-        if (files.isEmpty()) return super.setInputFiles(files, options)
+    override suspend fun setInputFiles(files: List<String>, force: Boolean, timeoutMs: Long?) {
+        if (files.isEmpty()) return super.setInputFiles(files, force, timeoutMs)
         policyChecker?.invoke(ActionType.Fill)
         val paths = cdpUploadPaths(files, config)
         // Waits for the input like every other action (honours timeoutMs and force).
-        awaitFileInput(files.size, options)
+        awaitFileInput(files.size, force, timeoutMs)
         ensureHelpersInjected(controller, config.installMode)
         val bridge = controller as? CdpInputBridge ?: throw KmpwrightException("File upload requires CDP")
         val result = bridge.sendCdpCommand(CdpMethods.RUNTIME_EVALUATE, mapOf(

@@ -44,7 +44,7 @@ class CdpConsoleBrowserTest {
                 executor = java.util.concurrent.Executors.newCachedThreadPool()
                 start()
             }
-            runBlocking { launched = launchBrowser(BrowserLaunchOptions(executable)) }
+            runBlocking { launched = launchBrowser(executable) }
         }
 
         @AfterClass @JvmStatic

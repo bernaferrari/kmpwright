@@ -7,7 +7,16 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!node_modules", "!.next", "!dist", "!build", "!.source"]
+    "includes": [
+      "**",
+      "!node_modules",
+      "!.next",
+      "!dist",
+      "!build",
+      "!.source",
+      "!lib/kmpwright-demo",
+      "!public/demo"
+    ]
   },
   "formatter": {
     "enabled": true,

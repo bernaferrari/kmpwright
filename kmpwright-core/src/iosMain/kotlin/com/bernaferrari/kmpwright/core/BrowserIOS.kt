@@ -3,6 +3,7 @@ package com.bernaferrari.kmpwright.core
 import com.bernaferrari.kmpwright.core.ios.toByteArrayPinned
 import com.bernaferrari.kmpwright.core.ios.toNSData
 import kotlinx.atomicfu.update
+import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCSignatureOverride
 import kotlinx.cinterop.toKString
@@ -52,6 +53,8 @@ import platform.Foundation.NSURLErrorUnknown
 import platform.Foundation.NSURLResponse
 import platform.Foundation.NSURLSession
 import platform.Foundation.NSURLSessionDataTask
+import platform.Foundation.NSSelectorFromString
+import platform.Foundation.NSStringFromSelector
 import platform.Foundation.allHTTPHeaderFields
 import platform.Foundation.base64EncodedStringWithOptions
 import platform.Foundation.dataTaskWithRequest
@@ -81,6 +84,7 @@ import platform.WebKit.WKURLSchemeTaskProtocol
 import platform.WebKit.WKUserContentController
 import platform.WebKit.WKWebView
 import platform.WebKit.WKWebViewConfiguration
+import platform.WebKit.WKWebpagePreferences
 import platform.WebKit.WKWebsiteDataStore
 
 /** iOS host for a [Browser]: an existing WKWebView to drive, or a website data store for new ones. */
@@ -89,6 +93,9 @@ public class IOSPlatformContext(
     public val webView: WKWebView? = null,
     public val websiteDataStore: WKWebsiteDataStore? = null
 ) : PlatformContext
+
+/** Longest page title the state channel reports; browsers show far less. */
+private const val MAX_REPORTED_TITLE = 1024
 
 /**
  * WKWebView-backed controller.
@@ -166,9 +173,10 @@ internal class IOSWebViewController(
 
     /**
      * Same-document navigations and `document.title` changes. A main-frame document-start script pings
-     * [stateChannel] after pushState/replaceState, hashchange, popstate and title mutations; the ping
-     * carries no data — the controller re-reads the trusted `WKWebView.URL`/`title`, so a page cannot
-     * forge either. A URL change while a document is loading belongs to that load, not to the page.
+     * [stateChannel] after pushState/replaceState, hashchange, popstate and title mutations. The ping
+     * carries `document.title`, which the page owns anyway (`WKWebView.title` can lag behind it for
+     * `setContent` documents); the URL is always re-read from the trusted `WKWebView.URL`, so a page
+     * cannot forge it. A URL change while a document is loading belongs to that load, not to the page.
      */
     private fun setupStateObserver(userContentController: WKUserContentController) {
         userContentController.addScriptMessageHandler(scriptMessageProxy, stateChannel)
@@ -177,7 +185,7 @@ internal class IOSWebViewController(
               var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers[${jsStringLiteral(stateChannel)}];
               if (!h || typeof h.postMessage !== 'function') return;
               var send = h.postMessage.bind(h), queued = false;
-              function ping() { if (queued) return; queued = true; setTimeout(function() { queued = false; try { send(''); } catch (e) {} }, 0); }
+              function ping() { if (queued) return; queued = true; setTimeout(function() { queued = false; try { send(String(document.title || '')); } catch (e) {} }, 0); }
               var H = window.history;
               ['pushState', 'replaceState'].forEach(function(name) {
                 var original = H[name];
@@ -199,7 +207,7 @@ internal class IOSWebViewController(
 
     private fun handleStateMessage(scriptMessage: WKScriptMessage) {
         if (scriptMessage.webView?.isEqual(webView) != true || !scriptMessage.frameInfo.isMainFrame()) return
-        val title = webView.title
+        val title = (scriptMessage.body as? String)?.take(MAX_REPORTED_TITLE) ?: webView.title
         if (title != reportedTitle) {
             reportedTitle = title
             lifecycleListener?.invoke(PageLifecycleEvent.TitleChanged(title))
@@ -622,7 +630,8 @@ internal class IOSWebViewController(
     override fun reload() = onMainThread { webView.reload(); Unit }
 
     override fun getUrl(): String? = onMainThread { webView.URL?.absoluteString }
-    override fun getTitle(): String? = onMainThread { webView.title }
+    /** `WKWebView.title` lags behind `document.title` for `setContent` documents; prefer what the page reported. */
+    override fun getTitle(): String? = onMainThread { webView.title?.takeIf { it.isNotEmpty() } ?: reportedTitle ?: webView.title }
 
     override fun setExtraHttpHeaders(headers: Map<String, String>): Boolean {
         // WKWebView has no backend-owned API that applies arbitrary headers to
@@ -857,7 +866,10 @@ internal class IOSWebViewController(
         // nonce plus frame/origin and bounded-message checks below. The
         // registered handler is a weak proxy: WKUserContentController retains it.
         userContentController.addScriptMessageHandler(scriptMessageProxy, bridgeChannel)
-        val script = buildWebKitNetworkInterceptionScript(bridgeChannel, bridgeNonce)
+        // The page waits for the whole native round trip: the route handler's budget plus the
+        // real request when the handler lets it through, so derive the bound from both.
+        val bridgeTimeoutMs = config.timeouts.handler + config.timeouts.navigation
+        val script = buildWebKitNetworkInterceptionScript(bridgeChannel, bridgeNonce, bridgeTimeoutMs)
         val userScript = platform.WebKit.WKUserScript(
             script,
             platform.WebKit.WKUserScriptInjectionTime.WKUserScriptInjectionTimeAtDocumentStart,
@@ -1261,16 +1273,71 @@ internal class IOSWebViewController(
         dataTask.resume()
     }
 
+    /**
+     * KMPwright's WKWebView delegate. On a host-provided view it also forwards to the delegates the
+     * host installed before attaching ([previousNavigationDelegate], [previousUiDelegate]), like the
+     * Android forwarding clients:
+     *
+     * - Policy decisions: a KMPwright denial (allowed origins, [setAllowedDomains], navigation guard)
+     *   cancels and wins; otherwise a host that implements the decision method decides; otherwise
+     *   the WebKit default (allow) applies. Every decision handler is called exactly once.
+     * - JavaScript dialogs: an automation dialog handler (Page.onDialog / waitForDialog) answers;
+     *   otherwise the host's panel method runs; otherwise the dialog is dismissed, as WebKit does
+     *   without a UI delegate.
+     * - Notifications KMPwright observes (finish, failures) reach the host after KMPwright's own
+     *   handling. Every other method the host implements (didStart, didCommit, redirects,
+     *   authentication, process termination, createWebView, webViewDidClose, context menus,
+     *   permissions, ...) is forwarded unchanged through [respondsToSelector] and
+     *   [forwardingTargetForSelector], so WebKit sees exactly the host's optional-method set.
+     *
+     * WebKit samples respondsToSelector once, when a delegate is assigned, so the host delegates
+     * are held strongly for the attachment (they are also what [dispose] restores).
+     */
     private inner class IOSWebViewDelegate : NSObject(), WKNavigationDelegateProtocol, WKUIDelegateProtocol {
-        override fun webView(
-            webView: WKWebView,
-            decidePolicyForNavigationAction: WKNavigationAction,
-            decisionHandler: (WKNavigationActionPolicy) -> Unit
-        ) {
-            val url = decidePolicyForNavigationAction.request.URL?.absoluteString.orEmpty()
+        private val hostNavigation: WKNavigationDelegateProtocol? get() = previousNavigationDelegate
+        private val hostUi: WKUIDelegateProtocol? get() = previousUiDelegate
+
+        private fun hostNavigationResponds(selector: String): Boolean =
+            (hostNavigation as? NSObject)?.respondsToSelector(NSSelectorFromString(selector)) == true
+
+        private fun hostUiResponds(selector: String): Boolean =
+            (hostUi as? NSObject)?.respondsToSelector(NSSelectorFromString(selector)) == true
+
+        override fun respondsToSelector(aSelector: COpaquePointer?): Boolean {
+            if (super.respondsToSelector(aSelector)) return true
+            return forwardingTarget(aSelector) != null
+        }
+
+        override fun forwardingTargetForSelector(aSelector: COpaquePointer?): Any? =
+            forwardingTarget(aSelector) ?: super.forwardingTargetForSelector(aSelector)
+
+        /**
+         * The host delegate that implements a WebKit delegate selector KMPwright does not implement
+         * itself. Every WKNavigationDelegate and WKUIDelegate method starts with "webView".
+         */
+        private fun forwardingTarget(aSelector: COpaquePointer?): Any? {
+            if (aSelector == null || disposed.value) return null
+            if (!NSStringFromSelector(aSelector).startsWith("webView")) return null
+            val navigation = hostNavigation as? NSObject
+            if (navigation != null && navigation !== this && navigation.respondsToSelector(aSelector)) return navigation
+            val ui = hostUi as? NSObject
+            if (ui != null && ui !== this && ui.respondsToSelector(aSelector)) return ui
+            return null
+        }
+
+        private fun mainFrameNavigationRejected(url: String, message: String) {
+            suppressPolicyCancellationFailure = true
+            if (provisionalMainFrameUrl == url) provisionalMainFrameUrl = null
+            navigationCallback?.invoke(NavigationResult(url, 0, false, message))
+        }
+
+        /** KMPwright's verdict for a navigation action; false when it cancelled (and reported) it. */
+        private fun automationAllowsNavigationAction(action: WKNavigationAction): Boolean {
+            val url = action.request.URL?.absoluteString.orEmpty()
+            val mainFrame = action.targetFrame?.isMainFrame() == true
             if (!domainFilterAllows(url)) {
                 // Also reached for server redirects and iframe navigations; only the main frame reports.
-                if (decidePolicyForNavigationAction.targetFrame?.isMainFrame() == true) {
+                if (mainFrame) {
                     suppressPolicyCancellationFailure = true
                     val origin = provisionalMainFrameUrl
                     provisionalMainFrameUrl = null
@@ -1279,40 +1346,98 @@ internal class IOSWebViewController(
                         else NavigationResult(url, 0, false, domainBlockedMessage(url))
                     )
                 }
-                decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
-                return
+                return false
             }
             if (isNavigationAllowed(url)) {
-                if (decidePolicyForNavigationAction.targetFrame?.isMainFrame() == true && provisionalMainFrameUrl == null) provisionalMainFrameUrl = url
-                decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
-                return
+                if (mainFrame && provisionalMainFrameUrl == null) provisionalMainFrameUrl = url
+                return true
             }
             // Only a main-frame denial fails the pending navigation; denied
             // iframes and new-window targets are cancelled silently.
-            if (decidePolicyForNavigationAction.targetFrame?.isMainFrame() == true) {
+            if (mainFrame) {
                 suppressPolicyCancellationFailure = true
-                navigationCallback?.invoke(
-                    NavigationResult(url, 0, false, "Navigation origin is not allowed by policy: $url")
-                )
+                navigationCallback?.invoke(NavigationResult(url, 0, false, "Navigation origin is not allowed by policy: $url"))
             }
-            decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+            return false
+        }
+
+        /** Reports a main-frame navigation the host delegate cancelled, so a pending goto settles. */
+        private fun hostNavigationActionDecided(action: WKNavigationAction, policy: WKNavigationActionPolicy) {
+            if (policy == WKNavigationActionPolicy.WKNavigationActionPolicyCancel && action.targetFrame?.isMainFrame() == true) {
+                val url = action.request.URL?.absoluteString.orEmpty()
+                mainFrameNavigationRejected(url, "Navigation was cancelled by the host navigation delegate: $url")
+            }
+        }
+
+        // WebKit calls this variant instead of the two-argument one whenever the delegate implements it.
+        override fun webView(
+            webView: WKWebView,
+            decidePolicyForNavigationAction: WKNavigationAction,
+            preferences: WKWebpagePreferences,
+            decisionHandler: (WKNavigationActionPolicy, WKWebpagePreferences?) -> Unit
+        ) {
+            val decide = once(decisionHandler)
+            if (!automationAllowsNavigationAction(decidePolicyForNavigationAction)) {
+                decide(WKNavigationActionPolicy.WKNavigationActionPolicyCancel, preferences)
+                return
+            }
+            val host = hostNavigation
+            when {
+                host != null && hostNavigationResponds("webView:decidePolicyForNavigationAction:preferences:decisionHandler:") ->
+                    host.webView(webView, decidePolicyForNavigationAction = decidePolicyForNavigationAction, preferences = preferences) { policy, hostPreferences ->
+                        onMainThread {
+                            hostNavigationActionDecided(decidePolicyForNavigationAction, policy)
+                            decide(policy, hostPreferences ?: preferences)
+                        }
+                    }
+                host != null && hostNavigationResponds("webView:decidePolicyForNavigationAction:decisionHandler:") ->
+                    host.webView(webView, decidePolicyForNavigationAction = decidePolicyForNavigationAction) { policy ->
+                        onMainThread {
+                            hostNavigationActionDecided(decidePolicyForNavigationAction, policy)
+                            decide(policy, preferences)
+                        }
+                    }
+                else -> decide(WKNavigationActionPolicy.WKNavigationActionPolicyAllow, preferences)
+            }
+        }
+
+        override fun webView(
+            webView: WKWebView,
+            decidePolicyForNavigationAction: WKNavigationAction,
+            decisionHandler: (WKNavigationActionPolicy) -> Unit
+        ) {
+            // Not called while the preferences variant above exists; kept for completeness.
+            webView(webView, decidePolicyForNavigationAction = decidePolicyForNavigationAction, preferences = WKWebpagePreferences()) { policy, _ ->
+                decisionHandler(policy)
+            }
         }
 
         override fun webView(webView: WKWebView, decidePolicyForNavigationResponse: WKNavigationResponse, decisionHandler: (WKNavigationResponsePolicy) -> Unit) {
+            val decide = once(decisionHandler)
             val response = decidePolicyForNavigationResponse.response as? platform.Foundation.NSHTTPURLResponse
             val responseUrl = decidePolicyForNavigationResponse.response.URL?.absoluteString.orEmpty()
-            if (decidePolicyForNavigationResponse.forMainFrame && !isNavigationAllowed(responseUrl)) {
-                suppressPolicyCancellationFailure = true
-                navigationCallback?.invoke(
-                    NavigationResult(responseUrl, 0, false, "Navigation origin is not allowed by policy: $responseUrl")
-                )
-                decisionHandler(WKNavigationResponsePolicy.WKNavigationResponsePolicyCancel)
+            val mainFrame = decidePolicyForNavigationResponse.forMainFrame
+            if (mainFrame && !isNavigationAllowed(responseUrl)) {
+                mainFrameNavigationRejected(responseUrl, "Navigation origin is not allowed by policy: $responseUrl")
+                decide(WKNavigationResponsePolicy.WKNavigationResponsePolicyCancel)
                 return
             }
-            if (response != null && decidePolicyForNavigationResponse.forMainFrame) {
+            if (response != null && mainFrame) {
                 pendingNavigationHttpStatus = response.statusCode.toInt()
             }
-            decisionHandler(WKNavigationResponsePolicy.WKNavigationResponsePolicyAllow)
+            val host = hostNavigation
+            if (host != null && hostNavigationResponds("webView:decidePolicyForNavigationResponse:decisionHandler:")) {
+                host.webView(webView, decidePolicyForNavigationResponse = decidePolicyForNavigationResponse) { policy ->
+                    onMainThread {
+                        if (mainFrame && policy == WKNavigationResponsePolicy.WKNavigationResponsePolicyCancel) {
+                            mainFrameNavigationRejected(responseUrl, "Navigation response was cancelled by the host navigation delegate: $responseUrl")
+                        }
+                        decide(policy)
+                    }
+                }
+                return
+            }
+            decide(WKNavigationResponsePolicy.WKNavigationResponsePolicyAllow)
         }
 
         override fun webView(webView: WKWebView, didFinishNavigation: WKNavigation?) {
@@ -1332,6 +1457,7 @@ internal class IOSWebViewController(
                 }
             )
             pendingNavigationHttpStatus = 200
+            if (hostNavigationResponds("webView:didFinishNavigation:")) hostNavigation?.webView(webView, didFinishNavigation = didFinishNavigation)
         }
 
         private fun isNavigationAllowed(url: String): Boolean {
@@ -1347,6 +1473,9 @@ internal class IOSWebViewController(
                 NavigationResult(webView.URL?.absoluteString ?: "", 0, false, withError.localizedDescription)
             )
             pendingNavigationHttpStatus = 200
+            if (hostNavigationResponds("webView:didFailNavigation:withError:")) {
+                hostNavigation?.webView(webView, didFailNavigation = didFailNavigation, withError = withError)
+            }
         }
 
         @ObjCSignatureOverride
@@ -1356,11 +1485,22 @@ internal class IOSWebViewController(
             // The policy decision above already reported this navigation.
             if (suppressPolicyCancellationFailure && withError.isPolicyInterruption()) {
                 suppressPolicyCancellationFailure = false
-                return
+            } else {
+                navigationCallback?.invoke(
+                    NavigationResult(webView.URL?.absoluteString ?: "", 0, false, withError.localizedDescription)
+                )
             }
-            navigationCallback?.invoke(
-                NavigationResult(webView.URL?.absoluteString ?: "", 0, false, withError.localizedDescription)
-            )
+            if (hostNavigationResponds("webView:didFailProvisionalNavigation:withError:")) {
+                hostNavigation?.webView(webView, didFailProvisionalNavigation = didFailProvisionalNavigation, withError = withError)
+            }
+        }
+
+        /** The listener that answers dialogs for automation, or null when automation has no handler. */
+        private fun automationDialogListener(): DialogListener? =
+            if (disposed.value) null else dialogListeners.value.firstOrNull { it.hasDialogHandlers }
+
+        private fun observeDialog(type: DialogType, message: String, defaultPrompt: String?) {
+            dialogListeners.value.forEach { it.onDialogObserved(type, message, defaultPrompt) }
         }
 
         override fun webView(
@@ -1369,7 +1509,14 @@ internal class IOSWebViewController(
             initiatedByFrame: WKFrameInfo,
             completionHandler: () -> Unit
         ) {
-            handleDialog(DialogType.Alert, runJavaScriptAlertPanelWithMessage, null) { completionHandler() }
+            val complete = once(completionHandler)
+            val host = hostUi
+            if (automationDialogListener() == null && host != null && hostUiResponds("webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:")) {
+                observeDialog(DialogType.Alert, runJavaScriptAlertPanelWithMessage, null)
+                host.webView(webView, runJavaScriptAlertPanelWithMessage = runJavaScriptAlertPanelWithMessage, initiatedByFrame = initiatedByFrame) { onMainThread { complete() } }
+                return
+            }
+            handleDialog(DialogType.Alert, runJavaScriptAlertPanelWithMessage, null) { complete() }
         }
 
         override fun webView(
@@ -1378,8 +1525,17 @@ internal class IOSWebViewController(
             initiatedByFrame: WKFrameInfo,
             completionHandler: (Boolean) -> Unit
         ) {
+            val complete = once(completionHandler)
+            val host = hostUi
+            if (automationDialogListener() == null && host != null && hostUiResponds("webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:")) {
+                observeDialog(DialogType.Confirm, runJavaScriptConfirmPanelWithMessage, null)
+                host.webView(webView, runJavaScriptConfirmPanelWithMessage = runJavaScriptConfirmPanelWithMessage, initiatedByFrame = initiatedByFrame) { result ->
+                    onMainThread { complete(result) }
+                }
+                return
+            }
             handleDialog(DialogType.Confirm, runJavaScriptConfirmPanelWithMessage, null) { response ->
-                completionHandler(response !is DialogResponse.Dismiss)
+                complete(response !is DialogResponse.Dismiss)
             }
         }
 
@@ -1390,15 +1546,40 @@ internal class IOSWebViewController(
             initiatedByFrame: WKFrameInfo,
             completionHandler: (String?) -> Unit
         ) {
+            val complete = once(completionHandler)
+            val host = hostUi
+            if (automationDialogListener() == null && host != null && hostUiResponds("webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:")) {
+                observeDialog(DialogType.Prompt, runJavaScriptTextInputPanelWithPrompt, defaultText)
+                host.webView(webView, runJavaScriptTextInputPanelWithPrompt = runJavaScriptTextInputPanelWithPrompt, defaultText = defaultText, initiatedByFrame = initiatedByFrame) { result ->
+                    onMainThread { complete(result) }
+                }
+                return
+            }
             handleDialog(DialogType.Prompt, runJavaScriptTextInputPanelWithPrompt, defaultText) { response ->
                 when (response) {
-                    is DialogResponse.Text -> completionHandler(response.text)
-                    is DialogResponse.Accept -> completionHandler(defaultText)
-                    else -> completionHandler(null)
+                    is DialogResponse.Text -> complete(response.text)
+                    is DialogResponse.Accept -> complete(defaultText)
+                    else -> complete(null)
                 }
             }
         }
     }
+}
+
+/** Wraps a WebKit completion handler so it runs at most once, whatever the host delegate does. */
+private fun once(handler: () -> Unit): () -> Unit {
+    var called = false
+    return { if (!called) { called = true; handler() } }
+}
+
+private fun <A> once(handler: (A) -> Unit): (A) -> Unit {
+    var called = false
+    return { value -> if (!called) { called = true; handler(value) } }
+}
+
+private fun <A, B> once(handler: (A, B) -> Unit): (A, B) -> Unit {
+    var called = false
+    return { first, second -> if (!called) { called = true; handler(first, second) } }
 }
 
 /** Upper bound for WebKit to report a native appearance change to the document. */
@@ -1722,7 +1903,14 @@ public actual class Browser public actual constructor(
     public actual fun page(): Page = leaseContext?.let { it.pages().lastOrNull() ?: it.createPage() } ?: pages.lastOrNull() ?: throw IllegalStateException("No page available")
 
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public actual suspend fun version(): BrowserVersion = BrowserVersion("Kmpwright", "1.3.0", "Mozilla/5.0 (iPhone; CPU iPhone OS) AppleWebKit/605.1.15")
+    public actual suspend fun version(): BrowserVersion {
+        // WebKit ships with the OS, so the OS version identifies the engine build.
+        val systemVersion = onMainThread { platform.UIKit.UIDevice.currentDevice.systemVersion }
+        val userAgent = config.userAgent
+            ?: pages.firstOrNull()?.let { page -> runCatching { page.evaluate("navigator.userAgent").value }.getOrNull() }
+            ?: ""
+        return BrowserVersion("WKWebView", "iOS $systemVersion", userAgent)
+    }
 
     public actual fun dispose() {
         if (!closed.compareAndSet(false, true)) return
@@ -1853,17 +2041,17 @@ internal class IOSPage(
     override fun createPlatformLocator(selector: String): BaseLocator = IOSLocator(controller, selector, config)
     override fun createTouch(): Touchscreen {
         if (config.inputMode == InputMode.JsOnly) throw KmpwrightUnsupportedException("Native touch is disabled by InputMode.JsOnly")
-        return IOSTouch(controller, config)
+        return SyntheticTouch(controller, config)
     }
 
     override fun createMouse(): Mouse {
         if (config.inputMode != InputMode.Hybrid) throw KmpwrightUnsupportedException("Native mouse requires InputMode.Hybrid")
-        return IOSMouse(controller, config)
+        return SyntheticMouse(controller, config)
     }
 
     override fun createKeyboard(): Keyboard {
         if (config.inputMode != InputMode.Hybrid) throw KmpwrightUnsupportedException("Native keyboard requires InputMode.Hybrid")
-        return IOSKeyboard(controller, config)
+        return SyntheticKeyboard(controller, config)
     }
 
     override fun createScreenshotController(): ScreenshotController {

@@ -122,9 +122,9 @@ The input is trimmed first. `10.0.2.2` is the Android emulator's alias for the h
 
 | Command | Kotlin | Output |
 |---|---|---|
-| `snapshot [flags]` | `page.snapshot(SnapshotOptions(...))` | `Snapshot.tree`; when the tree is empty, `(no interactive elements)` with `-i`, otherwise `(empty page)` |
+| `snapshot [flags]` | `page.snapshot(...)` | `Snapshot.tree`; when the tree is empty, `(no interactive elements)` with `-i`, otherwise `(empty page)` |
 
-| Flag | Long form | `SnapshotOptions` field | Meaning |
+| Flag | Long form | `snapshot()` parameter | Meaning |
 |---|---|---|---|
 | `-i` | `--interactive` | `interactive = true` | Only elements with refs, as a flat list |
 | `-u` | `--urls` | `urls = true` | Append `url="…"` (the resolved `href`) to links |
@@ -144,7 +144,7 @@ page.runCommand("snapshot -i").output
 
 page.runCommand("snapshot -i -s #checkout")
 // same as
-page.snapshot(SnapshotOptions(interactive = true, selector = "#checkout"))
+page.snapshot(interactive = true, selector = "#checkout")
 ```
 
 `includeHidden` has no flag; use the typed API. `-C` is accepted but not listed in `AgentCommands.HELP`. `result.snapshot` carries the full `Snapshot`, and the refs it contains replace the previous snapshot's refs. The format is described in [Snapshots and refs](/docs/agents/snapshots).
@@ -175,7 +175,7 @@ Aliases: `key` for `press`, `scrollinto` for `scrollintoview`.
 - `fill` replaces the value. With no text it fills an empty string, which clears the field. `type` requires text and sends key events one character at a time (Playwright `pressSequentially`), for inputs that react to each keystroke.
 - `press` takes key names and combinations such as `Enter`, `Tab`, `Escape`, `ArrowDown`, `Control+A` or `Shift+Tab`. Without a target the key goes to the focused element. Note the argument order: key first, target second (`press Enter @e2`).
 - `select` picks the `<option>` whose value or label equals the text. It selects one option; use `selectOption(listOf(...))` for multi-selects.
-- `highlight` draws a red overlay on the element for 3 seconds (`HighlightOptions()` defaults). It is for a person watching the screen.
+- `highlight` draws a red overlay on the element for 3 seconds (`locator.highlight()` defaults). It is for a person watching the screen.
 
 ### Scroll
 
@@ -244,8 +244,8 @@ Queries do not wait for the target. When it does not exist (including a stale re
 | Command | Kotlin | Output |
 |---|---|---|
 | `screenshot` | `page.screenshot()` | `Screenshot <width>×<height>` |
-| `screenshot --full` | `page.screenshot(ScreenshotOptions(fullPage = true))` | `Screenshot <width>×<height>` |
-| `screenshot --annotate` | `page.screenshot(ScreenshotOptions(annotate = true))` | `Screenshot <width>×<height>` and one legend line per ref |
+| `screenshot --full` | `page.screenshot(fullPage = true)` | `Screenshot <width>×<height>` |
+| `screenshot --annotate` | `page.screenshot(annotate = true)` | `Screenshot <width>×<height>` and one legend line per ref |
 
 Short flags: `-f` for `--full`, `-a` for `--annotate`; they combine. The image is a PNG in `result.screenshot.bytes`; the command takes no file path. Send the bytes to the model as an image (see [LLM tools](/docs/agents/llm-tools#screenshots)).
 
@@ -287,7 +287,7 @@ These agent-browser commands have no `runCommand` form. Most have a typed equiva
 | agent-browser | KMPwright typed API |
 |---|---|
 | `upload <target> <files>` | `page.locator(target).setInputFiles(listOf(path))` (JVM; not supported on mobile WebViews) |
-| `pdf` | `page.pdf(PdfOptions())` |
+| `pdf` | `page.pdf()` |
 | `read [url]` | `page.read(url)` |
 | `keyboard type` / `keyboard inserttext` | `page.keyboard.type(text)` / `page.keyboard.insertText(text)` |
 | `find role/text/label …` | `page.getByRole("button", name = "Save")`, `getByText`, `getByLabel`, `getByPlaceholder`, `getByTestId`, then `.click()` etc. |
@@ -317,7 +317,7 @@ These agent-browser commands have no `runCommand` form. Most have a typed equiva
 | `addinitscript` / `removeinitscript` | `page.addInitScript(script)` / `page.removeInitScript(id)` |
 | `trace` | `page.tracing.start()` / `page.tracing.stop()` (CDP only) |
 | `profiler` | `page.profiler.start()` / `page.profiler.stop()` (CDP only) |
-| `record` | `page.video.start(RecordingOptions(path))` / `page.video.stop()` (CDP only) |
+| `record` | `page.video.start(path)` / `page.video.stop()` (CDP only) |
 | `stream` | `page.screencast()` (CDP only) |
 | `react` | `page.react.tree()`, `page.react.inspect(id)` |
 | `vitals` | `page.webVitals()` |

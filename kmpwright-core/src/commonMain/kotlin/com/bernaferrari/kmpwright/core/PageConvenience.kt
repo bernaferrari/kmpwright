@@ -4,47 +4,61 @@ import kotlinx.coroutines.flow.first
 import kotlin.coroutines.cancellation.CancellationException
 
 // Selector-taking conveniences, like Playwright's `page.click(selector)` family. Each one is
-// `page.locator(selector).<action>()`; selectors also accept snapshot refs (`@e3`, `e3`, `ref=e3`).
+// `page.locator(selector).<action>(...)` with the same named parameters as the [Locator] method;
+// selectors also accept snapshot refs (`@e3`, `e3`, `ref=e3`).
 
 /** Clicks the element matching [selector] (Playwright `page.click`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.click(selector: String, options: ClickOptions = ClickOptions()): Unit =
-    locator(selector).click(options)
+public suspend fun Page.click(
+    selector: String,
+    button: MouseButton = MouseButton.Left,
+    clickCount: Int = 1,
+    delayMs: Long = 0,
+    position: Position? = null,
+    force: Boolean = false,
+    timeoutMs: Long? = null
+): Unit = locator(selector).click(button, clickCount, delayMs, position, force, timeoutMs)
 
 /** Double-clicks the element matching [selector] (Playwright `page.dblclick`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.dblclick(selector: String, options: ClickOptions = ClickOptions()): Unit =
-    locator(selector).dblclick(options)
+public suspend fun Page.dblclick(
+    selector: String,
+    button: MouseButton = MouseButton.Left,
+    delayMs: Long = 0,
+    position: Position? = null,
+    force: Boolean = false,
+    timeoutMs: Long? = null
+): Unit = locator(selector).dblclick(button, delayMs, position, force, timeoutMs)
 
 /** Taps the element matching [selector] (Playwright `page.tap`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.tap(selector: String, options: TapOptions = TapOptions()): Unit =
-    locator(selector).tap(options)
+public suspend fun Page.tap(selector: String, force: Boolean = false, modifiers: Int = 0, timeoutMs: Long? = null): Unit =
+    locator(selector).tap(force, modifiers, timeoutMs)
 
 /** Fills the element matching [selector] (Playwright `page.fill`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.fill(selector: String, value: String, options: FillOptions = FillOptions()): Unit =
-    locator(selector).fill(value, options)
+public suspend fun Page.fill(selector: String, value: String, force: Boolean = false, timeoutMs: Long? = null): Unit =
+    locator(selector).fill(value, force, timeoutMs)
 
 /** Clears the element matching [selector] (Playwright `locator.clear`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.clear(selector: String, options: FillOptions = FillOptions()): Unit =
-    locator(selector).clear(options)
+public suspend fun Page.clear(selector: String, force: Boolean = false, timeoutMs: Long? = null): Unit =
+    locator(selector).clear(force, timeoutMs)
 
 /** Types [text] key by key into the element matching [selector] (Playwright `page.type`, agent-browser `type`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.type(selector: String, text: String, options: TypeOptions = TypeOptions()): Unit =
-    locator(selector).pressSequentially(text, PressSequentiallyOptions(options.delayMs, options.timeoutMs))
+public suspend fun Page.type(selector: String, text: String, delayMs: Long = 0, timeoutMs: Long? = null): Unit =
+    locator(selector).pressSequentially(text, delayMs, timeoutMs)
 
 /** Presses [key] on the element matching [selector] (Playwright `page.press`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.press(selector: String, key: String, options: PressOptions = PressOptions()): Unit =
-    locator(selector).press(key, options)
+public suspend fun Page.press(selector: String, key: String, delayMs: Long = 0, timeoutMs: Long? = null): Unit =
+    locator(selector).press(key, delayMs, timeoutMs)
 
 /** Hovers the element matching [selector] (Playwright `page.hover`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.hover(selector: String, options: HoverOptions = HoverOptions()): Unit =
-    locator(selector).hover(options)
+public suspend fun Page.hover(selector: String, force: Boolean = false, timeoutMs: Long? = null): Unit =
+    locator(selector).hover(force, timeoutMs)
 
 /** Focuses the element matching [selector] (Playwright `page.focus`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
@@ -53,43 +67,52 @@ public suspend fun Page.focus(selector: String, timeoutMs: Long? = null): Unit =
 
 /** Highlights the element matching [selector] (agent-browser `highlight`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.highlight(selector: String, options: HighlightOptions = HighlightOptions()): Unit =
-    locator(selector).highlight(options)
+public suspend fun Page.highlight(
+    selector: String,
+    color: String = "rgba(255, 0, 0, 0.3)",
+    borderColor: String = "red",
+    durationMs: Long = 3000
+): Unit = locator(selector).highlight(color, borderColor, durationMs)
 
 /** Checks the element matching [selector] (Playwright `page.check`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.check(selector: String, options: CheckOptions = CheckOptions()): Unit =
-    locator(selector).check(options)
+public suspend fun Page.check(selector: String, force: Boolean = false, timeoutMs: Long? = null): Unit =
+    locator(selector).check(force, timeoutMs)
 
 /** Unchecks the element matching [selector] (Playwright `page.uncheck`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.uncheck(selector: String, options: CheckOptions = CheckOptions()): Unit =
-    locator(selector).uncheck(options)
+public suspend fun Page.uncheck(selector: String, force: Boolean = false, timeoutMs: Long? = null): Unit =
+    locator(selector).uncheck(force, timeoutMs)
 
 /** Checks or unchecks the element matching [selector] (Playwright `page.setChecked`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.setChecked(selector: String, checked: Boolean, options: CheckOptions = CheckOptions()): Unit =
-    locator(selector).setChecked(checked, options)
+public suspend fun Page.setChecked(selector: String, checked: Boolean, force: Boolean = false, timeoutMs: Long? = null): Unit =
+    locator(selector).setChecked(checked, force, timeoutMs)
 
 /** Selects an option of the `<select>` matching [selector] (Playwright `page.selectOption`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.selectOption(selector: String, value: String, options: ActionOptions = ActionOptions()): Unit =
-    locator(selector).selectOption(value, options)
+public suspend fun Page.selectOption(selector: String, value: String, force: Boolean = false, timeoutMs: Long? = null): Unit =
+    locator(selector).selectOption(value, force, timeoutMs)
 
 /** Selects options of the `<select>` matching [selector] (Playwright `page.selectOption`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.selectOption(selector: String, values: List<String>, options: ActionOptions = ActionOptions()): Unit =
-    locator(selector).selectOption(values, options)
+public suspend fun Page.selectOption(selector: String, values: List<String>, force: Boolean = false, timeoutMs: Long? = null): Unit =
+    locator(selector).selectOption(values, force, timeoutMs)
 
 /** Sets the files of the file input matching [selector] (Playwright `page.setInputFiles`, agent-browser `upload`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.setInputFiles(selector: String, files: List<String>, options: ActionOptions = ActionOptions()): Unit =
-    locator(selector).setInputFiles(files, options)
+public suspend fun Page.setInputFiles(selector: String, files: List<String>, force: Boolean = false, timeoutMs: Long? = null): Unit =
+    locator(selector).setInputFiles(files, force, timeoutMs)
 
 /** Drags [source] onto [target] (Playwright `page.dragAndDrop`, agent-browser `drag`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.dragAndDrop(source: String, target: String, options: DragOptions = DragOptions()): Unit =
-    locator(source).dragTo(locator(target), options)
+public suspend fun Page.dragAndDrop(
+    source: String,
+    target: String,
+    sourcePosition: Position? = null,
+    targetPosition: Position? = null,
+    timeoutMs: Long? = null
+): Unit = locator(source).dragTo(locator(target), sourcePosition, targetPosition, timeoutMs)
 
 /** Dispatches a DOM event on the element matching [selector] (Playwright `page.dispatchEvent`). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)

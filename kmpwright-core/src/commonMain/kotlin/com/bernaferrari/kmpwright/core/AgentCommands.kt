@@ -78,16 +78,14 @@ private suspend fun Page.runParsedCommand(command: String, name: String, rest: L
             flags.noPositionals("snapshot [-i] [-u] [-c] [-d <depth>] [-s <selector>]")
             val interactive = flags.has("-i", "--interactive")
             val snapshot = snapshot(
-                SnapshotOptions(
-                    interactive = interactive,
-                    compact = flags.has("-c", "--compact"),
-                    maxDepth = flags.value("-d", "--depth")?.let {
-                        it.toIntOrNull()?.takeIf { depth -> depth >= 0 } ?: throw KmpwrightException("--depth expects a non-negative number, got '$it'")
-                    },
-                    selector = flags.value("-s", "--selector"),
-                    cursor = flags.has("-C", "--cursor"),
-                    urls = flags.has("-u", "--urls"),
-                )
+                interactive = interactive,
+                compact = flags.has("-c", "--compact"),
+                maxDepth = flags.value("-d", "--depth")?.let {
+                    it.toIntOrNull()?.takeIf { depth -> depth >= 0 } ?: throw KmpwrightException("--depth expects a non-negative number, got '$it'")
+                },
+                selector = flags.value("-s", "--selector"),
+                cursor = flags.has("-C", "--cursor"),
+                urls = flags.has("-u", "--urls"),
             )
             val empty = if (interactive) "(no interactive elements)" else "(empty page)"
             AgentCommandResult(command, snapshot.tree.trimEnd().ifEmpty { empty }, snapshot = snapshot)
@@ -196,7 +194,7 @@ private suspend fun Page.runParsedCommand(command: String, name: String, rest: L
             when {
                 text != null -> { waitForText(text, timeout); result("Found text \"$text\"") }
                 fn != null -> { waitForFunction(fn, timeout); result("Condition is true") }
-                url != null -> { waitForURL(url, WaitForURLOptions(timeoutMs = timeout)); result("Reached ${this.url.value.orEmpty()}") }
+                url != null -> { waitForURL(url, timeoutMs = timeout); result("Reached ${this.url.value.orEmpty()}") }
                 load != null -> {
                     val state = AgentCommands.loadState(load)
                     waitForLoadState(state, timeout)
@@ -219,7 +217,7 @@ private suspend fun Page.runParsedCommand(command: String, name: String, rest: L
             )
             val fullPage = flags.has("--full", "-f")
             if (flags.has("--annotate", "-a")) {
-                val annotated = screenshot(ScreenshotOptions(fullPage = fullPage, annotate = true))
+                val annotated = screenshot(fullPage = fullPage, annotate = true)
                 val legend = annotated.annotations.joinToString("\n") { AgentCommands.annotationLine(it) }
                 AgentCommandResult(
                     command,
@@ -228,7 +226,7 @@ private suspend fun Page.runParsedCommand(command: String, name: String, rest: L
                     screenshot = annotated,
                 )
             } else {
-                val shot = screenshot(ScreenshotOptions(fullPage = fullPage))
+                val shot = screenshot(fullPage = fullPage)
                 AgentCommandResult(command, "Screenshot ${shot.width}×${shot.height}", screenshot = shot)
             }
         }

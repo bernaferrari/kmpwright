@@ -137,5 +137,39 @@ for simulator_arch in arm64; do
     build
 done
 
+# Run the Swift consumer on a simulator: it calls throwing APIs inside do/catch and checks that
+# Kotlin exceptions arrive as Swift errors carrying the Kotlin exception (see KmpwrightSmoke.swift).
+# Uses KMPWRIGHT_IOS_SIMULATOR (name or UDID) or the first booted iOS simulator; set
+# KMPWRIGHT_IOS_SMOKE_RUN=0 to only build.
+if [[ "${KMPWRIGHT_IOS_SMOKE_RUN:-1}" != "0" ]]; then
+  smoke_simulator="${KMPWRIGHT_IOS_SIMULATOR:-$(xcrun simctl list devices booted --json | python3 -c '
+import json, sys
+for runtime, devices in json.load(sys.stdin)["devices"].items():
+    if "iOS" in runtime:
+        for device in devices:
+            if device["state"] == "Booted":
+                print(device["udid"]); sys.exit(0)
+')}"
+  if [[ -z "$smoke_simulator" ]]; then
+    echo "No booted iOS simulator: skipped running the Swift consumer (boot one or set KMPWRIGHT_IOS_SIMULATOR)."
+  else
+    smoke_bundle_id="io.github.bernaferrari.kmpwright.smoke"
+    smoke_app="$TMP_DIR/build-arm64/Release-iphonesimulator/KmpwrightSmoke.app"
+    smoke_log="$TMP_DIR/swift-smoke.log"
+    codesign --force --sign - "$smoke_app" >/dev/null
+    xcrun simctl install "$smoke_simulator" "$smoke_app"
+    set +e
+    xcrun simctl launch --console-pty --terminate-running-process "$smoke_simulator" "$smoke_bundle_id" \
+      --kmpwright-swift-smoke 2>&1 | tee "$smoke_log"
+    set -e
+    xcrun simctl uninstall "$smoke_simulator" "$smoke_bundle_id" >/dev/null 2>&1 || true
+    grep -q "KMPWRIGHT_SWIFT_SMOKE PASSED" "$smoke_log" || {
+      echo "The Swift consumer did not report success on simulator $smoke_simulator" >&2
+      exit 1
+    }
+    echo "Swift consumer ran on simulator $smoke_simulator: Kotlin exceptions are catchable Swift errors."
+  fi
+fi
+
 echo "KmpwrightCore XCFramework, deterministic asset, checksum, and artifact-only Swift consumer verified: $XCF_PATH"
 echo "Release assets: $ZIP_PATH $CHECKSUM_PATH"

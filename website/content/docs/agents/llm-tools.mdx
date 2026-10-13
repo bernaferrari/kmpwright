@@ -266,7 +266,7 @@ Instead of one `browser` tool, you can declare typed tools (`snapshot`, `click(r
 ```kotlin
 suspend fun Page.callTypedTool(name: String, args: Map<String, String>): String = try {
     when (name) {
-        "snapshot" -> snapshot(SnapshotOptions(interactive = true)).tree
+        "snapshot" -> snapshot(interactive = true).tree
         "click" -> { locator(args.getValue("ref")).click(); "Clicked ${args["ref"]}" }
         "fill" -> { locator(args.getValue("ref")).fill(args.getValue("text")); "Filled ${args["ref"]}" }
         "navigate" -> "Opened ${goto(AgentCommands.normalizeUrl(args.getValue("url"))).url}"

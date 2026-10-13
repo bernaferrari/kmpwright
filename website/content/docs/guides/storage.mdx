@@ -165,9 +165,7 @@ The password is not stored anywhere. If you lose it, the file cannot be recovere
 `autosaveStorageState` saves the state to a file now and then at a fixed interval until you stop it.
 
 ```kotlin
-val autosave = page.autosaveStorageState(
-    StorageStateAutosaveOptions(path = "auth/app.json", password = secret, intervalMs = 60_000)
-)
+val autosave = page.autosaveStorageState(path = "auth/app.json", password = secret, intervalMs = 60_000)
 // ...
 autosave.error.value?.let { println("Autosave stopped: $it") }
 autosave.stop()
@@ -193,7 +191,6 @@ autosave.stop()
 - The first save happens before `autosaveStorageState` returns. If it fails, the call throws and nothing keeps running.
 - A failed periodic save stops the autosave and sets `error`. It does not retry.
 - The autosave runs in the page's scope, so closing the page also stops it.
-- `StorageStateAutosaveOptions.toString()` masks the password.
 
 ## Logging in with an AuthProfile
 
@@ -223,6 +220,8 @@ page.waitForURL("**/dashboard")                 // confirm the login yourself
     lastUsedAt: { type: 'Long?', description: 'Epoch milliseconds. Not updated by login().', default: 'null' },
   }}
 />
+
+`page.login(profile, navigate = true, submit = true)` parameters:
 
 <TypeTable
   type={{
@@ -268,7 +267,7 @@ Playwright gives every `BrowserContext` its own cookies and storage. Whether you
 
 | Backend | `browserContexts` | What `browser.newContext()` gives you | Default `Browser` storage |
 |---|---|---|---|
-| Android WebView | Unsupported | Throws `UnsupportedOperationException`. `BrowserContext.newPage()`, `clearCookies()` and `clearData()` throw too. | All pages share the app's WebView profile: one `CookieManager` and shared web storage. |
+| Android WebView | Unsupported | Throws `KmpwrightUnsupportedException`. `BrowserContext.newPage()`, `clearCookies()` and `clearData()` throw too. | All pages share the app's WebView profile: one `CookieManager` and shared web storage. |
 | iOS WKWebView | Partial | A context backed by a fresh non-persistent `WKWebsiteDataStore`. Isolated data, but not a separate browser process. | The data store of the `WKWebView` you passed, or of `IOSPlatformContext.websiteDataStore`. If neither is given, a non-persistent store that is cleared on `dispose()`. |
 | JVM (CDP) | Supported | A Chromium context from `Target.createBrowserContext` with its own cookies and storage. It is disposed on `close()`. | The default context of the Chromium you connected to. |
 

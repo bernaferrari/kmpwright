@@ -11,14 +11,10 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.ui.graphics.vector.ImageVector
-import com.bernaferrari.kmpwright.core.SnapshotOptions
 import com.bernaferrari.kmpwright.core.KmpwrightException
 import com.bernaferrari.kmpwright.core.Page
 import com.bernaferrari.kmpwright.core.StorageState
-import com.bernaferrari.kmpwright.core.ScreenshotOptions
 import com.bernaferrari.kmpwright.core.ScreenshotResult
-import com.bernaferrari.kmpwright.core.SetContentOptions
-import com.bernaferrari.kmpwright.core.TypeOptions
 import com.bernaferrari.kmpwright.core.check
 import com.bernaferrari.kmpwright.core.click
 import com.bernaferrari.kmpwright.core.expect
@@ -53,7 +49,7 @@ private fun step(label: String, run: suspend (Page) -> Any?) = RecipeStep(label)
     }
 }
 
-private suspend fun Page.load(html: String) = setContent(html, SetContentOptions())
+private suspend fun Page.load(html: String) = setContent(html)
 
 internal val recipes: List<Recipe> = listOf(
     Recipe(
@@ -63,9 +59,9 @@ internal val recipes: List<Recipe> = listOf(
         icon = Icons.Default.AutoAwesome,
         code = """
             page.runCommand("snapshot -i")
-            // @e1 [input type="search"] placeholder="Search"   ← refs come from the snapshot
-            page.runCommand("fill @e1 snapshot")
-            page.runCommand("press Enter @e1")
+            // @e3 [input type="search"] "Search"   ← refs come from the snapshot
+            page.runCommand("fill @e3 snapshot")
+            page.runCommand("press Enter @e3")
             page.runCommand("get text #results")
         """.trimIndent(),
         steps = listOf(
@@ -74,7 +70,7 @@ internal val recipes: List<Recipe> = listOf(
                 page.runCommand("snapshot -i").output.lines().take(6).joinToString("\n") + "\n…"
             },
             step("fill the search box by ref") { page ->
-                val snapshot = page.snapshot(SnapshotOptions(interactive = true))
+                val snapshot = page.snapshot(interactive = true)
                 val search = snapshot.refs.values.firstOrNull { it.name.equals("Search", ignoreCase = true) && it.role != "button" }
                     ?: throw KmpwrightException("No search box in the snapshot")
                 page.runCommand("fill ${search.ref} snapshot")
@@ -142,14 +138,14 @@ internal val recipes: List<Recipe> = listOf(
         icon = Icons.Default.Keyboard,
         code = """
             page.locator("#query").click()
-            page.keyboard.type("network", TypeOptions(delayMs = 70))
+            page.keyboard.type("network", delayMs = 70)
             page.keyboard.press("Enter")
             expect(page.locator("#results li")).toHaveCount(1)
         """.trimIndent(),
         steps = listOf(
             step("Load the playground") { it.load(DemoSite.playground) },
             step("Focus the search box") { page -> page.locator("#query").click() },
-            step("Type “network”") { page -> page.keyboard.type("network", TypeOptions(delayMs = 70)) },
+            step("Type “network”") { page -> page.keyboard.type("network", delayMs = 70) },
             step("Press Enter") { page -> page.keyboard.press("Enter") },
             step("Expect one result") { page ->
                 expect(page.locator("#results li")).toHaveCount(1, 5_000)
@@ -164,13 +160,13 @@ internal val recipes: List<Recipe> = listOf(
         icon = Icons.Default.PhotoCamera,
         code = """
             page.setContent(article)
-            val shot = page.screenshot(ScreenshotOptions(fullPage = true))
+            val shot = page.screenshot(fullPage = true)
             // shot.bytes is a PNG: save it, diff it, or send it to a model
         """.trimIndent(),
         steps = listOf(
             step("Load a long article") { it.load(DemoSite.article) },
             step("Capture the full page") { page ->
-                val shot = page.screenshot(ScreenshotOptions(fullPage = true))
+                val shot = page.screenshot(fullPage = true)
                 StepOutput("${shot.width} × ${shot.height} px · ${shot.bytes.size / 1024} KB", shot)
             },
         ),

@@ -76,7 +76,7 @@ class PageLifecycleTest {
         val controller = MockWebViewController().apply { completeNavigationImmediately = false }
         val page = TestPage(controller)
         val navigation = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-            runCatching { page.goto("https://example.com", GotoOptions(timeoutMs = 60_000)) }
+            runCatching { page.goto("https://example.com", timeoutMs = 60_000) }
         }
         page.dispose()
         val result = kotlinx.coroutines.withTimeout(1_000) { navigation.await() }

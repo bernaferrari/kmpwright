@@ -6,7 +6,7 @@ description: page.snapshot options, the agent-browser tree format, @eN refs and 
 A snapshot is the page as an accessibility tree in agent-browser's text format. Elements you can act on get a ref such as `@e3`, which works as a selector until the next snapshot.
 
 ```kotlin
-val snapshot = page.snapshot(SnapshotOptions(interactive = true))
+val snapshot = page.snapshot(interactive = true)
 println(snapshot.tree)
 // @e1 [heading] "Example Domain" [level=1]
 // @e2 [input type="email"] placeholder="Email"
@@ -24,7 +24,9 @@ page.locator("@e5").click()
 
 agent-browser: `snapshot`, with the same flags (`-i`, `-u`, `-c`, `-d`, `-s`, `-C`) and the same line format. From an LLM tool, use `page.runCommand("snapshot -i")` (see [Commands](/docs/agents/commands#snapshot)).
 
-## SnapshotOptions
+## Snapshot parameters
+
+`page.snapshot(...)` takes these named parameters:
 
 <TypeTable type={{
   interactive: { type: 'Boolean', description: '`-i`. Only lines with refs, as a flat list. Refs nested inside another ref (iframe content) stay indented under it.', default: 'false' },
@@ -133,7 +135,7 @@ That is why `snapshot -i` lists headings as well as controls: they give the mode
   level: { type: 'Int?', description: 'Heading or aria-level.' },
   inputType: { type: 'String?', description: 'For text-entry inputs: the type, or "" when the page set no type attribute.' },
   placeholder: { type: 'String?', description: 'The placeholder, when present.' },
-  url: { type: 'String?', description: 'The link href, only when SnapshotOptions.urls is true.' },
+  url: { type: 'String?', description: 'The link href, only when snapshot(urls = true) was used.' },
 }} />
 
 ```kotlin
@@ -170,7 +172,7 @@ Refs belong to the latest snapshot. KMPwright never re-snapshots implicitly: `pa
 How refs behave:
 
 - **Stable per element.** The ref registry lives in KMPwright's page runtime and maps each element to its ref. The same element keeps the same ref in every snapshot of the same document, even when its text or position changes. New elements get new, higher numbers; numbers are not reused within a document.
-- **The latest snapshot wins.** Each `snapshot()` replaces the set of resolvable refs with the refs it contains. A ref from an earlier snapshot keeps working only if the element appears again. A snapshot scoped with `selector` registers only the refs inside that subtree, and `screenshot(ScreenshotOptions(annotate = true))` takes a full snapshot of its own.
+- **The latest snapshot wins.** Each `snapshot()` replaces the set of resolvable refs with the refs it contains. A ref from an earlier snapshot keeps working only if the element appears again. A snapshot scoped with `selector` registers only the refs inside that subtree, and `screenshot(annotate = true)` takes a full snapshot of its own.
 - **Removed elements fail.** A ref resolves only while its element is attached to the document. If the page removes it, or a framework replaces it with a new node (for example a list re-rendered with new keys), the ref stops matching. Mutating an element in place keeps its ref.
 - **Navigation resets everything.** A new document (`goto`, a link click, `reload`, `setContent`) has a new runtime: no ref resolves until you snapshot again, and numbering starts over at `@e1`.
 - **Refs cannot be read or remapped by the page.** The registry is held in a sealed runtime, not in page-visible globals, so a hostile page cannot point `@e3` at a different element.
@@ -191,9 +193,9 @@ The rule for agents: re-snapshot after any action that changes the page, and low
 Compare two snapshots line by line to see what an action changed:
 
 ```kotlin
-val before = page.snapshot(SnapshotOptions(interactive = true))
+val before = page.snapshot(interactive = true)
 page.locator("@e5").click()
-val after = page.snapshot(SnapshotOptions(interactive = true))
+val after = page.snapshot(interactive = true)
 
 val diff = page.diffSnapshot(before, after)
 if (diff.changed) println(diff.unifiedDiff)
@@ -213,7 +215,7 @@ if (diff.changed) println(diff.unifiedDiff)
 
 ### Named baselines
 
-`page.diffSnapshot(name)` takes a new full snapshot (default `SnapshotOptions()`), diffs it against the one saved under `name`, and saves the new one under `name`:
+`page.diffSnapshot(name)` takes a new full snapshot (default `snapshot()` parameters), diffs it against the one saved under `name`, and saves the new one under `name`:
 
 ```kotlin
 page.diffSnapshot("cart")            // first call: records the baseline, changed = false
@@ -240,7 +242,7 @@ agent-browser: `diff url`.
 ## Annotated screenshots
 
 ```kotlin
-val shot = page.screenshot(ScreenshotOptions(annotate = true))
+val shot = page.screenshot(annotate = true)
 shot.bytes                 // the image, with a numbered label on each ref
 shot.annotations.forEach { println("${it.ref} ${it.role} ${it.name} ${it.box}") }
 ```
@@ -256,7 +258,7 @@ With `annotate = true`, KMPwright takes a full snapshot, draws a red label with 
   box: { type: 'Rectangle', description: 'x, y, width, height in CSS pixels, relative to the viewport when the labels were drawn. Elements in same-origin iframes are offset by the iframe position.' },
 }} />
 
-`annotate` applies to page screenshots; combine it with `fullPage`, `clip` and the other `ScreenshotOptions` as usual. From `runCommand`, `screenshot --annotate` also prints a legend (see [Commands](/docs/agents/commands#screenshot)).
+`annotate` applies to page screenshots; combine it with `fullPage` or `clip` and the other `screenshot()` parameters as usual. From `runCommand`, `screenshot --annotate` also prints a legend (see [Commands](/docs/agents/commands#screenshot)).
 
 agent-browser: `screenshot --annotate`.
 

@@ -1,5 +1,7 @@
 package com.bernaferrari.kmpwright.core
 
+import kotlinx.coroutines.IO
+
 import java.io.File
 
 internal actual fun fileWrite(path: String, content: String) {
@@ -42,3 +44,5 @@ internal actual fun mkdirs(path: String) {
 }
 
 internal actual fun platformHomeDir(): String = System.getProperty("user.home") ?: "/tmp"
+
+internal actual val fileDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO

@@ -1,5 +1,7 @@
 package com.bernaferrari.kmpwright.core
 
+import kotlinx.coroutines.IO
+
 import com.bernaferrari.kmpwright.core.ios.toByteArrayPinned
 import com.bernaferrari.kmpwright.core.ios.toNSData
 import kotlinx.cinterop.BetaInteropApi
@@ -102,3 +104,5 @@ internal actual fun platformHomeDir(): String =
     NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, true)
         .firstOrNull() as? String
         ?: "${NSHomeDirectory()}/Library/Application Support"
+
+internal actual val fileDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO

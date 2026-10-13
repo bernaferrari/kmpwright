@@ -59,51 +59,73 @@ KMPwright's API is plain Kotlin exported through Kotlin/Native's Objective-C int
 | Kotlin | In Swift |
 |---|---|
 | `Browser(context, config)` | `Browser(context:config:)` |
-| `IOSPlatformContext(webView, websiteDataStore)` | `IOSPlatformContext(webView:websiteDataStore:)` |
+| `IOSPlatformContext(webView, websiteDataStore)` | `IOSPlatformContext(webView:websiteDataStore:)` (add `import WebKit`: its parameters are WebKit types) |
 | `interface Page`, `interface Locator` | Protocols `Page`, `Locator` |
-| `suspend fun goto(...)` | `async` function taking a completion handler; call with `try await` |
+| `suspend fun` | `async throws` (the Objective-C header has a completion handler; Swift imports it as `async`). Call with `try await` |
+| Non-suspending functions annotated with `@Throws` (`browser.page()`, `TimeoutConfig(...)`) | `throws`. Call with `try` |
+| Parameter names | Argument labels, as named parameters in Kotlin: `goto(url:waitUntil:timeoutMs:)` |
 | Functions whose name starts with `new` (`newPage`, `newContext`, `newWindow`) | Prefixed with `do`: `doNewPage()`, `doNewContext()`, `doNewWindow()` |
-| Extension and top-level functions in `PageConvenience.kt`, `PageWaits.kt`, `Expect.kt`... | Static methods on `PageConvenienceKt`, `PageWaitsKt`, `ExpectKt`..., receiver as the first argument |
-| Default arguments | Not available. Pass every parameter, including every field of option data classes such as `KmpwrightConfig` (15 parameters) |
-| `Long?` | `KotlinLong?` |
+| Extension and top-level functions in `PageConvenience.kt`, `PageWaits.kt`, `Expect.kt`... | Static methods on `PageConvenienceKt`, `PageWaitsKt`, `ExpectKt`..., receiver as the first argument: `ExpectKt.expect(locator:)` |
+| Default arguments | Not available. Pass every parameter, including the optional named parameters of methods such as `click(...)` and every field of data classes such as `KmpwrightConfig` (14 parameters) |
+| `Long?` | `KotlinLong?` (`KotlinLong(value: 200)`) |
+| Enum entries | Lower-case static members: `.left`, `.hybrid`, `.load_` (`load` is renamed because it clashes with an Objective-C method) |
 
-<Callout type="error">
-KMPwright does not annotate its API with `@Throws`. In Kotlin/Native, a `suspend` function called from Swift only turns `CancellationException` into a Swift error; **any other Kotlin exception, including `KmpwrightException`, `KmpwrightTimeoutException` and `KmpwrightAssertionError`, terminates the app.** A failed assertion or a locator timeout called directly from Swift is a crash.
-</Callout>
+Three declarations from the generated `KmpwrightCore.h`, as Swift sees them:
 
-The practical pattern is a small Kotlin facade in your own shared module that catches exceptions and exposes the few operations Swift needs:
+```objc
+- (void)gotoUrl:(NSString *)url waitUntil:(KmpwrightCoreLoadState *)waitUntil timeoutMs:(KmpwrightCoreLong * _Nullable)timeoutMs completionHandler:(void (^)(KmpwrightCoreNavigationResult * _Nullable, NSError * _Nullable))completionHandler __attribute__((swift_name("goto(url:waitUntil:timeoutMs:completionHandler:)")));
 
-```kotlin
-// iosMain of your shared module
-class WebAutomation(webView: WKWebView) {
-    private val browser = Browser(IOSPlatformContext(webView = webView))
-    private val page = browser.page()
+- (void)clickButton:(KmpwrightCoreMouseButton *)button clickCount:(int32_t)clickCount delayMs:(int64_t)delayMs position:(KmpwrightCorePosition * _Nullable)position force:(BOOL)force timeoutMs:(KmpwrightCoreLong * _Nullable)timeoutMs completionHandler:(void (^)(NSError * _Nullable))completionHandler __attribute__((swift_name("click(button:clickCount:delayMs:position:force:timeoutMs:completionHandler:)")));
 
-    @Throws(Exception::class)
-    suspend fun open(url: String): Boolean = page.goto(url).ok
-
-    suspend fun clickText(text: String): String? = try {
-        page.getByText(text).click(); null
-    } catch (error: KmpwrightException) {
-        error.message
-    }
-
-    fun close() = browser.dispose()
-}
+- (void)toHaveTextText:(NSString *)text timeoutMs:(KmpwrightCoreLong * _Nullable)timeoutMs useInnerText:(BOOL)useInnerText completionHandler:(void (^)(NSError * _Nullable))completionHandler __attribute__((swift_name("toHaveText(text:timeoutMs:useInnerText:completionHandler:)")));
 ```
 
 ```swift
-let automation = WebAutomation(webView: webView)
-let ok = try await automation.open(url: "https://example.com")
+// func goto(url: String, waitUntil: LoadState, timeoutMs: KotlinLong?) async throws -> NavigationResult
+let result = try await page.goto(url: "https://example.com", waitUntil: .load_, timeoutMs: nil)
+
+// func click(button: MouseButton, clickCount: Int32, delayMs: Int64, position: Position?, force: Bool, timeoutMs: KotlinLong?) async throws
+try await page.locator(selector: "#save").click(
+    button: .left, clickCount: 1, delayMs: 0, position: nil, force: false, timeoutMs: KotlinLong(value: 5_000))
+
+// func toHaveText(text: String, timeoutMs: KotlinLong?, useInnerText: Bool) async throws
+try await ExpectKt.expect(locator: page.locator(selector: "#status"))
+    .toHaveText(text: "Saved", timeoutMs: nil, useInnerText: false)
 ```
 
-Your facade's `@Throws(Exception::class)` makes Kotlin exceptions arrive as Swift errors.
+### Errors
+
+Public functions declare `@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)`; web-first assertions (`expect(...).toHaveText(...)` and the rest) also declare `KmpwrightAssertionError`, which extends `AssertionError` rather than `KmpwrightException`. Those exceptions, and their subclasses such as `KmpwrightTimeoutException`, arrive in Swift as an `NSError` in the `KotlinException` domain. Its `localizedDescription` is the Kotlin message and its `kotlinException` property holds the Kotlin exception object:
+
+```swift
+do {
+    try await page.locator(selector: "#missing").click(
+        button: .left, clickCount: 1, delayMs: 0, position: nil, force: false, timeoutMs: KotlinLong(value: 200))
+} catch {
+    let nsError = error as NSError
+    switch nsError.kotlinException {
+    case let timeout as KmpwrightTimeoutException:
+        print("timed out:", timeout.message ?? "")  // "Element #missing was not found after 200ms while trying to click"
+    case let failed as KmpwrightAssertionError:
+        print("assertion failed:", failed.message ?? "")
+    default:
+        print(nsError.localizedDescription)
+    }
+}
+```
+
+A `goto` that fails to load does not throw: it returns a `NavigationResult` with `ok == false`. Kotlin exceptions outside the declared types (a bug, not an expected failure) still terminate the app, as Kotlin/Native does for any undeclared exception.
+
+The repository's Swift consumer, [`smoke/ios-swift`](https://github.com/bernaferrari/kmpwright/tree/main/smoke/ios-swift), is built against the packaged XCFramework and run on a simulator by `scripts/verify-ios-xcframework.sh`; it catches a locator timeout, a failed assertion and a constructor `require` failure this way.
 
 ## Web view ownership and retention
 
 - KMPwright holds the `WKWebView` strongly while its page is open.
 - WebKit strongly retains URL-scheme handlers (through the configuration) and script-message handlers (through the user content controller). KMPwright registers small proxies that hold the page **weakly**, so a closed page can be collected even if your app keeps the web view alive.
-- When attached, KMPwright sets the web view's `navigationDelegate` and `UIDelegate` to its own. Your previous delegates are **not** called while KMPwright is attached; they are restored when the page closes.
+- When attached, KMPwright sets the web view's `navigationDelegate` and `UIDelegate` to its own and forwards to the delegates you had installed, which it holds until the page closes and then restores:
+  - **Policy decisions** (`decidePolicyFor` navigation action and response): a KMPwright denial (`allowedOriginRules`, `setAllowedDomains`, a navigation guard) cancels and your delegate is not asked. Otherwise your delegate decides if it implements the method, and the default (allow) applies if it does not. A main-frame navigation your delegate cancels makes `goto` return `ok = false` with "Navigation was cancelled by the host navigation delegate: url".
+  - **JavaScript dialogs** (`alert`, `confirm`, `prompt`): a `page.onDialog` handler or a pending `waitForDialog` answers first. Otherwise your `runJavaScript…Panel` method runs (`page.events.dialog` still reports the dialog); otherwise the dialog is dismissed.
+  - **Everything else** your delegates implement is forwarded unchanged: `didFinish` and the failure callbacks after KMPwright's own bookkeeping, and `didStartProvisionalNavigation`, `didCommit`, redirects, authentication challenges, `webViewWebContentProcessDidTerminate`, `createWebViewWith…`, `webViewDidClose`, context menus and permission requests directly. WebKit sees the same set of optional methods your delegates implement, so its defaults for the rest do not change.
 - On `page.close()` (or `dispose()`), KMPwright stops loading, restores your delegates, removes its script-message handler, its content rule list and its own user scripts (your user scripts stay), and fails in-flight custom-scheme loads. It does not remove your web view from the view hierarchy.
 
 ## JavaScript evaluation
@@ -153,8 +175,8 @@ An entry that is not a host name or a `*.` wildcard throws "Domain filter entry 
 ## Screenshots and PDF
 
 - Captured with `WKWebView.takeSnapshot`. WebKit renders content outside the visible viewport for snapshot requests, so full-page screenshots need no scroll-and-stitch.
-- `ScreenshotResult.width`/`height` are the real pixel dimensions of the PNG: the logical size times `ScreenshotOptions.scale` times the screen scale (the window's screen, or the main screen). `ScreenshotOptions.clip` and annotation boxes are in CSS points.
-- PNG and JPEG. `format = WEBP` throws `KmpwrightUnsupportedException` ("WEBP screenshots are not supported on iOS (ImageIO cannot encode WebP); use PNG or JPEG"), and so does `omitBackground = true` ("ScreenshotOptions.omitBackground is not supported on iOS WKWebView: …").
+- `ScreenshotResult.width`/`height` are the real pixel dimensions of the PNG: the logical size times the screenshot `scale` times the screen scale (the window's screen, or the main screen). The screenshot `clip` and annotation boxes are in CSS points.
+- PNG and JPEG. `format = ScreenshotFormat.Webp` throws `KmpwrightUnsupportedException` ("WEBP screenshots are not supported on iOS (ImageIO cannot encode WebP); use PNG or JPEG"), and so does `omitBackground = true` ("omitBackground is not supported on iOS WKWebView: …").
 - PDF (`Pdf` = Partial) uses `createPDF`, which produces one unpaginated canvas. `page.pdf()` with default options uses it (`format = null` means `PdfFormat.Content` on iOS). A paper format, `landscape`, `width`/`height`, non-zero margins, `scale`, `pageRanges`, header/footer templates or `printBackground = false` throw `KmpwrightUnsupportedException`: "WKWebView PDF export supports only the content canvas (format null or Content) with zero margins, …".
 
 ## `BrowserContext`
@@ -165,7 +187,7 @@ An entry that is not a host name or a `*.` wildcard throws "Domain filter entry 
 
 | Feature | iOS behavior |
 |---|---|
-| Dialogs | Without a `page.onDialog` handler, dialogs are dismissed. A handler that throws or does not answer within `TimeoutConfig.handler` (30 s by default) dismisses. `DialogType.BeforeUnload` is never reported: `WKUIDelegate` has no `beforeunload` callback, so WebKit leaves the page without asking. |
+| Dialogs | Without a `page.onDialog` handler (or pending `waitForDialog`), a host `WKUIDelegate` that implements the panel method answers; otherwise dialogs are dismissed. A handler that throws or does not answer within `TimeoutConfig.handler` (30 s by default) dismisses. `DialogType.BeforeUnload` is never reported: `WKUIDelegate` has no `beforeunload` callback, so WebKit leaves the page without asking. |
 | `setExtraHTTPHeaders` | Only an empty map is accepted; anything else throws "This backend cannot apply extra HTTP headers securely without exposing them to page JavaScript." |
 | `setHTTPCredentials` | Sent as a Basic `Authorization` header on `goto` requests to one origin: the page's origin when you set them, or the first origin you then navigate to. Subresource requests and other origins never receive them. |
 | Input | `page.touchscreen`, `page.mouse` and `page.keyboard` synthesize touch-first events with DOM text-input fallbacks (all Partial). `touchscreen.pinch` throws `KmpwrightUnsupportedException`: "WKWebView cannot synthesize a trusted native pinch gesture". Mouse and keyboard require `InputMode.Hybrid`. |
@@ -179,7 +201,7 @@ An entry that is not a host name or a `*.` wildcard throws "Domain filter entry 
 | Downloads, file chooser | Unsupported. `setInputFiles` with a non-empty list throws "setInputFiles is not supported in mobile WebView". |
 | Tracing, profiler, video, screencast, CDP targets | Unsupported (CDP only). |
 | `launchBrowser`, `ChromeProfiles` | Throw `KmpwrightUnsupportedException`. |
-| `HttpReader` / `page.read` | Uses the Darwin (URLSession) engine. `ReadOptions.caCertificatePath` (PEM) adds trust anchors to the system roots, or replaces them with `useSystemCa = false`; `useSystemCa = false` without a certificate path throws. |
+| `HttpReader` / `page.read` | Uses the Darwin (URLSession) engine. `caCertificatePath` (PEM) adds trust anchors to the system roots, or replaces them with `useSystemCa = false`; `useSystemCa = false` without a certificate path throws. |
 | `browser.version()` | Returns a fixed `BrowserVersion("Kmpwright", "1.3.0", …)`, not the WebKit version. |
 
 The full list is on [Capabilities](/docs/platforms/capabilities).

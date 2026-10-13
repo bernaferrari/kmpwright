@@ -29,13 +29,24 @@ public class ScreenshotTracker internal constructor(
     private val mutex = Mutex()
     private val baselines = linkedMapOf<ScreenshotOptions, ScreenshotResult>()
 
-    /** Captures a screenshot and returns it only when it differs from the previous one of the same scope. */
+    /**
+     * Captures a screenshot and returns it only when it differs from the previous one of the same scope
+     * by more than [threshold] (0..1). The screenshot parameters are those of [Page.screenshot].
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
     public suspend fun captureIfChanged(
-        options: ScreenshotOptions = ScreenshotOptions(),
-        threshold: Double = 0.0
+        fullPage: Boolean = false,
+        clip: Rectangle? = null,
+        omitBackground: Boolean = false,
+        quality: Int = 90,
+        format: ScreenshotFormat = ScreenshotFormat.Png,
+        scale: Double = 1.0,
+        annotate: Boolean = false,
+        threshold: Double = 0.0,
+        timeoutMs: Long? = null
     ): ConditionalScreenshotResult = mutex.withLock {
         require(threshold in 0.0..1.0) { "threshold must be between 0 and 1" }
+        val options = ScreenshotOptions(fullPage, clip, omitBackground, quality, format, scale, annotate, timeoutMs)
         val image = capture(options)
         if (image.bytes.isEmpty()) throw KmpwrightException("Screenshot capture returned no image")
         val key = options.copy(timeoutMs = 0)
@@ -47,7 +58,7 @@ public class ScreenshotTracker internal constructor(
         } else {
             val before = previous.toRgbaImage() ?: throw KmpwrightException("Could not decode screenshot baseline")
             val after = image.toRgbaImage() ?: throw KmpwrightException("Could not decode current screenshot")
-            val diff = VisualDiff.compareRgba(before, after, DiffOptions(threshold = 0.0, generateDiffImage = false))
+            val diff = VisualDiff.compareRgba(before, after, threshold = 0.0, generateDiffImage = false)
             mismatch = diff.mismatchPercentage
             diff.dimensionMismatch != null || diff.mismatchPercentage > threshold * 100
         }

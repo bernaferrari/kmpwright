@@ -40,15 +40,17 @@ class CertificateTrustTest {
                 }; start()
             }
             val port = server.address.port
-            val options = ReadOptions(timeoutMs = 3_000, caCertificatePath = certificate.toString(), useSystemCa = false)
-            assertEquals("# Trusted private service", HttpReader().read("https://localhost:$port/", options).content)
-            try { HttpReader().read("https://localhost:$port/", ReadOptions(timeoutMs = 3_000)); fail("Private trust leaked into default reader") }
+            val privateRead: suspend (String) -> ReadResult = { url ->
+                HttpReader().read(url, caCertificatePath = certificate.toString(), useSystemCa = false, timeoutMs = 3_000)
+            }
+            assertEquals("# Trusted private service", privateRead("https://localhost:$port/").content)
+            try { HttpReader().read("https://localhost:$port/", timeoutMs = 3_000); fail("Private trust leaked into default reader") }
             catch (_: Exception) { }
-            try { HttpReader().read("https://127.0.0.1:$port/", options); fail("Wrong hostname accepted") }
+            try { privateRead("https://127.0.0.1:$port/"); fail("Wrong hostname accepted") }
             catch (_: Exception) { }
             val chrome = System.getenv("KMPWRIGHT_TEST_CHROME")
             if (System.getProperty("os.name").startsWith("Linux") && !chrome.isNullOrBlank()) {
-                val launched = launchBrowser(BrowserLaunchOptions(chrome, caCertificatePath = certificate.toString()))
+                val launched = launchBrowser(chrome, caCertificatePath = certificate.toString())
                 try {
                     val page = launched.browser.newPage()
                     page.goto("https://localhost:$port/")
@@ -63,7 +65,7 @@ class CertificateTrustTest {
         } finally { server?.stop(0); directory.toFile().deleteRecursively() }
     }
     @Test fun `isolated Chromium trust rejects unsupported platforms and conflicting options`() {
-        try { BrowserLaunchOptions("chrome", caCertificatePath = "ca.pem", ignoreHttpsErrors = true); fail("Disabled verification accepted") }
+        try { runBlocking { launchBrowser("chrome", caCertificatePath = "ca.pem", ignoreHttpsErrors = true) }; fail("Disabled verification accepted") }
         catch (_: IllegalArgumentException) { }
         if (!System.getProperty("os.name").startsWith("Linux")) {
             try { prepareBrowserCaTrust("ca.pem"); fail("Unsupported platform accepted") }

@@ -16,7 +16,7 @@ First public version. Not yet published to Maven Central; the iOS XCFramework re
 
 ### Playwright-style API
 
-- `Browser`, `BrowserContext`, `Page`, `Locator`, `FrameLocator` with Playwright JS names; all page operations are `suspend`, options are data classes, `timeoutMs = null` uses the configured default.
+- `Browser`, `BrowserContext`, `Page`, `Locator`, `FrameLocator` with Playwright JS names; all page operations are `suspend`, options are named parameters with defaults, `use {}` closes browsers, contexts and pages, `timeoutMs = null` uses the configured default.
 - Navigation and waits: `goto`, `reload`, `goBack`/`goForward`, `waitForURL`, `waitForLoadState`, `waitForNavigation`, `waitForRequest`/`waitForResponse`, `waitForFunction`, plus action-scoped forms that cannot miss fast events.
 - Locators: CSS (open shadow roots), `text=`, `role=`, `label=`, `placeholder=`, `alt=`, `title=`, `testid=`, `xpath=`, `>>` chaining, snapshot refs; `getBy*` finders; `filter`, `and`, `or`, `nth`; actionability checks and strict mode.
 - Web-first assertions: `expect(locator)` and `expect(page)`, with `.not`.

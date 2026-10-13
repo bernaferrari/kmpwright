@@ -85,7 +85,7 @@ internal class CdpConnection(
     suspend fun connect() {
         // A proxy needs a dedicated client; otherwise share one per connection
         // and release it in close() (HttpClient is AutoCloseable on JDK 21+).
-        val client = if (proxy != null) {
+        val client = if (proxy != null && !proxy.bypasses(java.net.URI(wsUrl).host.orEmpty())) {
             HttpClient.newBuilder()
                 .proxy(ProxySelector.of(InetSocketAddress(proxy.host, proxy.port)))
                 .connectTimeout(java.time.Duration.ofMillis(connectionTimeoutMs))

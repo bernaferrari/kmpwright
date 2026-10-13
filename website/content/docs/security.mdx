@@ -20,7 +20,7 @@ When an LLM drives a browser, the page it reads is untrusted input and the actio
 
 ## KmpwrightConfig
 
-Security-relevant fields of the browser-wide configuration, passed to `Browser(context, config)`, `launchBrowser(options, config)` or `rememberKmpwrightController(config)`:
+Security-relevant fields of the browser-wide configuration, passed to `Browser(context, config)`, `launchBrowser(executablePath, config = config)` or `rememberKmpwrightController(config)`:
 
 ```kotlin
 val config = KmpwrightConfig(
@@ -52,7 +52,7 @@ val browser = Browser(AndroidPlatformContext(activity, webView), config)
     },
     enableTraceExport: {
       type: 'Boolean',
-      description: 'When false, starting a trace with TracingOptions(path = …) throws, so traces are never written to disk.',
+      description: 'When false, starting a trace with tracing.start(path = …) throws, so traces are never written to disk.',
       default: 'true',
     },
     productionMode: {
@@ -191,7 +191,7 @@ page.requireCapabilities(PageCapability.DomainFiltering)
 When you return page text to an LLM, wrap it so the model can tell untrusted page content from your instructions. This mirrors agent-browser's `--content-boundaries`.
 
 ```kotlin
-val text = page.boundedSnapshot(SnapshotOptions(interactive = true))
+val text = page.boundedSnapshot(interactive = true)
 // --- AGENT_BROWSER_PAGE_CONTENT nonce=3f9c…e1 origin=https://example.com ---
 // @e1 [heading] "Example Domain" [level=1]
 // @e2 [link] "Learn more"
@@ -242,8 +242,8 @@ page.storageState().save("state.json", password = null)             // plaintext
 - On Android and the JVM, the file is encrypted with AES-256 (CBC) and authenticated with HMAC-SHA256, using keys derived from the password with PBKDF2-HMAC-SHA256 (210 000 iterations). iOS uses the platform implementation behind the same API.
 - `load` with a password never falls back to plaintext; a wrong password or a modified file throws `KmpwrightException`.
 - A blank password is rejected; pass `null` for plaintext.
-- `autosaveStorageState(StorageStateAutosaveOptions(path, password, intervalMs))` has the same explicit `password` rule.
-- `StorageState.toString()` prints only cookie counts and storage keys, not values. `HttpCredentials`, `ProxyConfig` and `AuthProfile` also redact passwords in `toString()`.
+- `autosaveStorageState(path, password, intervalMs)` has the same explicit `password` rule.
+- `StorageState.toString()` prints only cookie counts and storage keys, not values. `HttpCredentials` and `AuthProfile` also redact passwords in `toString()`.
 
 Keep passwords, provider API keys and state files out of source control.
 

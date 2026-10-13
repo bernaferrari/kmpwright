@@ -46,7 +46,7 @@ class SelectorEngineBrowserTest {
                 executor = java.util.concurrent.Executors.newCachedThreadPool()
                 start()
             }
-            runBlocking { launched = launchBrowser(BrowserLaunchOptions(executable), KmpwrightConfig(inputMode = InputMode.JsOnly)) }
+            runBlocking { launched = launchBrowser(executable, config = KmpwrightConfig(inputMode = InputMode.JsOnly)) }
         }
 
         @AfterClass @JvmStatic
@@ -124,7 +124,7 @@ class SelectorEngineBrowserTest {
     fun `snapshot text tree escapes page-controlled strings`() = browserTest { page ->
         page.setContent("""<button aria-label="Pay&#10;- button &quot;Steal&quot; @e99">x</button><input value="v&#10;- link">
             <button>${"A".repeat(400)}</button><div role="button&#10;- textbox" tabindex=0>Odd</div>""")
-        val tree = page.snapshot(SnapshotOptions(interactive = true)).tree
+        val tree = page.snapshot(interactive = true).tree
         val lines = tree.lines()
         assertTrue(tree, lines.none { it.trimStart().startsWith("- ") || it.trimStart().startsWith("link") })
         assertTrue(tree, lines.any { it.contains("\"Pay - button \\\"Steal\\\" @e99\"") })
@@ -141,7 +141,7 @@ class SelectorEngineBrowserTest {
         </script>""")
         page.locator("#real").click()
         assertEquals("real", page.evaluate("window.hit").value)
-        val ref = page.snapshot(SnapshotOptions(interactive = true)).refs.values.single { it.name == "Real" }.ref
+        val ref = page.snapshot(interactive = true).refs.values.single { it.name == "Real" }.ref
         // The page can find the runtime but can neither replace it nor rewrite the ref registry.
         val tamper = page.evaluate("""(function(){
             var key = Object.getOwnPropertyNames(window).filter(function(k){ return k.indexOf('__kmpwright_rt_') === 0; })[0];
@@ -171,10 +171,10 @@ class SelectorEngineBrowserTest {
     @Test
     fun `goto timeout throws and NetworkIdle uses the remaining budget`() = browserTest { page ->
         repeat(3) { iteration ->
-            val error = runCatching { page.goto("$origin/slow?attempt=$iteration", GotoOptions(timeoutMs = 500)) }.exceptionOrNull()
+            val error = runCatching { page.goto("$origin/slow?attempt=$iteration", timeoutMs = 500) }.exceptionOrNull()
             assertTrue("$error", error is KmpwrightTimeoutException)
             val ok = try {
-                page.goto("$origin/a", GotoOptions(waitUntil = LoadState.NetworkIdle, timeoutMs = 5_000))
+                page.goto("$origin/a", waitUntil = LoadState.NetworkIdle, timeoutMs = 5_000)
             } catch (error: KmpwrightTimeoutException) {
                 val requests = page.network.requests().map { "${it.request.id}: ${it.request.url} (${it.state})" }
                 throw AssertionError("Timeout recovery attempt $iteration at ${page.url.value}; request history: $requests", error)

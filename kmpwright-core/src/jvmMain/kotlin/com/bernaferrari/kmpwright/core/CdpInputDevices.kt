@@ -58,17 +58,17 @@ internal class CdpMouse(
     private var currentY = 0.0
     private var pressedButtons = 0
 
-    override suspend fun move(x: Double, y: Double, options: MoveOptions) {
-        val steps = options.steps.coerceAtLeast(1)
-        if (steps == 1) {
+    override suspend fun move(x: Double, y: Double, steps: Int, timeoutMs: Long?) {
+        val stepCount = steps.coerceAtLeast(1)
+        if (stepCount == 1) {
             dispatchMove(x, y)
             return
         }
 
         val startX = currentX
         val startY = currentY
-        for (step in 1..steps) {
-            val progress = step.toDouble() / steps
+        for (step in 1..stepCount) {
+            val progress = step.toDouble() / stepCount
             dispatchMove(
                 startX + ((x - startX) * progress),
                 startY + ((y - startY) * progress)
@@ -76,22 +76,22 @@ internal class CdpMouse(
         }
     }
 
-    override suspend fun click(x: Double, y: Double, options: MouseClickOptions) {
-        move(x, y, MoveOptions(timeoutMs = options.timeoutMs))
+    override suspend fun click(x: Double, y: Double, button: MouseButton, clickCount: Int, delayMs: Long, timeoutMs: Long?) {
+        move(x, y, timeoutMs = timeoutMs)
         // Like Playwright, a click with clickCount=N dispatches N press/release
         // pairs with increasing clickCount so the page observes N `click`
         // events followed by `dblclick` (N >= 2), instead of a single click.
         // delayMs is the time between mousedown and mouseup (and between clicks).
-        val clicks = options.clickCount.coerceAtLeast(1)
+        val clicks = clickCount.coerceAtLeast(1)
         for (count in 1..clicks) {
-            val acquired = pressedButtons and buttonMask(options.button) == 0
+            val acquired = pressedButtons and buttonMask(button) == 0
             try {
-                if (acquired) down(MouseDownOptions(button = options.button, clickCount = count))
-                if (options.delayMs > 0) delay(options.delayMs)
+                if (acquired) down(button, count)
+                if (delayMs > 0) delay(delayMs)
             } finally {
-                if (acquired) release(options.button, count)
+                if (acquired) release(button, count)
             }
-            if (count < clicks && options.delayMs > 0) delay(options.delayMs)
+            if (count < clicks && delayMs > 0) delay(delayMs)
         }
     }
 
@@ -104,35 +104,35 @@ internal class CdpMouse(
         }
     }
 
-    override suspend fun dblclick(x: Double, y: Double, options: MouseClickOptions) {
-        click(x, y, options.copy(clickCount = 2))
+    override suspend fun dblclick(x: Double, y: Double, button: MouseButton, delayMs: Long, timeoutMs: Long?) {
+        click(x, y, button, 2, delayMs, timeoutMs)
     }
 
-    override suspend fun down(options: MouseDownOptions) {
-        pressedButtons = pressedButtons or buttonMask(options.button)
+    override suspend fun down(button: MouseButton, clickCount: Int) {
+        pressedButtons = pressedButtons or buttonMask(button)
         dispatchButtonEvent(
             type = "mousePressed",
             x = currentX,
             y = currentY,
-            button = options.button,
-            clickCount = options.clickCount,
+            button = button,
+            clickCount = clickCount,
             buttons = pressedButtons
         )
     }
 
-    override suspend fun up(options: MouseUpOptions) {
-        pressedButtons = pressedButtons and buttonMask(options.button).inv()
+    override suspend fun up(button: MouseButton) {
+        pressedButtons = pressedButtons and buttonMask(button).inv()
         dispatchButtonEvent(
             type = "mouseReleased",
             x = currentX,
             y = currentY,
-            button = options.button,
+            button = button,
             clickCount = 1,
             buttons = pressedButtons
         )
     }
 
-    override suspend fun wheel(deltaX: Double, deltaY: Double, options: WheelOptions) {
+    override suspend fun wheel(deltaX: Double, deltaY: Double, timeoutMs: Long?) {
         bridge.sendOrThrow(
             CdpMethods.INPUT_DISPATCH_MOUSE_EVENT,
             mapOf(
@@ -148,9 +148,9 @@ internal class CdpMouse(
         )
     }
 
-    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions): Unit = config.inputAction(options.timeoutMs, "mouse drag") {
-        move(startX, startY, MoveOptions())
-        val acquired = pressedButtons and buttonMask(MouseButton.LEFT) == 0
+    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "mouse drag") {
+        move(startX, startY)
+        val acquired = pressedButtons and buttonMask(MouseButton.Left) == 0
         try {
             if (acquired) down()
             val steps = max(2, max(kotlin.math.abs(endX - startX).roundToInt(),
@@ -160,7 +160,7 @@ internal class CdpMouse(
                 dispatchMove(startX + ((endX - startX) * progress), startY + ((endY - startY) * progress))
             }
         } finally {
-            if (acquired) release(MouseButton.LEFT)
+            if (acquired) release(MouseButton.Left)
         }
     }
 
@@ -203,15 +203,15 @@ internal class CdpMouse(
     }
 
     private fun buttonMask(button: MouseButton): Int = when (button) {
-        MouseButton.LEFT -> 1
-        MouseButton.RIGHT -> 2
-        MouseButton.MIDDLE -> 4
+        MouseButton.Left -> 1
+        MouseButton.Right -> 2
+        MouseButton.Middle -> 4
     }
 
     private fun MouseButton.cdpName(): String = when (this) {
-        MouseButton.LEFT -> "left"
-        MouseButton.MIDDLE -> "middle"
-        MouseButton.RIGHT -> "right"
+        MouseButton.Left -> "left"
+        MouseButton.Middle -> "middle"
+        MouseButton.Right -> "right"
     }
 }
 
@@ -225,7 +225,7 @@ internal class CdpKeyboard(
         bridge.sendOrThrow(CdpMethods.INPUT_INSERT_TEXT, mapOf("text" to text))
     }
 
-    override suspend fun type(text: String, options: TypeOptions): Unit = config.inputAction(options.timeoutMs, "keyboard type") {
+    override suspend fun type(text: String, delayMs: Long, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "keyboard type") {
         for (textUnit in text.toUnicodeTextUnits()) {
             val keyInfo = textUnit.toSingleCharCdpKeyInfo()
             if (keyInfo.code.isEmpty() || keyInfo.keyCode == 0) {
@@ -234,8 +234,8 @@ internal class CdpKeyboard(
                 dispatchKeyEvent("keyDown", keyInfo, modifierMask(), keyInfo.text)
                 dispatchKeyEvent("keyUp", keyInfo, modifierMask())
             }
-            if (options.delayMs > 0) {
-                delay(options.delayMs)
+            if (delayMs > 0) {
+                delay(delayMs)
             }
         }
     }
@@ -288,7 +288,7 @@ internal class CdpKeyboard(
         }
     }
 
-    override suspend fun press(key: String, options: PressOptions): Unit = config.inputAction(options.timeoutMs, "keyboard press") {
+    override suspend fun press(key: String, delayMs: Long, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "keyboard press") {
         // Playwright: modifiers down in order, key down, delayMs, key up, modifiers up in reverse order.
         val (mainKey, modifiers) = parseKeyCombination(key)
         val acquired = mutableListOf<String>()
@@ -298,7 +298,7 @@ internal class CdpKeyboard(
             }
             down(mainKey)
             acquired += mainKey
-            if (options.delayMs > 0) delay(options.delayMs)
+            if (delayMs > 0) delay(delayMs)
         } finally {
             withContext(NonCancellable) {
                 withTimeout(1_000) { acquired.asReversed().forEach { up(it) } }
@@ -364,33 +364,33 @@ internal class CdpTouch(
     private val config: KmpwrightConfig = KmpwrightConfig()
 ) : Touchscreen {
 
-    override suspend fun tap(x: Double, y: Double, options: TapOptions): Unit = config.inputAction(options.timeoutMs, "tap") {
+    override suspend fun tap(x: Double, y: Double, modifiers: Int, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "tap") {
         ensureTouchEmulation(maxTouchPoints = 1)
-        sendTouchEvent("touchStart", listOf(touchPoint(0, x, y)), options.modifiers)
+        sendTouchEvent("touchStart", listOf(touchPoint(0, x, y)), modifiers)
         try {
         delay(10)
         } finally {
-            withContext(NonCancellable) { withTimeout(1_000) { sendTouchEvent("touchEnd", emptyList(), options.modifiers) } }
+            withContext(NonCancellable) { withTimeout(1_000) { sendTouchEvent("touchEnd", emptyList(), modifiers) } }
         }
     }
 
-    override suspend fun longTap(x: Double, y: Double, options: LongTapOptions) {
+    override suspend fun longTap(x: Double, y: Double, durationMs: Long, timeoutMs: Long?) {
         ensureTouchEmulation(maxTouchPoints = 1)
         sendTouchEvent("touchStart", listOf(touchPoint(0, x, y)))
         try {
-        delay(options.durationMs)
+        delay(durationMs)
         } finally {
             withContext(NonCancellable) { withTimeout(1_000) { sendTouchEvent("touchEnd", emptyList(), 0) } }
         }
     }
 
-    override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, options: ScrollOptions) {
+    override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, steps: Int, timeoutMs: Long?) {
         ensureTouchEmulation(maxTouchPoints = 1)
-        val steps = options.steps.coerceAtLeast(1)
+        val stepCount = steps.coerceAtLeast(1)
         sendTouchEvent("touchStart", listOf(touchPoint(0, x, y)))
         try {
-        for (step in 1..steps) {
-            val progress = step.toDouble() / steps
+        for (step in 1..stepCount) {
+            val progress = step.toDouble() / stepCount
             sendTouchEvent(
                 "touchMove",
                 listOf(
@@ -408,12 +408,12 @@ internal class CdpTouch(
         }
     }
 
-    override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, options: SwipeOptions) {
+    override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, speed: Double, timeoutMs: Long?) {
         ensureTouchEmulation(maxTouchPoints = 1)
         val dx = x2 - x1
         val dy = y2 - y1
         val distance = sqrt((dx * dx) + (dy * dy))
-        val durationMs = ((distance / options.speed.coerceAtLeast(1.0)) * 1000.0).toLong().coerceAtLeast(16L)
+        val durationMs = ((distance / speed.coerceAtLeast(1.0)) * 1000.0).toLong().coerceAtLeast(16L)
         val steps = (durationMs / 16L).coerceAtLeast(1L).toInt()
         sendTouchEvent("touchStart", listOf(touchPoint(0, x1, y1)))
         try {
@@ -430,7 +430,7 @@ internal class CdpTouch(
         }
     }
 
-    override suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions) {
+    override suspend fun pinch(x: Double, y: Double, scale: Double, timeoutMs: Long?) {
         ensureTouchEmulation(maxTouchPoints = 2)
         val startOffset = 40.0
         val endOffset = (startOffset * scale.coerceAtLeast(0.1))

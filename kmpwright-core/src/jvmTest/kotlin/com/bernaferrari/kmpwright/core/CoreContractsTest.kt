@@ -24,7 +24,7 @@ class CoreContractsTest {
         val controller = MockWebViewController().apply { completeNavigationImmediately = false }
         val page = TestPage(controller)
         val error = assertThrows(KmpwrightTimeoutException::class.java) {
-            runBlocking { page.goto("https://example.com", GotoOptions(timeoutMs = 50)) }
+            runBlocking { page.goto("https://example.com", timeoutMs = 50) }
         }
         assertTrue(error.message!!.contains("navigating to \"https://example.com\""))
         // The optimistic URL is not left behind after a failed navigation.
@@ -97,7 +97,7 @@ class CoreContractsTest {
         val error = runCatching {
             runBlocking {
                 coroutineScope {
-                    val navigation = async(start = CoroutineStart.UNDISPATCHED) { page.goto("https://example.com/new", GotoOptions(timeoutMs = 300)) }
+                    val navigation = async(start = CoroutineStart.UNDISPATCHED) { page.goto("https://example.com/new", timeoutMs = 300) }
                     // A late load event for the old document arrives first; it must be ignored.
                     controller.reload()
                     navigation.await()
@@ -201,8 +201,6 @@ class CoreContractsTest {
     @Test
     fun `credentials are redacted from toString`() {
         assertFalse(AuthProfile("p", "https://x", "user", "hunter2").toString().contains("hunter2"))
-        val proxy = ProxyConfig("http://u:secret@proxy:8080", username = "u", password = "pw")
-        assertFalse(proxy.toString().contains("pw)") || proxy.toString().contains("secret"))
     }
 
     @Test

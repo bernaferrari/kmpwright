@@ -4,12 +4,6 @@ import kotlinx.serialization.Serializable
 import kotlin.math.sqrt
 import kotlin.coroutines.cancellation.CancellationException
 
-/** Options for [VisualDiff] pixel comparison. */
-public data class DiffOptions(
-    val threshold: Double = 0.1,
-    val generateDiffImage: Boolean = true
-)
-
 /** Outcome of a pixel comparison. */
 public data class DiffResult(
     val match: Boolean,
@@ -82,7 +76,8 @@ public data class RgbaImage @Throws(IllegalArgumentException::class) public cons
 /**
  * Compares two already-captured images pixel by pixel (agent-browser `diff screenshot`); it takes
  * no screenshot itself. Capture both with [Page.screenshot] or [Locator.screenshot] (PNG is the
- * portable choice). Images of different sizes report a [DiffResult.dimensionMismatch].
+ * portable choice). Images of different sizes report a [DiffResult.dimensionMismatch]. [threshold] and
+ * [generateDiffImage] work as in [VisualDiff.compareRgba].
  *
  * @throws KmpwrightException when an image cannot be decoded on this platform, for example WEBP on
  *   the JVM (ImageIO has no WebP reader), or when the bytes are empty or corrupt.
@@ -91,11 +86,12 @@ public data class RgbaImage @Throws(IllegalArgumentException::class) public cons
 public suspend fun Page.visualDiff(
     expected: ScreenshotResult,
     actual: ScreenshotResult,
-    options: DiffOptions = DiffOptions()
+    threshold: Double = 0.1,
+    generateDiffImage: Boolean = true
 ): DiffResult {
     val expectedRgba = expected.toRgbaImage() ?: throw undecodableImage("expected", expected.bytes)
     val actualRgba = actual.toRgbaImage() ?: throw undecodableImage("actual", actual.bytes)
-    return VisualDiff.compareRgba(expectedRgba, actualRgba, options)
+    return VisualDiff.compareRgba(expectedRgba, actualRgba, threshold, generateDiffImage)
 }
 
 /** The container format of encoded image bytes, from their magic number. */
@@ -126,7 +122,12 @@ public object VisualDiff {
 
     private val MAX_DISTANCE = 255.0 * sqrt(3.0)
 
-    public fun compareRgba(expected: RgbaImage, actual: RgbaImage, options: DiffOptions = DiffOptions()): DiffResult {
+    /**
+     * Compares two RGBA images. A pixel differs when its RGBA distance exceeds [threshold] (0..1, a
+     * fraction of the largest possible distance); with [generateDiffImage] the result carries an image
+     * that marks the differing pixels.
+     */
+    public fun compareRgba(expected: RgbaImage, actual: RgbaImage, threshold: Double = 0.1, generateDiffImage: Boolean = true): DiffResult {
         if (expected.width != actual.width || expected.height != actual.height) {
             return DiffResult(
                 match = false,
@@ -145,9 +146,9 @@ public object VisualDiff {
 
         val totalPixels = expected.width.toLong() * expected.height.toLong()
         var differentPixels = 0L
-        val thresholdDistance = options.threshold * MAX_DISTANCE
+        val thresholdDistance = threshold * MAX_DISTANCE
 
-        val diffPixels = if (options.generateDiffImage) ByteArray(expected.pixels.size) else null
+        val diffPixels = if (generateDiffImage) ByteArray(expected.pixels.size) else null
 
         val pixelCount = expected.pixels.size
         var i = 0

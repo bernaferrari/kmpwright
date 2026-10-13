@@ -1,6 +1,6 @@
 ---
 title: Locator
-description: Complete reference of Locator, FrameLocator and ElementFinder (locator, frameLocator, getBy*), the selector engines, actionability checks, and every action option class.
+description: Complete reference of Locator, FrameLocator and ElementFinder (locator, frameLocator, getBy*), the selector engines, actionability checks, and every action parameter.
 ---
 
 A `Locator` is a lazy reference to the elements matching a selector, like Playwright's `Locator`. It resolves again on every call, so it survives re-renders. Create one from a `Page`, `Locator` or `FrameLocator`.
@@ -10,12 +10,12 @@ val row = page.getByRole("row").filter(hasText = "Invoice 42")
 row.getByRole("button", name = "Pay").click()
 expect(row.locator(".status")).toHaveText("Paid")
 
-page.snapshot(SnapshotOptions(interactive = true))
+page.snapshot(interactive = true)
 page.locator("@e3").fill("hello")                 // snapshot ref
 page.frameLocator("#checkout").getByLabel("Card number").fill("4242 4242 4242 4242")
 ```
 
-Every action is `suspend`. `timeoutMs = null` uses [`TimeoutConfig.action`](/docs/reference/configuration#timeoutconfig) for actions and `TimeoutConfig.waitForSelector` for `waitFor`. Source: [Locator.kt](https://github.com/bernaferrari/kmpwright/blob/main/kmpwright-core/src/commonMain/kotlin/com/bernaferrari/kmpwright/core/Locator.kt).
+Every action is `suspend`. Options are named parameters (`click(button = MouseButton.Right, force = true)`); `timeoutMs = null` uses [`TimeoutConfig.action`](/docs/reference/configuration#timeoutconfig) for actions and `TimeoutConfig.waitForSelector` for `waitFor`. Source: [Locator.kt](https://github.com/bernaferrari/kmpwright/blob/main/kmpwright-core/src/commonMain/kotlin/com/bernaferrari/kmpwright/core/Locator.kt).
 
 ## Selector engines
 
@@ -63,28 +63,28 @@ On Android and iOS, locator actions run as DOM events inside the page. On the JV
 
 | Member | Description |
 |---|---|
-| `click(options: ClickOptions = ClickOptions())` | Clicks the element. |
-| `dblclick(options: ClickOptions = ClickOptions())` | Double-clicks. |
-| `tap(options: TapOptions = TapOptions())` | Taps with a touch sequence. |
-| `fill(value: String, options: FillOptions = FillOptions())` | Replaces the value of an input, textarea, select or `[contenteditable]`. Input types that cannot be filled (for example checkbox) fail immediately. |
-| `clear(options: FillOptions = FillOptions())` | Same as `fill("")`. |
-| `press(key: String, options: PressOptions = PressOptions())` | Presses a key or combination such as `"Enter"` or `"Control+A"` on the element. |
-| `pressSequentially(text: String, options: PressSequentiallyOptions = PressSequentiallyOptions())` | Types `text` one key at a time. Playwright: `pressSequentially` (formerly `type`). |
-| `hover(options: HoverOptions = HoverOptions())` | Moves the pointer over the element. |
+| `click(button: MouseButton = MouseButton.Left, clickCount: Int = 1, delayMs: Long = 0, position: Position? = null, force: Boolean = false, timeoutMs: Long? = null)` | Clicks the element `clickCount` times with `button`. |
+| `dblclick(button: MouseButton = MouseButton.Left, delayMs: Long = 0, position: Position? = null, force: Boolean = false, timeoutMs: Long? = null)` | Double-clicks. |
+| `tap(force: Boolean = false, modifiers: Int = 0, timeoutMs: Long? = null)` | Taps with a touch sequence; `modifiers` is the CDP modifier bit mask. |
+| `fill(value: String, force: Boolean = false, timeoutMs: Long? = null)` | Replaces the value of an input, textarea, select or `[contenteditable]`. Input types that cannot be filled (for example checkbox) fail immediately. |
+| `clear(force: Boolean = false, timeoutMs: Long? = null)` | Same as `fill("")`. |
+| `press(key: String, delayMs: Long = 0, timeoutMs: Long? = null)` | Presses a key or combination such as `"Enter"` or `"Control+A"` on the element; `delayMs` waits between `keydown` and `keyup`. |
+| `pressSequentially(text: String, delayMs: Long = 0, timeoutMs: Long? = null)` | Types `text` one key at a time, waiting `delayMs` between key presses. Playwright: `pressSequentially` (formerly `type`). |
+| `hover(force: Boolean = false, timeoutMs: Long? = null)` | Moves the pointer over the element. |
 | `focus(timeoutMs: Long? = null)` | Focuses the element. |
 | `blur(timeoutMs: Long? = null)` | Removes keyboard focus. |
-| `check(options: CheckOptions = CheckOptions())` | Checks a checkbox or radio button; no-op when already checked. |
-| `uncheck(options: CheckOptions = CheckOptions())` | Unchecks a checkbox. Radio buttons throw "Cannot uncheck radio button …". |
-| `setChecked(checked: Boolean, options: CheckOptions = CheckOptions())` | Checks or unchecks. Non-checkable elements throw "Element … is not a checkbox or radio button". |
-| `selectOption(value: String, options: ActionOptions = ActionOptions())` | Selects the `<option>` whose value or label is `value`; waits for it to exist. |
-| `selectOption(values: List<String>, options: ActionOptions = ActionOptions())` | Selects every matching option; an empty list deselects all. |
-| `setInputFiles(files: List<String>, options: ActionOptions = ActionOptions())` | Sets the files of `<input type=file>`; an empty list clears. Non-empty lists work on the JVM only ("setInputFiles is not supported in mobile WebView"). |
-| `dragTo(target: Locator, options: DragOptions = DragOptions())` | Drags onto `target`, which must come from the same page. |
-| `scrollIntoViewIfNeeded(options: ScrollIntoViewOptions = ScrollIntoViewOptions())` | Scrolls into view when not already visible. |
+| `check(force: Boolean = false, timeoutMs: Long? = null)` | Checks a checkbox or radio button; no-op when already checked. |
+| `uncheck(force: Boolean = false, timeoutMs: Long? = null)` | Unchecks a checkbox. Radio buttons throw "Cannot uncheck radio button …". |
+| `setChecked(checked: Boolean, force: Boolean = false, timeoutMs: Long? = null)` | Checks or unchecks. Non-checkable elements throw "Element … is not a checkbox or radio button". |
+| `selectOption(value: String, force: Boolean = false, timeoutMs: Long? = null)` | Selects the `<option>` whose value or label is `value`; waits for it to exist. |
+| `selectOption(values: List<String>, force: Boolean = false, timeoutMs: Long? = null)` | Selects every matching option; an empty list deselects all. |
+| `setInputFiles(files: List<String>, force: Boolean = false, timeoutMs: Long? = null)` | Sets the files of `<input type=file>`; an empty list clears. Non-empty lists work on the JVM only ("setInputFiles is not supported in mobile WebView"). |
+| `dragTo(target: Locator, sourcePosition: Position? = null, targetPosition: Position? = null, timeoutMs: Long? = null)` | Drags onto `target`, which must come from the same page. |
+| `scrollIntoViewIfNeeded(block: ScrollPosition = ScrollPosition.Center, inline: ScrollPosition = ScrollPosition.Nearest, timeoutMs: Long? = null)` | Scrolls into view when not already visible, aligned by `block` (vertical) and `inline` (horizontal). |
 | `dispatchEvent(type: String, timeoutMs: Long? = null)` | Dispatches a DOM event (`"click"`, `"input"`…) with the matching event class; bubbles, cancelable, composed. |
 | `evaluate(expression: String, timeoutMs: Long? = null): JsResult` | Calls a JavaScript function with the element, for example `"el => el.value"`. Runs synchronously: a returned Promise is not awaited. Needs `allowEval`. |
-| `highlight(options: HighlightOptions = HighlightOptions())` | Draws an overlay for visual debugging (agent-browser `highlight`). |
-| `screenshot(options: ScreenshotOptions = ScreenshotOptions()): ScreenshotResult` | Captures the element's bounding box. `annotate = true` throws (page screenshots only). |
+| `highlight(color: String = "rgba(255, 0, 0, 0.3)", borderColor: String = "red", durationMs: Long = 3000)` | Draws an overlay for visual debugging (agent-browser `highlight`). |
+| `screenshot(omitBackground: Boolean = false, quality: Int = 90, format: ScreenshotFormat = ScreenshotFormat.Png, scale: Double = 1.0, timeoutMs: Long? = null): ScreenshotResult` | Captures the element's bounding box. The parameters work as in [`page.screenshot`](/docs/reference/page#screenshot-parameters); there is no `fullPage`, `clip` or `annotate`. |
 | `waitFor(state: SelectorState = SelectorState.Visible, timeoutMs: Long? = null)` | Waits for `Attached`, `Detached`, `Visible` or `Hidden`. |
 
 ## `Locator` queries
@@ -157,36 +157,36 @@ Locates elements inside an iframe, like Playwright's `FrameLocator`. It is an `E
 | `url(): String?` | The URL of the iframe's document. |
 | `boundingBox(): Rectangle?` | The iframe element's box in CSS pixels. |
 
-## Option classes
+## Parameters
 
-### `ClickOptions`
+### `click` and `dblclick` parameters
 
-Used by `click` and `dblclick`.
+`dblclick` has no `clickCount`.
 
 <TypeTable
   type={{
-    button: { type: 'MouseButton', description: 'LEFT, MIDDLE or RIGHT.', default: 'MouseButton.LEFT' },
-    clickCount: { type: 'Int', description: 'Number of clicks (dblclick always uses 2).', default: '1' },
-    delayMs: { type: 'Long', description: 'Delay before the click (between mousedown and mouseup for native mouse input).', default: '0' },
+    button: { type: 'MouseButton', description: 'Left, Middle or Right.', default: 'MouseButton.Left' },
+    clickCount: { type: 'Int', description: 'Number of clicks (click only).', default: '1' },
+    delayMs: { type: 'Long', description: 'Time between mousedown and mouseup of each click (Playwright delay).', default: '0' },
     position: { type: 'Position?', description: 'Point relative to the element\'s top-left corner, in CSS pixels. null clicks the visible center.', default: 'null' },
     force: { type: 'Boolean', description: 'Skip actionability checks.', default: 'false' },
     timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
   }}
 />
 
-### `TapOptions`
+### `tap` parameters
 
 <TypeTable
   type={{
     force: { type: 'Boolean', description: 'Skip actionability checks.', default: 'false' },
-    modifiers: { type: 'Int', description: 'Modifier bit mask for native touch input.', default: '0' },
+    modifiers: { type: 'Int', description: 'CDP modifier bit mask for native touch input.', default: '0' },
     timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
   }}
 />
 
-### `FillOptions`, `HoverOptions`, `ActionOptions`, `CheckOptions`
+### `force` and `timeoutMs`
 
-All four have the same fields. `FillOptions` is used by `fill` and `clear`, `HoverOptions` by `hover`, `ActionOptions` by `selectOption` and `setInputFiles`, `CheckOptions` by `check`, `uncheck` and `setChecked`.
+`fill`, `clear`, `hover`, `check`, `uncheck`, `setChecked`, `selectOption` and `setInputFiles` take only these two after their required arguments:
 
 <TypeTable
   type={{
@@ -195,30 +195,30 @@ All four have the same fields. `FillOptions` is used by `fill` and `clear`, `Hov
   }}
 />
 
-### `PressOptions` and `PressSequentiallyOptions`
+### `press` and `pressSequentially` parameters
 
 <TypeTable
   type={{
-    delayMs: { type: 'Long', description: 'PressOptions: wait between keydown and keyup. PressSequentiallyOptions: wait between key presses.', default: '0' },
+    delayMs: { type: 'Long', description: 'press: wait between keydown and keyup. pressSequentially: wait between key presses.', default: '0' },
     timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
   }}
 />
 
 Key names follow Playwright: `"Enter"`, `"Tab"`, `"ArrowDown"`, `"Shift+Tab"`, `"Control+A"`. `KeyboardModifiers` has the constants `SHIFT`, `CONTROL`, `ALT`, `META`, `CAPS_LOCK`.
 
-### `DragOptions`
+### `dragTo` parameters
 
-Used by `dragTo` and `page.mouse.drag`.
+Also used by `page.dragAndDrop(source, target, ...)`.
 
 <TypeTable
   type={{
-    sourcePosition: { type: 'Position?', description: 'Grab point relative to the source element\'s top-left corner.', default: 'null' },
-    targetPosition: { type: 'Position?', description: 'Drop point relative to the target element\'s top-left corner.', default: 'null' },
+    sourcePosition: { type: 'Position?', description: 'Grab point relative to the source element\'s top-left corner. null uses its visible center.', default: 'null' },
+    targetPosition: { type: 'Position?', description: 'Drop point relative to the target element\'s top-left corner. null uses its visible center.', default: 'null' },
     timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
   }}
 />
 
-### `ScrollIntoViewOptions`
+### `scrollIntoViewIfNeeded` parameters
 
 <TypeTable
   type={{
@@ -228,7 +228,7 @@ Used by `dragTo` and `page.mouse.drag`.
   }}
 />
 
-### `HighlightOptions`
+### `highlight` parameters
 
 <TypeTable
   type={{
@@ -246,7 +246,7 @@ Used by `dragTo` and `page.mouse.drag`.
 | `Rectangle` | `Rectangle(x: Double, y: Double, width: Double, height: Double)` in CSS pixels |
 | `SelectorState` | `Attached`, `Detached`, `Visible`, `Hidden` |
 | `ScrollPosition` | `Start`, `Center`, `End`, `Nearest` |
-| `MouseButton` | `LEFT`, `MIDDLE`, `RIGHT` |
+| `MouseButton` | `Left`, `Middle`, `Right` |
 
 ## Related
 

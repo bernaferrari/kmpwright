@@ -176,7 +176,7 @@ internal class CdpFrameLocator(private val runtime: CdpFrameRuntime, private val
     private val config: KmpwrightConfig, private val lifetime: Deferred<Unit>? = null, private val policy: suspend (ActionType, String?) -> Unit) : FrameLocator {
     private val controller = runtime.controller(path)
     override fun locator(selector: String): Locator = CdpLocator(controller, selector,
-        config.copy(installMode = if (config.installMode == InstallMode.Disabled) InstallMode.Disabled else InstallMode.AlwaysEvaluate),
+        config,
         frameFactory = { frameSelector, scope -> CdpFrameLocator(runtime, path + cdpFrameSteps(frameSelector, scope), config, lifetime, policy) })
         .also { it.policyChecker = { action -> policy(action, url()) }; it.lifetime = lifetime }
     /** `>>` separates nested frames, exactly like `Page.frameLocator`. */

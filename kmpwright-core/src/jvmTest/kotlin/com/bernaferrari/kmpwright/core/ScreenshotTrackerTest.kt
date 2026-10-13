@@ -19,9 +19,9 @@ class ScreenshotTrackerTest {
     fun `alternating capture scopes retain independent baselines`() = runBlocking {
         val tracker = ScreenshotTracker({ png() })
         assertTrue(tracker.captureIfChanged().changed)
-        assertTrue(tracker.captureIfChanged(ScreenshotOptions(fullPage = true)).changed)
+        assertTrue(tracker.captureIfChanged(fullPage = true).changed)
         assertFalse(tracker.captureIfChanged().changed)
-        assertFalse(tracker.captureIfChanged(ScreenshotOptions(fullPage = true)).changed)
+        assertFalse(tracker.captureIfChanged(fullPage = true).changed)
         tracker.clear()
         assertTrue(tracker.captureIfChanged().changed)
     }

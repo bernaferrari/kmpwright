@@ -26,3 +26,12 @@ tasks.register("publishAndReleaseToMavenCentral") {
         ":kmpwright-compose:publishAndReleaseToMavenCentral"
     )
 }
+
+// Kotlin/JS (the web demo) uses the Node.js already on the machine instead of downloading one, so
+// the build keeps resolving dependencies only from the repositories declared in settings.
+plugins.withType<org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsPlugin> {
+    the<org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec>().download.set(false)
+}
+plugins.withType<org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsRootPlugin> {
+    the<org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec>().download.set(false)
+}

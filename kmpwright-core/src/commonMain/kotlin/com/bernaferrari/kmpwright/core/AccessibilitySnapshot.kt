@@ -8,34 +8,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Options for [Page.snapshot], mirroring agent-browser's `snapshot` flags.
- *
- * @property interactive `-i`: only elements with refs (buttons, links, inputs, iframes and named
- *   headings/landmarks), as a flat list; refs nested in a ref (such as iframe content) are indented.
- * @property compact `-c`: drop structural nodes that contain no refs or values.
- * @property maxDepth `-d`: limit the tree depth.
- * @property selector `-s`: snapshot only the subtree of this selector.
- * @property cursor `-C`: also include elements that are only interactive through `cursor: pointer`/`onclick`.
- * @property includeHidden include elements hidden from assistive technology.
- * @property urls `-u`: print each link's resolved `href` as `url="..."`.
- */
-@Serializable
-public data class SnapshotOptions(
-    val interactive: Boolean = false,
-    val compact: Boolean = false,
-    val maxDepth: Int? = null,
-    val selector: String? = null,
-    val cursor: Boolean = false,
-    val includeHidden: Boolean = false,
-    val urls: Boolean = false
-)
-
-/**
  * A node of a [Snapshot] tree; [ref] (such as `@e3`) is set for elements that can be targeted.
  *
  * [inputType] is set for text-entry `<input>` elements (empty when the page gave no `type`
  * attribute), [placeholder] for inputs and text areas that have one, and [url] for links when
- * [SnapshotOptions.urls] is on.
+ * `snapshot(urls = true)` is used.
  */
 @Serializable
 public data class SnapshotNode(
@@ -664,8 +641,8 @@ internal object AccessibilitySnapshotEngine {
     /**
      * Renders [nodes] in agent-browser's snapshot format (see [Snapshot]). Mirrors agent-browser's
      * renderer: the root web area, blank text and unnamed single-child `generic` wrappers are
-     * transparent (their children print in their place); [SnapshotOptions.interactive] keeps only ref lines (indented under ref ancestors,
-     * such as an iframe); [SnapshotOptions.compact] keeps only lines with refs or values and their
+     * transparent (their children print in their place); `interactive` keeps only ref lines (indented under ref ancestors,
+     * such as an iframe); `compact` keeps only lines with refs or values and their
      * ancestors.
      */
     internal fun formatTree(nodes: List<SnapshotNode>, options: SnapshotOptions = SnapshotOptions()): String =

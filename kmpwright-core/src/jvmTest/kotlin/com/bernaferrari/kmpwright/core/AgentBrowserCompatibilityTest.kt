@@ -75,6 +75,10 @@ class AgentBrowserCompatibilityTest {
             val member = ref["member"]!!.jsonPrimitive.content
             // Refs name Kotlin members (`title`, `webMcp`, `all`), never JVM getters (`getTitle`).
             val kind = owner.getAnnotation(Metadata::class.java)?.kind
+            // Refs document the public API: never internal parameter bundles or other hidden types.
+            val public = if (kind == 1) owner.kotlin.visibility == kotlin.reflect.KVisibility.PUBLIC
+                else java.lang.reflect.Modifier.isPublic(owner.modifiers)
+            assertTrue("${owner.name} is not public API", public)
             val names = if (kind == 1) owner.kotlin.members.map { it.name } else owner.methods.map { it.name }
             assertTrue("${owner.name}.$member is not a Kotlin member name", member in names)
         }

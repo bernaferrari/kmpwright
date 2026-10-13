@@ -55,9 +55,9 @@ class IOSParityDocumentTest {
             page.setContent("<button id=b>B</button><input id=i>$eventLogger")
             page.locator("#b").dblclick()
             assertEquals("mousedown:1,mouseup:1,click:1,mousedown:2,mouseup:2,click:2,dblclick:2", page.js("log.join(',')"))
-            page.locator("#b").click(ClickOptions(delayMs = 300))
+            page.locator("#b").click(delayMs = 300)
             assertTrue(page.js("times.mouseup[2] - times.mousedown[2]").toDouble() >= 250)
-            page.locator("#i").press("a", PressOptions(delayMs = 300))
+            page.locator("#i").press("a", delayMs = 300)
             assertTrue(page.js("times.keyup[times.keyup.length-1] - times.keydown[times.keydown.length-1]").toDouble() >= 250)
         } finally { page.close() }
     }
@@ -103,7 +103,7 @@ class IOSParityDocumentTest {
         requireWebKitDocuments()
         val page = IOSPage(IOSWebViewController())
         try {
-            page.setContent("<p id=c>content</p><img src='https://10.255.255.1/slow.png'>", SetContentOptions(waitUntil = LoadState.DOMContentLoaded))
+            page.setContent("<p id=c>content</p><img src='https://10.255.255.1/slow.png'>", waitUntil = LoadState.DOMContentLoaded)
             assertEquals("content", page.locator("#c").innerText())
             assertTrue(page.js("document.readyState") != "loading")
             page.setContent("""<script>setTimeout(function(){ var c = document.createElement('input'); c.type = 'checkbox'; c.id = 'c';

@@ -324,7 +324,7 @@ internal class AndroidWebViewController(
             val url = request?.url?.toString()
             if (url != null && !domainFilterAllows(url)) {
                 // Covers renderer-initiated navigations and server redirects (shouldInterceptRequest never sees redirects).
-                if (request?.isForMainFrame == true) {
+                if (request.isForMainFrame) {
                     if (request.isRedirect) {
                         // Report against the URL the navigation started from, and ignore the cancelled load's finish.
                         failedNavigationUrl = url

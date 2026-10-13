@@ -50,8 +50,8 @@ A target is a snapshot ref (`@e3`, `e3`, `ref=e3`) or any selector that [`page.l
 
 | Command | Flags | Typed equivalent |
 | --- | --- | --- |
-| `snapshot` | `-i` / `--interactive`, `-u` / `--urls`, `-c` / `--compact`, `-d` / `--depth <n>`, `-s` / `--selector <sel>`, `-C` / `--cursor` | `page.snapshot(SnapshotOptions(interactive, urls, compact, maxDepth, selector, cursor))` (named arguments) |
-| `screenshot` | `--full` / `-f`, `--annotate` / `-a` | `page.screenshot(ScreenshotOptions(fullPage, annotate))` |
+| `snapshot` | `-i` / `--interactive`, `-u` / `--urls`, `-c` / `--compact`, `-d` / `--depth <n>`, `-s` / `--selector <sel>`, `-C` / `--cursor` | `page.snapshot(interactive, urls, compact, maxDepth, selector, cursor)` (named arguments) |
+| `screenshot` | `--full` / `-f`, `--annotate` / `-a` | `page.screenshot(fullPage, annotate)` (named arguments) |
 
 `snapshot` output is the snapshot text and `result.snapshot` holds the `Snapshot`. The text uses agent-browser's format, one element per line; elements that can be targeted start with their ref, children are indented two spaces, and page text is printed as JSON string literals:
 
@@ -168,18 +168,18 @@ Status comes from the compatibility inventory: **Supported** means the documente
 
 | agent-browser | Status | KMPwright | Notes |
 | --- | --- | --- | --- |
-| `snapshot` | Supported | `page.snapshot(SnapshotOptions(...))`, then `page.locator("@e3")` | CDP follows Chromium's accessibility tree; mobile and `includeHidden` use bounded DOM traversal. |
+| `snapshot` | Supported | `page.snapshot(...)`, then `page.locator("@e3")` | CDP follows Chromium's accessibility tree; mobile and `includeHidden` use bounded DOM traversal. |
 | `screenshot` | Supported | `page.screenshot(...)`, `locator.screenshot()` | |
-| `pdf` | Supported | `page.pdf(PdfOptions(...))` | Capability is Partial on every backend. |
+| `pdf` | Supported | `page.pdf(...)` | Capability is Partial on every backend. |
 | `get` | Supported | `page.title.value`, `page.url.value`, `textContent()`, `innerHTML()`, `getAttribute()`, `inputValue()`, `count()`, `boundingBox()`, `evaluate()` | |
 | `is` | Supported | `isVisible()`, `isEnabled()`, `isChecked()` | |
 | `eval` | Partial | `page.evaluate(js)` | Blocked when `KmpwrightConfig.allowEval = false` or by an action policy. |
-| `read` | Supported | `page.read(url, ReadOptions(...))`, `HttpReader(config).read(url)` | Independent HTTP client without browser cookies; redirects and links pass origin/domain checks; bounded budgets. |
+| `read` | Supported | `page.read(url, ...)`, `HttpReader(config).read(url)` | Independent HTTP client without browser cookies; redirects and links pass origin/domain checks; bounded budgets. |
 | `console` / `errors` | Supported | `page.consoleMessages()` / `page.pageErrors()` | |
 | `diff snapshot` | Supported | `page.diffSnapshot(name)`, `page.diffSnapshot(before, after)` | |
 | `diff url` | Supported | `page.diffUrls(url1, url2)` | |
 | `diff screenshot` | Partial | `page.visualDiff(expected, actual)`, `VisualDiff.compareRgba(...)` | An API over image bytes, not a baseline-file workflow. |
-| `a11y` | Partial | `page.accessibilityAudit(AccessibilityAuditOptions(...))` | Bundled axe-core 4.14.0. CDP merges isolated frame results; mobile reports skipped child frames. |
+| `a11y` | Partial | `page.accessibilityAudit(tags, selector)` | Bundled axe-core 4.14.0. CDP merges isolated frame results; mobile reports skipped child frames. |
 | `vitals` | Supported | `page.webVitals()` | Bundled web-vitals 6.2.3. |
 | `react` | Supported | `page.react` (`enable`, `tree`, `inspect`, `suspense`, `startRenderProfile`, `stopRenderProfile`) | |
 | `webmcp` | Partial | `page.webMcp` (`discover`, `context`, `invoke`, `awaitInvocation`, `cancelInvocation`) | Experimental; CDP only, depends on the Chromium build. |
@@ -207,7 +207,7 @@ Status comes from the compatibility inventory: **Supported** means the documente
 | `storage local` / `storage session` | Supported | `page.localStorage` / `page.sessionStorage` (`entries`, `get`, `set`, `remove`, `clear`) | |
 | `state` | Partial | `page.storageState().save(path, password)`, `StorageState.load(path, password)`, `page.setStorageState(state)`, `page.autosaveStorageState(...)` | Authenticated encryption, atomic file replacement; no daemon session protocol. |
 | `auth` | Partial | `AuthManager.save/load/list/delete`, `page.login(profile)` | Encrypted profiles; synthetic input; no vault or plugin protocols. |
-| `session` / `profile` | Partial | `KmpwrightConfig(cdp = …)`, `BrowserLaunchOptions(userDataDirectory, profileSnapshot)` | No daemon session ids. |
+| `session` / `profile` | Partial | `KmpwrightConfig(cdp = …)`, `launchBrowser(path, userDataDirectory = …)` or `profileSnapshot = …` | No daemon session ids. |
 
 ### Tabs, windows and recording
 
@@ -218,8 +218,8 @@ Status comes from the compatibility inventory: **Supported** means the documente
 | `addinitscript` / `removeinitscript` | Partial | `page.addInitScript(script)` → id, `page.removeInitScript(id)` | Android depends on the installed WebView supporting document-start scripts. |
 | `trace` | Partial | `page.tracing.start()` / `stop()` | CDP only. |
 | `profiler` | Partial | `page.profiler.start()` / `stop()` | CDP only. |
-| `record` | Partial | `page.video.start(RecordingOptions(...))` / `stop()` | CDP + FFmpeg, 1–60 FPS, cursor overlay, contact sheets. |
-| `stream` | Partial | `page.screencast(ScreencastOptions(...))` | A `Flow` of frames; you supply the display or transport. CDP only. |
+| `record` | Partial | `page.video.start(path, ...)` / `stop()` | CDP + FFmpeg, 1–60 FPS, cursor overlay, contact sheets. |
+| `stream` | Partial | `page.screencast(maxFps, quality, ...)` | A `Flow` of frames; you supply the display or transport. CDP only. |
 
 ### Unsupported commands
 
@@ -234,19 +234,19 @@ Status comes from the compatibility inventory: **Supported** means the documente
 
 | agent-browser flag | Status | KMPwright |
 | --- | --- | --- |
-| `--headed` | Partial | `BrowserLaunchOptions(headless = false)` (JVM launch only) |
-| `--executable-path` | Partial | `BrowserLaunchOptions(executablePath)` |
-| `--args` | Partial | `BrowserLaunchOptions(arguments)` |
-| `--extension` | Partial | `BrowserLaunchOptions(extensionDirectories)` |
-| `--profile` | Partial | `BrowserLaunchOptions(profileSnapshot = ChromeProfileSource(...))`, `ChromeProfiles` |
-| `--ignore-https-errors` | Partial | `BrowserLaunchOptions(ignoreHttpsErrors)` |
-| `--webgpu` / `--no-webmcp` / `--enable` | Partial | `BrowserLaunchOptions(webGpu, webMcp)` |
-| `--ca-cert` / `--clear-ca-cert` | Partial | `BrowserLaunchOptions(caCertificatePath)`, `ReadOptions(caCertificatePath)`; closing the launched browser removes its trust store |
-| `--use-system-ca` | Partial | `ReadOptions(useSystemCa)` |
+| `--headed` | Partial | `launchBrowser(path, headless = false)` (JVM launch only) |
+| `--executable-path` | Partial | `launchBrowser(executablePath)` |
+| `--args` | Partial | `launchBrowser(path, arguments = …)` |
+| `--extension` | Partial | `launchBrowser(path, extensionDirectories = …)` |
+| `--profile` | Partial | `launchBrowser(path, profileSnapshot = ChromeProfileSource(...))`, `ChromeProfiles` |
+| `--ignore-https-errors` | Partial | `launchBrowser(path, ignoreHttpsErrors = true)` |
+| `--webgpu` / `--no-webmcp` / `--enable` | Partial | `launchBrowser(path, webGpu = true, webMcp = false)` |
+| `--ca-cert` / `--clear-ca-cert` | Partial | `launchBrowser(path, caCertificatePath = …)`, `read(url, caCertificatePath = …)`; closing the launched browser removes its trust store |
+| `--use-system-ca` | Partial | `read(url, useSystemCa = …)` |
 | `--cdp` | Supported | `CdpConfig(websocketUrl)` |
 | `--auto-connect` | Supported | `CdpConfig(provider = CloudProvider.AutoConnect)` |
 | `--provider` | Supported | `CdpConfig(provider = CloudProvider.Browserbase \| Browserless \| BrowserUse \| Kernel)` |
-| `--proxy` / `--proxy-bypass` | Supported | `KmpwrightConfig(proxy = ProxyConfig(url, bypass, username, password))` |
+| `--proxy` / `--proxy-bypass` | Partial | JVM launches: `launchBrowser(path, proxy = ProxyConfig(server, bypass))`. No proxy authentication; WebViews have no per-page proxy. |
 | `--hide-scrollbars` | Supported | `CdpConfig(hideScrollbars)` |
 | `--headers` | Supported | `page.setExtraHTTPHeaders(map)` |
 | `--user-agent` | Supported | `KmpwrightConfig(userAgent)`, `page.setUserAgent(ua)` |
@@ -260,8 +260,8 @@ Status comes from the compatibility inventory: **Supported** means the documente
 | `--content-boundaries` | Supported | `page.boundedContent()`, `page.boundedSnapshot()` |
 | `--no-auto-dialog` | Supported | `page.onDialog { … }` |
 | `--debug` | Supported | `KmpwrightConfig(debug = DebugConfig(enabled = true))` |
-| `--annotate` | Supported | `ScreenshotOptions(annotate = true)` |
-| `--screenshot-quality` / `--screenshot-format` | Partial | `ScreenshotOptions(quality, format)`; encoding depends on the backend |
+| `--annotate` | Supported | `page.screenshot(annotate = true)` |
+| `--screenshot-quality` / `--screenshot-format` | Partial | `page.screenshot(quality = …, format = …)`; encoding depends on the backend |
 | `--screenshot-dir` | Partial | You write `ScreenshotResult.bytes` where you want |
 | `--state` / `--restore` | Partial | `StorageState.load(path, password)` + `page.setStorageState(state)` |
 | `--restore-save` | Partial | `page.autosaveStorageState(...)` |

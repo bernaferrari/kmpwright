@@ -22,7 +22,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * ReadOptions.caCertificatePath on iOS: PEM anchors drive URLSession server-trust evaluation.
+ * caCertificatePath on iOS: PEM anchors drive URLSession server-trust evaluation.
  * Trust evaluation needs trustd, which a bare simulator executable cannot reach
  * (errSecInternalComponent), so this runs in the app host: `scripts/run-ios-webkit-tests.sh`
  * (the `*DocumentTest` suffix excludes it from the bare `iosSimTest`).
@@ -126,7 +126,7 @@ HvLuEFgPAenkzUnamdsxOlyElA==
     }
 }
 
-/** PEM handling for ReadOptions.caCertificatePath; runs in the bare `iosSimTest`. */
+/** PEM handling for caCertificatePath; runs in the bare `iosSimTest`. */
 class IOSReaderPemTest {
     private val ca = IOSReaderTrustDocumentTest.CA
     private val unrelated = IOSReaderTrustDocumentTest.UNRELATED

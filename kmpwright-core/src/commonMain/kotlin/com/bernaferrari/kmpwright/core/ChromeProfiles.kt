@@ -4,7 +4,7 @@ import kotlin.coroutines.cancellation.CancellationException
 
 /** An existing Chrome profile. Launching a snapshot never writes to this source. */
 public data class ChromeProfile(val directory: String, val name: String)
-/** A Chrome profile to snapshot for [BrowserLaunchOptions.profileSnapshot]. */
+/** A Chrome profile to snapshot for the `profileSnapshot` of [launchBrowser]. */
 public data class ChromeProfileSource @Throws(IllegalArgumentException::class) public constructor(val userDataDirectory: String, val profile: String) {
     init { require(userDataDirectory.isNotBlank() && profile.isNotBlank()) { "Profile source and name must not be blank" } }
 }

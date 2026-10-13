@@ -117,7 +117,9 @@ private fun Splash() {
 private fun Studio() {
     val platformContext = rememberPlatformContext()
     val scope = rememberCoroutineScope()
-    val state = remember(platformContext) { StudioState(Browser(platformContext), scope) }
+    val state = remember(platformContext) {
+        StudioState(Browser(platformContext), scope) { releaseWebViewKeyboard(platformContext) }
+    }
     DisposableEffect(state) {
         onDispose {
             state.dispose()

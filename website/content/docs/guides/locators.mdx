@@ -207,7 +207,7 @@ Queries run once and return. They don't auto-wait, except where noted. To wait f
 | `isFocused()` | Element is the active element of its document or shadow root | `false` |
 | `waitFor(state, timeoutMs)` | Waits until the first match is `Attached`, `Detached`, `Visible` (default) or `Hidden` | waits |
 | `evaluate("el => …", timeoutMs)` | `JsResult(value, type)` of a function called with the element. The function runs synchronously and a returned Promise is not awaited. Waits for the element to be attached. | waits, then throws |
-| `screenshot(options)` | Image of the element's box (scrolls it into view first); see [Screenshots](/docs/guides/screenshots) | waits, then throws |
+| `screenshot(omitBackground, quality, format, scale, timeoutMs)` | Image of the element's box (scrolls it into view first); see [Screenshots](/docs/guides/screenshots) | waits, then throws |
 
 Opacity is ignored by `isVisible()`: an `opacity: 0` element with a size counts as visible. Playwright: same.
 

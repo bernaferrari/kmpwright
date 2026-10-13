@@ -92,6 +92,13 @@ kotlin {
         }
     }
 
+    // Browser backend: drives a same-origin <iframe>. Powers the live demo on the docs site.
+    js {
+        // commonTest relies on runBlocking, which JavaScript cannot provide; the live docs demo
+        // (kmpwright-web-demo) exercises this backend in a real browser instead.
+        browser { testTask { enabled = false } }
+    }
+
     android {
         namespace = "com.bernaferrari.kmpwright.core"
         compileSdk {
@@ -200,6 +207,12 @@ kotlin {
             }
         }
 
+        getByName("jsMain") {
+            dependencies {
+                implementation(libs.ktor.client.js)
+            }
+        }
+
         val androidMain = getByName("androidMain") {
             dependencies {
                 implementation(libs.ktor.client.okhttp)
@@ -249,3 +262,5 @@ kotlin {
 tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest>().configureEach {
     filter.excludeTestsMatching("*DocumentTest")
 }
+
+tasks.named("compileTestKotlinJs") { enabled = false }

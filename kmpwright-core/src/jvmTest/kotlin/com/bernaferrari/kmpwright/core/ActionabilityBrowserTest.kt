@@ -29,7 +29,7 @@ class ActionabilityBrowserTest {
             val executable = System.getenv("KMPWRIGHT_TEST_CHROME")
             if (executable.isNullOrBlank()) return
             runBlocking {
-                launched = launchBrowser(BrowserLaunchOptions(executable), KmpwrightConfig(
+                launched = launchBrowser(executable, config = KmpwrightConfig(
                     inputMode = InputMode.JsOnly,
                     timeouts = TimeoutConfig(action = 5_000)
                 ))
@@ -89,7 +89,7 @@ class ActionabilityBrowserTest {
     @Test
     fun `disabled element times out with an actionable message`() = browserTest { page ->
         page.setContent("<button disabled>Save</button>")
-        val error = runCatching { page.locator("text=Save").click(ClickOptions(timeoutMs = 400)) }.exceptionOrNull()
+        val error = runCatching { page.locator("text=Save").click(timeoutMs = 400) }.exceptionOrNull()
         assertTrue("expected a timeout, got $error", error is KmpwrightTimeoutException)
         assertTrue(error!!.message, error.message!!.contains("is not enabled after 400ms"))
         assertTrue(error.message, error.message!!.contains("<button disabled>Save</button>"))
@@ -98,8 +98,8 @@ class ActionabilityBrowserTest {
     @Test
     fun `snapshot refs appear in errors`() = browserTest { page ->
         page.setContent("<button disabled>Pay</button>")
-        val ref = page.snapshot(SnapshotOptions(interactive = true)).refs.keys.single()
-        val error = runCatching { page.locator(ref).click(ClickOptions(timeoutMs = 300)) }.exceptionOrNull()
+        val ref = page.snapshot(interactive = true).refs.keys.single()
+        val error = runCatching { page.locator(ref).click(timeoutMs = 300) }.exceptionOrNull()
         assertTrue(error?.message.orEmpty(), error!!.message!!.startsWith("Element $ref is not enabled after 300ms"))
     }
 
@@ -107,10 +107,10 @@ class ActionabilityBrowserTest {
     fun `covered element reports the interceptor and force bypasses checks`() = browserTest { page ->
         page.setContent("""<button id=b onclick="window.clicked=(window.clicked||0)+1">Under</button>
             <div class=overlay style="position:fixed;inset:0;background:rgba(0,0,0,.2)"></div>""")
-        val error = runCatching { page.locator("#b").click(ClickOptions(timeoutMs = 300)) }.exceptionOrNull()
+        val error = runCatching { page.locator("#b").click(timeoutMs = 300) }.exceptionOrNull()
         assertTrue(error?.message.orEmpty(), error!!.message!!.contains("covered by <div class=\"overlay\""))
         assertEquals("undefined", page.js("String(window.clicked)"))
-        page.locator("#b").click(ClickOptions(force = true))
+        page.locator("#b").click(force = true)
         assertEquals("1", page.js("window.clicked"))
     }
 
@@ -160,7 +160,7 @@ class ActionabilityBrowserTest {
         assertFalse(checkbox is KmpwrightTimeoutException)
         val div = runCatching { page.locator("#d").fill("x") }.exceptionOrNull()
         assertTrue(div?.message.orEmpty(), div!!.message!!.contains("not an <input>"))
-        val readonly = runCatching { page.locator("#r").fill("y", FillOptions(timeoutMs = 300)) }.exceptionOrNull()
+        val readonly = runCatching { page.locator("#r").fill("y", timeoutMs = 300) }.exceptionOrNull()
         assertTrue(readonly?.message.orEmpty(), readonly is KmpwrightTimeoutException && readonly.message!!.contains("read-only"))
     }
 
@@ -266,7 +266,7 @@ class ActionabilityBrowserTest {
             <script>setTimeout(function(){ s.insertAdjacentHTML('beforeend', '<option value=b>Beta</option>'); }, 200)</script>""")
         page.locator("#s").selectOption("Beta")
         assertEquals("b", page.locator("#s").inputValue())
-        val error = runCatching { page.locator("#s").selectOption("missing", ActionOptions(timeoutMs = 300)) }.exceptionOrNull()
+        val error = runCatching { page.locator("#s").selectOption("missing", timeoutMs = 300) }.exceptionOrNull()
         assertTrue(error?.message.orEmpty(), error is KmpwrightTimeoutException && error.message!!.contains("\"missing\"") && error.message!!.contains("Alpha"))
     }
 

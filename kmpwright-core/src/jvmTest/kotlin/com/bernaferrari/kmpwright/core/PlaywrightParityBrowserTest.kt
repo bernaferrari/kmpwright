@@ -65,8 +65,8 @@ class PlaywrightParityBrowserTest {
                 start()
             }
             runBlocking {
-                hybrid = launchBrowser(BrowserLaunchOptions(executable), KmpwrightConfig(timeouts = TimeoutConfig(action = 5_000)))
-                jsOnly = launchBrowser(BrowserLaunchOptions(executable), KmpwrightConfig(inputMode = InputMode.JsOnly, timeouts = TimeoutConfig(action = 5_000)))
+                hybrid = launchBrowser(executable, config = KmpwrightConfig(timeouts = TimeoutConfig(action = 5_000)))
+                jsOnly = launchBrowser(executable, config = KmpwrightConfig(inputMode = InputMode.JsOnly, timeouts = TimeoutConfig(action = 5_000)))
             }
         }
 
@@ -143,16 +143,16 @@ class PlaywrightParityBrowserTest {
     @Test
     fun `actionability failures report readable messages identical in both input modes`() = bothModes { page, _ ->
         page.setContent("""<button id=b>Hidden</button><div id=cover style="position:fixed;inset:0;background:#000"></div>""")
-        val covered = runCatching { page.locator("#b").click(ClickOptions(timeoutMs = 400)) }.exceptionOrNull()
+        val covered = runCatching { page.locator("#b").click(timeoutMs = 400) }.exceptionOrNull()
         assertTrue("$covered", covered is KmpwrightTimeoutException)
         assertTrue(covered!!.message!!, covered.message!!.contains("would not receive the click: it is covered by"))
         assertFalse(covered.message!!, covered.message!!.contains("__kmpwright_"))
         page.setContent("<button id=d disabled>Off</button>")
-        val disabled = runCatching { page.locator("#d").click(ClickOptions(timeoutMs = 300)) }.exceptionOrNull()
+        val disabled = runCatching { page.locator("#d").click(timeoutMs = 300) }.exceptionOrNull()
         assertTrue(disabled!!.message!!, disabled.message!!.contains("is not enabled"))
-        val missing = runCatching { page.locator("#nope").hover(HoverOptions(timeoutMs = 300)) }.exceptionOrNull()
+        val missing = runCatching { page.locator("#nope").hover(timeoutMs = 300) }.exceptionOrNull()
         assertTrue(missing!!.message!!, missing.message!!.contains("was not found"))
-        val zero = runCatching { page.locator("#d").click(ClickOptions(timeoutMs = 0)) }.exceptionOrNull()
+        val zero = runCatching { page.locator("#d").click(timeoutMs = 0) }.exceptionOrNull()
         assertTrue("$zero", zero is KmpwrightException)
     }
 
@@ -161,15 +161,15 @@ class PlaywrightParityBrowserTest {
     @Test
     fun `delayMs is the time between down and up events`() = bothModes { page, _ ->
         page.setContent("<button id=b>B</button><input id=i>$eventLogger")
-        page.locator("#b").click(ClickOptions(delayMs = 300))
+        page.locator("#b").click(delayMs = 300)
         val clickGap = page.js("times.mouseup[0] - times.mousedown[0]").toDouble()
         assertTrue("mousedown->mouseup was ${clickGap}ms", clickGap >= 250)
-        page.locator("#b").dblclick(ClickOptions(delayMs = 150))
+        page.locator("#b").dblclick(delayMs = 150)
         assertEquals("150ms dblclick still dispatches both clicks",
             "click:1,click:2,dblclick:2", page.js("log.filter(function(x){return /click/.test(x)}).slice(1).join(',')"))
         val secondGap = page.js("times.mouseup[2] - times.mousedown[2]").toDouble()
         assertTrue("second press of dblclick was ${secondGap}ms", secondGap >= 120)
-        page.locator("#i").press("a", PressOptions(delayMs = 300))
+        page.locator("#i").press("a", delayMs = 300)
         val keyGap = page.js("times.keyup[times.keyup.length-1] - times.keydown[times.keydown.length-1]").toDouble()
         assertTrue("keydown->keyup was ${keyGap}ms", keyGap >= 250)
         assertEquals("a", page.locator("#i").inputValue())
@@ -260,7 +260,7 @@ class PlaywrightParityBrowserTest {
         assertTrue(page.js("window.scrollY").toDouble() > 1000)
 
         val started = TimeSource.Monotonic.markNow()
-        val missing = runCatching { page.locator("#file").setInputFiles(emptyList(), ActionOptions(timeoutMs = 300)) }.exceptionOrNull()
+        val missing = runCatching { page.locator("#file").setInputFiles(emptyList(), timeoutMs = 300) }.exceptionOrNull()
         assertTrue("$missing", missing is KmpwrightTimeoutException)
         assertTrue(started.elapsedNow().inWholeMilliseconds < 3_000)
         page.setContent("""<input id=file type=file style="display:none"><button id=notfile>x</button>""")
@@ -302,7 +302,7 @@ class PlaywrightParityBrowserTest {
         expect(page).not.toHaveURL("/start", timeoutMs = 200)
         page.waitForURL(Regex("/landed$")) { evaluate("location.href = '/landed'") }
         page.waitForURL({ it.endsWith("/start") }) { goBack() }
-        val navigation = page.waitForNavigation(WaitForNavigationOptions(url = "**/landed")) { evaluate("location.href = '/landed'") }
+        val navigation = page.waitForNavigation(url = "**/landed") { evaluate("location.href = '/landed'") }
         assertEquals("$origin/landed", navigation.url)
     }
 
@@ -354,8 +354,8 @@ class PlaywrightParityBrowserTest {
     fun `element reads fail when the element never appears`() {
         assumeTrue("Set KMPWRIGHT_TEST_CHROME for real browser contracts", hybrid != null)
         runBlocking {
-            val launched = launchBrowser(BrowserLaunchOptions(System.getenv("KMPWRIGHT_TEST_CHROME")),
-                KmpwrightConfig(timeouts = TimeoutConfig(action = 300)))
+            val launched = launchBrowser(System.getenv("KMPWRIGHT_TEST_CHROME"),
+                config = KmpwrightConfig(timeouts = TimeoutConfig(action = 300)))
             try {
                 val page = launched.browser.newPage()
                 page.setContent("<p>x</p>")
@@ -393,7 +393,7 @@ class PlaywrightParityBrowserTest {
     @Test
     fun `DOMContentLoaded resolves before load and statuses follow response ok`() = bothModes { page, _ ->
         val started = TimeSource.Monotonic.markNow()
-        val result = page.goto("$origin/slow-load", GotoOptions(waitUntil = LoadState.DOMContentLoaded))
+        val result = page.goto("$origin/slow-load", waitUntil = LoadState.DOMContentLoaded)
         assertTrue("goto(DOMContentLoaded) took ${started.elapsedNow()}", started.elapsedNow().inWholeMilliseconds < 2_000)
         assertTrue(result.ok)
         assertEquals("ready", page.locator("#ready").innerText())
@@ -401,7 +401,7 @@ class PlaywrightParityBrowserTest {
         page.waitForLoadState(LoadState.Load)
         assertEquals("complete", page.js("document.readyState"))
         val content = TimeSource.Monotonic.markNow()
-        page.setContent("<p id=c>content</p><img src='$origin/slow.png'>", SetContentOptions(waitUntil = LoadState.DOMContentLoaded))
+        page.setContent("<p id=c>content</p><img src='$origin/slow.png'>", waitUntil = LoadState.DOMContentLoaded)
         assertTrue("setContent(DOMContentLoaded) took ${content.elapsedNow()}", content.elapsedNow().inWholeMilliseconds < 2_000)
         assertEquals("content", page.locator("#c").innerText())
 

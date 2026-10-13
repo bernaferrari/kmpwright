@@ -59,9 +59,20 @@ internal val webKitDocumentsAvailable: Boolean by lazy {
     val view = WKWebView(CGRectMake(0.0, 0.0, 10.0, 10.0), WKWebViewConfiguration())
     var finished = false
     view.loadHTMLString("<p>probe</p>", baseURL = NSURL.URLWithString("https://probe.invalid/"))
-    view.evaluateJavaScript("1") { result, _ -> finished = result != null }
-    val deadline = NSDate.dateWithTimeIntervalSinceNow(5.0)
-    while (!finished && deadline.timeIntervalSinceNow > 0) pumpMainRunLoop(0.02)
+    // A cold WebContent process may reject evaluation before the first document exists.
+    // Retry after that callback instead of permanently caching a startup race as "no app host".
+    var evaluating = false
+    val deadline = NSDate.dateWithTimeIntervalSinceNow(10.0)
+    while (!finished && deadline.timeIntervalSinceNow > 0) {
+        if (!evaluating) {
+            evaluating = true
+            view.evaluateJavaScript("1") { result, _ ->
+                finished = result != null
+                evaluating = false
+            }
+        }
+        pumpMainRunLoop(0.02)
+    }
     finished
 }
 

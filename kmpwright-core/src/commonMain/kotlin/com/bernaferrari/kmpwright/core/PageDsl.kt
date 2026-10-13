@@ -2,34 +2,6 @@ package com.bernaferrari.kmpwright.core
 
 import kotlin.coroutines.cancellation.CancellationException
 
-/**
- * Creates a new page, navigates to [url], runs [block] with the page as receiver and closes the page
- * afterwards, even when [block] throws.
- *
- * ```kotlin
- * browser.use("https://example.com") {
- *     click("button.submit")
- *     waitForText("Welcome")
- * }
- * ```
- */
-@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Browser.use(url: String, block: suspend Page.() -> Unit) {
-    val page = newPage()
-    try {
-        page.goto(url)
-        page.block()
-    } finally {
-        page.close()
-    }
-}
-
-/** Runs [block] with the default page as receiver; the page is neither created nor closed. */
-@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Browser.use(block: suspend Page.() -> Unit) {
-    page().block()
-}
-
 // --- Tab convenience (agent-browser `tab`) ---
 
 /** Open pages with their index and URL (agent-browser `tab list`). */

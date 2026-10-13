@@ -52,7 +52,7 @@ class LocatorApiTest {
 
     @Test
     fun `click with custom options`() = testBlocking {
-        locator.click(ClickOptions(timeoutMs = 5000, button = MouseButton.RIGHT))
+        locator.click(timeoutMs = 5000, button = MouseButton.Right)
     }
 
     @Test
@@ -67,7 +67,7 @@ class LocatorApiTest {
 
     @Test
     fun `tap with custom options`() = testBlocking {
-        locator.tap(TapOptions(timeoutMs = 5000, force = true))
+        locator.tap(timeoutMs = 5000, force = true)
     }
 
     @Test
@@ -77,7 +77,7 @@ class LocatorApiTest {
 
     @Test
     fun `fill with custom options`() = testBlocking {
-        locator.fill("test", FillOptions(timeoutMs = 10000, force = true))
+        locator.fill("test", timeoutMs = 10000, force = true)
     }
 
     @Test
@@ -96,7 +96,7 @@ class LocatorApiTest {
 
     @Test
     fun `pressSequentially with delay`() = testBlocking {
-        locator.pressSequentially("xyz", PressSequentiallyOptions(delayMs = 10))
+        locator.pressSequentially("xyz", delayMs = 10)
     }
 
     @Test
@@ -106,7 +106,7 @@ class LocatorApiTest {
 
     @Test
     fun `press with custom options`() = testBlocking {
-        locator.press("Tab", PressOptions(delayMs = 50))
+        locator.press("Tab", delayMs = 50)
     }
 
     @Test
@@ -122,7 +122,7 @@ class LocatorApiTest {
     @Test
     fun `scrollIntoViewIfNeeded with custom options`() = testBlocking {
         locator.scrollIntoViewIfNeeded(
-            ScrollIntoViewOptions(block = ScrollPosition.Start, inline = ScrollPosition.Start)
+            block = ScrollPosition.Start, inline = ScrollPosition.Start
         )
     }
 
@@ -155,7 +155,7 @@ class LocatorApiTest {
     @Test
     fun `check with custom options`() = testBlocking {
         checkbox(initial = false)
-        locator.check(CheckOptions(timeoutMs = 5000, force = true))
+        locator.check(timeoutMs = 5000, force = true)
     }
 
     @Test
@@ -174,7 +174,7 @@ class LocatorApiTest {
     @Test
     fun `uncheck with custom options`() = testBlocking {
         checkbox(initial = true)
-        locator.uncheck(CheckOptions(timeoutMs = 5000, force = true))
+        locator.uncheck(timeoutMs = 5000, force = true)
     }
 
     @Test
@@ -226,7 +226,7 @@ class LocatorApiTest {
     fun `dragTo with custom options`() = testBlocking {
         controller.waitResultOverride = "true"
         val target = TestLocator("div.target", controller)
-        locator.dragTo(target, DragOptions(timeoutMs = 10000))
+        locator.dragTo(target, timeoutMs = 10000)
     }
 
     @Test
@@ -314,7 +314,7 @@ class LocatorApiTest {
 
     @Test
     fun `highlight with custom options`() = testBlocking {
-        locator.highlight(HighlightOptions(color = "blue", borderColor = "darkblue", durationMs = 5000))
+        locator.highlight(color = "blue", borderColor = "darkblue", durationMs = 5000)
     }
 
     @Test

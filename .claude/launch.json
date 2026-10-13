@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "website",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "website",
+        "dev",
+        "--port",
+        "3210"
+      ],
+      "port": 3210
+    },
+    {
+      "name": "website-production",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "website",
+        "start",
+        "--port",
+        "3212"
+      ],
+      "port": 3212
+    }
+  ]
+}

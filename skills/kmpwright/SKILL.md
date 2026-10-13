@@ -44,15 +44,15 @@ val browser = Browser(IOSPlatformContext(webView = wkWebView))
 val page = browser.page()
 
 // JVM: launch Chromium
-val launched = launchBrowser(BrowserLaunchOptions(executablePath = "/path/to/chrome"))
-val page = launched.browser.newPage()
-// ... launched.close()
+launchBrowser("/path/to/chrome").use { launched ->   // closes the process when done
+    val page = launched.browser.newPage()
+}
 
 // JVM: connect to an existing CDP endpoint
 val browser = Browser(JvmPlatformContext(), KmpwrightConfig(cdp = CdpConfig(websocketUrl = "ws://…")))
 ```
 
-Close with `browser.close()` (suspend) or `browser.dispose()` (non-suspending, for `onDispose`/`onDestroy`).
+Close with `browser.close()` (suspend), `browser.use { … }` / `page.use { … }` (always closes), or `browser.dispose()` (non-suspending, for `onDispose`/`onDestroy`).
 
 ## Core API cheat sheet
 
@@ -99,7 +99,7 @@ expect(page.locator("#err")).not.toBeVisible()
 expect(page).toHaveURL(Regex(".*/done"))
 
 // Screenshots
-val shot = page.screenshot(ScreenshotOptions(fullPage = true)) // ScreenshotResult(bytes, width, height, annotations)
+val shot = page.screenshot(fullPage = true) // ScreenshotResult(bytes, width, height, annotations)
 
 // Network
 page.route("**/api/*") { route -> route.fulfill(json = """{"ok":true}""") }
@@ -113,7 +113,7 @@ page.localStorage.set("k", "v"); page.localStorage.entries()
 ## Agent workflow (snapshot → ref → act)
 
 ```kotlin
-val snap = page.snapshot(SnapshotOptions(interactive = true))
+val snap = page.snapshot(interactive = true)
 println(snap.tree)                  // agent-browser format, one element per line:
 // @e1 [heading] "Sign up" [level=1]
 // @e2 [input type="email"] placeholder="Email"
@@ -174,7 +174,7 @@ page.createContentBoundary().wrap(text)                // mark untrusted page te
 - **Strict selectors:** actions on a selector that matches several elements throw a strict mode violation. Use refs, `first()`/`nth()`, or a more specific selector.
 - **Capabilities differ per backend.** Check `page.capabilities()` (`backend`, `routeInterception`, `domainFiltering`, `pdf`, `tracing`, `tabs`, …, plus `notes`) or `page.requireCapabilities(PageCapability.RouteInterception)`. Tracing, profiling, video, screencast, `newWindow` and `targets()` are CDP (JVM) only; PDF is `Partial` on mobile. File upload (`setInputFiles`) is not supported on mobile WebViews. `domainFiltering` is `Partial` on Android.
 - **Snapshots differ per backend:** JVM uses Chromium's accessibility tree; WebViews compute roles and names from the DOM.
-- **Old names do not exist.** Use Playwright names: `goBack` (not `back`), `getByRole` (not `findByRole`), `pressSequentially`, `waitForSelector`, `setAllowedDomains`, `snapshot(SnapshotOptions(...))`, `diffSnapshot`.
+- **Old names do not exist.** Use Playwright names: `goBack` (not `back`), `getByRole` (not `findByRole`), `pressSequentially`, `waitForSelector`, `setAllowedDomains`, `snapshot(interactive = true)`, `diffSnapshot`. Options are named parameters (`click(button = MouseButton.Right, force = true)`), not option classes; enum constants are PascalCase (`MouseButton.Left`, `ScreenshotFormat.Png`).
 
 ## Docs
 

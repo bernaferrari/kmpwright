@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import kotlin.coroutines.resume
 import kotlin.math.ceil
@@ -30,25 +31,30 @@ internal class AndroidScreenshotController(
 ) : ScreenshotController {
     private val maxBitmapBytes = 128L * 1024L * 1024L
     /** Output encoding for this capture; set by [capture] (instances are per capture). */
-    private var outputFormat: ScreenshotFormat = ScreenshotFormat.PNG
+    private var outputFormat: ScreenshotFormat = ScreenshotFormat.Png
     private var outputQuality: Int = 90
 
     /**
      * Honors [ScreenshotOptions.format] and [ScreenshotOptions.quality]. Android WebView always
-     * paints its own background, so [ScreenshotOptions.omitBackground] is rejected.
+     * paints its own background, so [omitBackground] is rejected.
      */
     override suspend fun capture(options: ScreenshotOptions): ScreenshotResult {
         require(options.scale.isFinite() && options.scale > 0) { "Screenshot scale must be positive" }
         require(options.quality in 0..100) { "Screenshot quality must be between 0 and 100" }
         if (options.omitBackground) {
             throw KmpwrightUnsupportedException(
-                "ScreenshotOptions.omitBackground is not supported on Android WebView: it always paints an opaque page background"
+                "omitBackground is not supported on Android WebView: it always paints an opaque page background"
             )
         }
         outputFormat = options.format
         outputQuality = options.quality
         val clip = options.clip
         return when {
+            options.captureBeyondViewport && clip != null -> {
+                val position = readScrollPosition()
+                @Suppress("DEPRECATION") val nativePerCss = webView.scale.toDouble().takeIf { it.isFinite() && it > 0 } ?: 1.0
+                captureDocument(DocumentScreenshotOptions(clip.copy(x = clip.x + position.first, y = clip.y + position.second), nativePerCss * options.scale.coerceIn(0.1, 5.0), format = options.format, quality = options.quality), {})
+            }
             options.fullPage -> captureFullPage(options.scale)
             clip != null -> captureClip(clip.x, clip.y, clip.width, clip.height, options.scale)
             else -> captureViewport(options.scale)
@@ -121,7 +127,7 @@ internal class AndroidScreenshotController(
 
                         if (captureWidth <= 0 || captureHeight <= 0) break
 
-                        val viewportBitmap = captureVisibleViewportBitmap(pageScale, "full-page screenshot tile")
+                        val viewportBitmap = captureVisibleViewportBitmap(pageScale, "full-page screenshot tile", actualX to actualY)
                         try {
                             val srcRect = Rect(
                                 (sourceX * pageScale).roundToInt(),
@@ -213,9 +219,9 @@ internal class AndroidScreenshotController(
     private fun Bitmap.encode(): ByteArray {
         val outputStream = java.io.ByteArrayOutputStream()
         val (format, quality) = when (outputFormat) {
-            ScreenshotFormat.PNG -> Bitmap.CompressFormat.PNG to 100
-            ScreenshotFormat.JPEG -> Bitmap.CompressFormat.JPEG to outputQuality
-            ScreenshotFormat.WEBP -> (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY
+            ScreenshotFormat.Png -> Bitmap.CompressFormat.PNG to 100
+            ScreenshotFormat.Jpeg -> Bitmap.CompressFormat.JPEG to outputQuality
+            ScreenshotFormat.Webp -> (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY
                 else @Suppress("DEPRECATION") Bitmap.CompressFormat.WEBP) to outputQuality
         }
         if (!compress(format, quality, outputStream)) {
@@ -395,9 +401,14 @@ internal class AndroidScreenshotController(
         }
     }
 
-    private suspend fun captureVisibleViewportBitmap(scale: Double, label: String): Bitmap {
+    private suspend fun captureVisibleViewportBitmap(scale: Double, label: String, expectedScroll: Pair<Int, Int>? = null): Bitmap {
         val scaledWidth = (webView.width * scale).roundToInt().coerceAtLeast(1)
         val scaledHeight = (webView.height * scale).roundToInt().coerceAtLeast(1)
+        if (expectedScroll != null) {
+            return captureAtScroll(expectedScroll, { webView.scrollX to webView.scrollY }, {
+                captureVisibleViewportBitmap(scale, label)
+            }, { it.recycle() })
+        }
         tryStablePixelCopy(scaledWidth, scaledHeight, label)?.let { return it }
 
         // Always draw into a fresh bitmap: a timed-out PixelCopy may still
@@ -406,6 +417,8 @@ internal class AndroidScreenshotController(
         try {
             val canvas = Canvas(bitmap)
             canvas.scale(scale.toFloat(), scale.toFloat())
+            // Direct View.draw uses document coordinates; PixelCopy already reads the viewport.
+            canvas.translate(-webView.scrollX.toFloat(), -webView.scrollY.toFloat())
             webView.draw(canvas)
             return bitmap
         } catch (error: Throwable) {
@@ -425,18 +438,29 @@ internal class AndroidScreenshotController(
     private suspend fun tryStablePixelCopy(width: Int, height: Int, label: String): Bitmap? {
         var previous = tryPixelCopy(width, height, label) ?: return null
         var previousScroll = webView.scrollX to webView.scrollY
-        repeat(MAX_STABILITY_COPIES) {
-            awaitRendered()
-            val next = tryPixelCopy(width, height, label) ?: return previous
-            val scroll = webView.scrollX to webView.scrollY
-            val stable = scroll == previousScroll && next.sameAs(previous)
+        try {
+            repeat(MAX_STABILITY_COPIES) {
+                awaitRendered()
+                val next = tryPixelCopy(width, height, label) ?: return previous
+                val scroll = webView.scrollX to webView.scrollY
+                val stable = try {
+                    scroll == previousScroll && next.sameAs(previous)
+                } catch (error: Throwable) {
+                    next.recycle()
+                    throw error
+                }
+                previous.recycle()
+                previous = next
+                previousScroll = scroll
+                if (stable) return next
+            }
+            android.util.Log.w("Kmpwright", "Android $label did not settle after $MAX_STABILITY_COPIES frames; using the latest frame")
+            return previous
+        } catch (error: Throwable) {
+            // This completed frame belongs to us, unlike a pending PixelCopy destination.
             previous.recycle()
-            previous = next
-            previousScroll = scroll
-            if (stable) return next
+            throw error
         }
-        android.util.Log.w("Kmpwright", "Android $label did not settle after $MAX_STABILITY_COPIES frames; using the latest frame")
-        return previous
     }
 
     /** A visual-state round trip plus two vsync frames. */
@@ -487,6 +511,35 @@ internal class AndroidScreenshotController(
             // neither reused nor recycled; the GC reclaims it afterwards.
             null -> null
         }
+    }
+
+    internal val captureWebView: WebView get() = webView
+
+    internal fun prepareDocumentCapture(options: DocumentScreenshotOptions) {
+        ensureLaidOut()
+        outputFormat = options.format
+        outputQuality = options.quality
+    }
+    internal suspend fun evaluateForDocument(script: String): String? = evaluateJavaScript(script)
+    internal suspend fun awaitDocumentRendered() {
+        // Detached WebViews still need Chromium's DOM/display-list acknowledgement before software draw.
+        if (!webView.isAttachedToWindow && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            withTimeout(5_000) { awaitVisualState() }
+        }
+        awaitRendered()
+    }
+    internal fun allocateDocumentBitmap(width: Int, height: Int): Bitmap = createBitmap(width, height, "document screenshot")
+    internal fun encodeDocumentBitmap(bitmap: Bitmap): ByteArray = bitmap.encode()
+    internal suspend fun captureDocumentTile(x: Int, y: Int): Bitmap {
+        if (webView.isAttachedToWindow) return captureVisibleViewportBitmap(1.0, "document screenshot tile", x to y)
+        val bitmap = createBitmap(webView.width, webView.height, "document screenshot tile")
+        try {
+            bitmap.eraseColor(android.graphics.Color.WHITE)
+            val canvas = Canvas(bitmap)
+            canvas.translate(-x.toFloat(), -y.toFloat())
+            webView.draw(canvas)
+            return bitmap
+        } catch (error: Throwable) { bitmap.recycle(); throw error }
     }
 
     private tailrec fun Context.findActivity(): Activity? =

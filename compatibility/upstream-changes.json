@@ -550,7 +550,7 @@
       "commit": "f5d0d38b5cebc7a2e3c36947ceb4f7adf15c534f",
       "subject": "feat: add WebGPU launch preset (#1529)",
       "disposition": "Adapted",
-      "notes": "BrowserLaunchOptions.webGpu supplies the Chromium WebGPU preset, including Linux Vulkan/SwiftShader flags and feature merging. Owned launcher/profile reuse is real-Chrome tested; GPU adapter availability depends on the host.",
+      "notes": "launchBrowser(webGpu = true) supplies the Chromium WebGPU preset, including Linux Vulkan/SwiftShader flags and feature merging. Owned launcher/profile reuse is real-Chrome tested; GPU adapter availability depends on the host.",
       "files": [
         "README.md",
         "agent-browser.schema.json",
@@ -1265,7 +1265,7 @@
       "commit": "b041bd4c9e71b0b1ea0727a9d9deb1e661615050",
       "subject": "feat(cli): trust proxy CAs through Chromium NSS (#1669)",
       "disposition": "Adapted / platform restricted",
-      "notes": "BrowserLaunchOptions.caCertificatePath prepares a private Linux NSS HOME using bounded certutil commands and removes it on close/failure. Temporary profiles and certificate verification are required. PEM/DER loader and real HTTP trust/hostname contracts pass; live Linux NSS browser validation remains pending.",
+      "notes": "launchBrowser(caCertificatePath = ...) prepares a private Linux NSS HOME using bounded certutil commands and removes it on close/failure. Temporary profiles and certificate verification are required. PEM/DER loader and real HTTP trust/hostname contracts pass; live Linux NSS browser validation remains pending.",
       "files": [
         "README.md",
         "agent-browser.schema.json",
@@ -1732,7 +1732,7 @@
       "commit": "08cc9d54f8e7e101951a5c86e21b55c1abf58107",
       "subject": "Add no-navigate auth login mode (#1771)",
       "disposition": "Adapted / different API",
-      "notes": "Page.login accepts AuthLoginOptions(navigate=false) to fill the existing document. Uses configured selectors or usable controls, rejects ambiguous fields, and checks profile origin and form/control identity. Real Chrome verifies filling/submission without navigation.",
+      "notes": "page.login(profile, navigate = false) fills the existing document. Uses configured selectors or usable controls, rejects ambiguous fields, and checks profile origin and form/control identity. Real Chrome verifies filling/submission without navigation.",
       "files": [
         "README.md",
         "cli/src/commands.rs",
@@ -1864,7 +1864,7 @@
       "commit": "0ae29e5d1cb02f0b838a916cfeb6a33aa953f8a1",
       "subject": "feat: add interpolated mouse movement (#1810)",
       "disposition": "Existing",
-      "notes": "MoveOptions.steps already interpolates native CDP pointer movement; no CLI human-mode defaults.",
+      "notes": "mouse.move(x, y, steps = n) already interpolates native CDP pointer movement; no CLI human-mode defaults.",
       "files": [
         "README.md",
         "cli/src/commands.rs",
@@ -2418,7 +2418,7 @@
       "commit": "0207911f1bd4d0393eddaa90f2e50f96e0fb8974",
       "subject": "feat(cli): trust private CAs in CLI HTTPS requests (#2006)",
       "disposition": "Adapted / platform restricted",
-      "notes": "ReadOptions.caCertificatePath/useSystemCa configure per-reader PEM/DER trust through Ktor OkHttp on JVM/Android. Real HTTPS verifies private trust, default-reader isolation and hostname rejection; Darwin retains native platform trust.",
+      "notes": "HttpReader.read(url, caCertificatePath = ..., useSystemCa = ...) configures per-reader PEM/DER trust through Ktor OkHttp on JVM/Android. Real HTTPS verifies private trust, default-reader isolation and hostname rejection; Darwin retains native platform trust.",
       "files": [
         "README.md",
         "agent-browser.schema.json",

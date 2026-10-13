@@ -12,9 +12,7 @@ import com.bernaferrari.kmpwright.core.AgentCommands
 import com.bernaferrari.kmpwright.core.Browser
 import com.bernaferrari.kmpwright.core.Page
 import com.bernaferrari.kmpwright.core.Rectangle
-import com.bernaferrari.kmpwright.core.SetContentOptions
 import com.bernaferrari.kmpwright.core.Snapshot
-import com.bernaferrari.kmpwright.core.SnapshotOptions
 import com.bernaferrari.kmpwright.core.runCommand
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +53,7 @@ data class RefBadge(val ref: String, val role: String, val name: String, val box
 class StudioState(
     val browser: Browser,
     private val scope: CoroutineScope,
+    private val releaseKeyboard: () -> Unit = {},
 ) {
     val page: Page = browser.page()
 
@@ -132,6 +131,7 @@ class StudioState(
             }
             val index = console.indexOfFirst { it.id == id }
             if (index >= 0) console[index] = entry
+            releaseKeyboard()
             if (entry.status == ConsoleEntry.Status.Ok && changesPage(line)) refreshRefs()
         }
     }
@@ -139,7 +139,7 @@ class StudioState(
     /** Loads one of the bundled demo pages and takes a fresh snapshot. */
     fun loadDemo(html: String = DemoSite.playground) {
         scope.launch {
-            runCatching { withPage { it.setContent(html, SetContentOptions()) } }
+            runCatching { withPage { it.setContent(html) } }
             refreshRefs()
         }
     }
@@ -150,7 +150,7 @@ class StudioState(
         measureJob?.cancel()
         measureJob = scope.launch {
             try {
-                showRefs(withPage { it.snapshot(SnapshotOptions(interactive = true)) })
+                showRefs(withPage { it.snapshot(interactive = true) })
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
@@ -158,6 +158,9 @@ class StudioState(
             }
         }
     }
+
+    /** Hides the keyboard if automation left the page's input focused. */
+    fun releasePageKeyboard() = releaseKeyboard()
 
     fun clearRefs() {
         measureJob?.cancel()

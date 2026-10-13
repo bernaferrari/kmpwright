@@ -67,7 +67,7 @@ KmpwrightAndroid.initialize(applicationContext)
 
 Otherwise `AuthManager` throws `KmpwrightException`: "Kmpwright storage is not initialized on Android. Create a Browser with AndroidPlatformContext or call KmpwrightAndroid.initialize(context) before using auth profiles or saved state."
 
-`StorageState.save(path, password)` and `StorageStateAutosaveOptions(path, ...)` write to the path you pass. Use a path under `context.filesDir`.
+`StorageState.save(path, password)` and `page.autosaveStorageState(path, ...)` write to the path you pass. Use a path under `context.filesDir`.
 
 ## Threading
 
@@ -95,9 +95,9 @@ Do not assign `webView.webViewClient = …` after creating the `Browser`. That r
 
 ## Coordinates
 
-All public coordinates are CSS pixels, the same as `getBoundingClientRect()`: `page.mouse`, `page.touchscreen`, `ClickOptions.position`, `ScreenshotOptions.clip`, `Locator.boundingBox()` and `setViewportSize`. KMPwright converts them to WebView pixels with `devicePixelRatio` times the visual-viewport (pinch-zoom) scale, falling back to the display density.
+All public coordinates are CSS pixels, the same as `getBoundingClientRect()`: `page.mouse`, `page.touchscreen`, the `position` of locator clicks, the `clip` of `page.screenshot`, `Locator.boundingBox()` and `setViewportSize`. KMPwright converts them to WebView pixels with `devicePixelRatio` times the visual-viewport (pinch-zoom) scale, falling back to the display density.
 
-Screenshot **output** is in device pixels times `ScreenshotOptions.scale`, so a 400×800 CSS viewport on a 2.625x display produces a 1050×2100 image.
+Screenshot **output** is in device pixels times the screenshot `scale`, so a 400×800 CSS viewport on a 2.625x display produces a 1050×2100 image.
 
 ## Renderer crashes
 
@@ -179,7 +179,7 @@ It is Partial because WebView has no hook for:
 
 - **Viewport:** `PixelCopy` of the WebView's window region when the WebView is attached to an `Activity` window. KMPwright copies until two consecutive frames match, so half-rasterized tiles are not captured. Otherwise (detached WebView, PixelCopy failure or 500 ms timeout) it draws the view into a bitmap.
 - **Full page:** scroll and stitch. KMPwright measures the document, hides the scrollbars, scrolls tile by tile, copies each viewport, stitches them into one bitmap and restores the original scroll position. Bitmaps are capped at 128 MiB.
-- **Format:** PNG, JPEG and WEBP (`quality` applies to JPEG and WEBP). `omitBackground = true` throws `KmpwrightUnsupportedException`: "ScreenshotOptions.omitBackground is not supported on Android WebView: it always paints an opaque page background".
+- **Format:** PNG, JPEG and WEBP (`quality` applies to JPEG and WEBP). `omitBackground = true` throws `KmpwrightUnsupportedException`: "omitBackground is not supported on Android WebView: it always paints an opaque page background".
 - **PDF** (`Pdf` = Partial): paginated from rendered viewport tiles. Paper size (`format`, default Letter; `width`, `height`), `landscape` and `margin` work. `displayHeaderFooter`, header/footer templates, `scale != 1.0`, `printBackground = false` and `pageRanges` throw `KmpwrightUnsupportedException`. Documents over 16 megapixels or 128 pages are rejected.
 
 ## Other differences

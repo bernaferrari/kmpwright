@@ -6,24 +6,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
 
 class KmpwrightConfigTest {
 
     @Test
     fun `default config has sane defaults`() {
         val config = KmpwrightConfig()
-        assertEquals(InstallMode.DocumentStartPreferred, config.installMode)
+        assertEquals(InstallMode.Automatic, config.installMode)
         assertEquals(InputMode.Hybrid, config.inputMode)
         assertNotNull(config.timeouts)
         assertNotNull(config.debug)
     }
 
     @Test
-    fun `cdp config hides scrollbars in headless screenshots by default`() {
-        val config = CdpConfig()
-        assertTrue(config.headless)
-        assertTrue(config.hideScrollbars)
+    fun `cdp config hides scrollbars in screenshots by default`() {
+        assertTrue(CdpConfig().hideScrollbars)
     }
 
     @Test
@@ -54,10 +54,7 @@ class KmpwrightConfigTest {
 
     @Test
     fun `install mode enum has all values`() {
-        assertEquals(3, InstallMode.entries.size)
-        assertTrue(InstallMode.entries.contains(InstallMode.DocumentStartPreferred))
-        assertTrue(InstallMode.entries.contains(InstallMode.AlwaysEvaluate))
-        assertTrue(InstallMode.entries.contains(InstallMode.Disabled))
+        assertEquals(listOf(InstallMode.Automatic, InstallMode.Disabled), InstallMode.entries)
     }
 
     @Test
@@ -79,49 +76,7 @@ class KmpwrightConfigTest {
     }
 }
 
-class LocatorOptionsTest {
-
-    @Test
-    fun `click options have default values`() {
-        val options = ClickOptions()
-        assertNull(options.timeoutMs)
-        assertEquals(MouseButton.LEFT, options.button)
-        assertEquals(1, options.clickCount)
-    }
-
-    @Test
-    fun `tap options have default values`() {
-        val options = TapOptions()
-        assertNull(options.timeoutMs)
-    }
-
-    @Test
-    fun `fill options have default values`() {
-        val options = FillOptions()
-        assertNull(options.timeoutMs)
-        assertEquals(false, options.force)
-    }
-
-    @Test
-    fun `type options have default values`() {
-        val options = TypeOptions()
-        assertNull(options.timeoutMs)
-    }
-
-    @Test
-    fun `press options have default values`() {
-        val options = PressOptions()
-        assertNull(options.timeoutMs)
-        assertEquals(0L, options.delayMs)
-    }
-
-    @Test
-    fun `scroll into view options have default values`() {
-        val options = ScrollIntoViewOptions()
-        assertNull(options.timeoutMs)
-        assertEquals(ScrollPosition.Center, options.block)
-        assertEquals(ScrollPosition.Nearest, options.inline)
-    }
+class FilterOptionsTest {
 
     @Test
     fun `filter options have default values`() {
@@ -130,21 +85,6 @@ class LocatorOptionsTest {
         assertNull(options.has)
         assertNull(options.hasNotText)
         assertNull(options.hasNot)
-    }
-
-    @Test
-    fun `action options have default values`() {
-        val options = ActionOptions()
-        assertNull(options.timeoutMs)
-        assertEquals(false, options.force)
-    }
-
-    @Test
-    fun `drag options have default values`() {
-        val options = DragOptions()
-        assertNull(options.timeoutMs)
-        assertNull(options.sourcePosition)
-        assertNull(options.targetPosition)
     }
 }
 
@@ -171,58 +111,14 @@ class SelectorStateTest {
     }
 }
 
-class ScreenshotOptionsTest {
+class ScreenshotParametersTest {
 
     @Test
-    fun `default screenshot options`() {
-        val options = ScreenshotOptions()
-        assertFalse(options.fullPage)
-        assertNull(options.clip)
-        assertFalse(options.omitBackground)
-        assertNull(options.timeoutMs)
-        assertEquals(90, options.quality)
-        assertEquals(ScreenshotFormat.PNG, options.format)
-        assertEquals(1.0, options.scale, 0.001)
-    }
-
-    @Test
-    fun `screenshot with full page`() {
-        val options = ScreenshotOptions(fullPage = true)
-        assertTrue(options.fullPage)
-    }
-
-    @Test
-    fun `screenshot with clip`() {
-        val clip = Rectangle(0.0, 0.0, 100.0, 50.0)
-        val options = ScreenshotOptions(clip = clip)
-        assertNotNull(options.clip)
-        assertEquals(0.0, options.clip!!.x, 0.001)
-        assertEquals(0.0, options.clip!!.y, 0.001)
-        assertEquals(100.0, options.clip!!.width, 0.001)
-        assertEquals(50.0, options.clip!!.height, 0.001)
-    }
-
-    @Test
-    fun `screenshot with scale`() {
-        val options = ScreenshotOptions(scale = 0.5)
-        assertEquals(0.5, options.scale, 0.001)
-    }
-
-    @Test
-    fun `screenshot with jpeg format`() {
-        val options = ScreenshotOptions(format = ScreenshotFormat.JPEG)
-        assertEquals(ScreenshotFormat.JPEG, options.format)
-    }
-
-    @Test
-    fun `screenshot copy preserves values`() {
-        val original = ScreenshotOptions(fullPage = true, scale = 2.0)
-        val copy = original.copy(fullPage = false, clip = Rectangle(0.0, 0.0, 100.0, 100.0))
-        assertFalse(copy.fullPage)
-        assertEquals(2.0, copy.scale, 0.001)
-        assertNotNull(copy.clip)
-        // Playwright rejects fullPage together with clip.
-        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { original.copy(clip = Rectangle(0.0, 0.0, 1.0, 1.0)) }
+    fun `screenshot rejects fullPage together with clip like Playwright`() {
+        val page = TestPage()
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { page.screenshot(fullPage = true, clip = Rectangle(0.0, 0.0, 1.0, 1.0)) }
+        }
     }
 }
 
@@ -374,29 +270,9 @@ class ScreenshotFormatTest {
     @Test
     fun `screenshot format enum has all values`() {
         assertEquals(3, ScreenshotFormat.entries.size)
-        assertTrue(ScreenshotFormat.entries.contains(ScreenshotFormat.PNG))
-        assertTrue(ScreenshotFormat.entries.contains(ScreenshotFormat.JPEG))
-        assertTrue(ScreenshotFormat.entries.contains(ScreenshotFormat.WEBP))
-    }
-}
-
-class GotoOptionsTest {
-
-    @Test
-    fun `default goto options defer to the configured navigation timeout`() {
-        val options = GotoOptions()
-        assertNull(options.timeoutMs)
-        assertEquals(LoadState.Load, options.waitUntil)
-    }
-}
-
-class SetContentOptionsTest {
-
-    @Test
-    fun `default set content options`() {
-        val options = SetContentOptions()
-        assertNull(options.timeoutMs)
-        assertEquals(LoadState.Load, options.waitUntil)
+        assertTrue(ScreenshotFormat.entries.contains(ScreenshotFormat.Png))
+        assertTrue(ScreenshotFormat.entries.contains(ScreenshotFormat.Jpeg))
+        assertTrue(ScreenshotFormat.entries.contains(ScreenshotFormat.Webp))
     }
 }
 
@@ -434,108 +310,14 @@ class DialogTypeTest {
     }
 }
 
-class ScriptTagOptionsTest {
+class PdfFormatTest {
 
     @Test
-    fun `script tag options with url`() {
-        val options = ScriptTagOptions(
-            url = "https://example.com/script.js",
-            type = "text/javascript",
-            id = "my-script",
-            async = true,
-            defer = false
-        )
-        assertEquals("https://example.com/script.js", options.url)
-        assertEquals("text/javascript", options.type)
-        assertEquals("my-script", options.id)
-        assertTrue(options.async)
-        assertFalse(options.defer)
-        assertNull(options.content)
-    }
-
-    @Test
-    fun `script tag options with content`() {
-        val content = "console.log('hello')"
-        val options = ScriptTagOptions(content = content)
-        assertEquals(content, options.content)
-        assertNull(options.url)
-        assertEquals("text/javascript", options.type)
-    }
-
-    @Test
-    fun `script tag options defaults`() {
-        val options = ScriptTagOptions()
-        assertNull(options.url)
-        assertNull(options.content)
-        assertEquals("text/javascript", options.type)
-        assertEquals("", options.id)
-        assertFalse(options.async)
-        assertFalse(options.defer)
-    }
-}
-
-class StyleTagOptionsTest {
-
-    @Test
-    fun `style tag options with url`() {
-        val options = StyleTagOptions(
-            url = "https://example.com/style.css",
-            id = "my-style"
-        )
-        assertEquals("https://example.com/style.css", options.url)
-        assertEquals("my-style", options.id)
-        assertNull(options.content)
-    }
-
-    @Test
-    fun `style tag options with content`() {
-        val content = "body { color: red; }"
-        val options = StyleTagOptions(content = content)
-        assertEquals(content, options.content)
-        assertNull(options.url)
-    }
-
-    @Test
-    fun `style tag options defaults`() {
-        val options = StyleTagOptions()
-        assertNull(options.url)
-        assertNull(options.content)
-        assertEquals("", options.id)
-    }
-}
-
-class PdfOptionsTest {
-
-    @Test
-    fun `pdf options defaults`() {
-        val options = PdfOptions()
-        assertNull(options.format)
-        assertEquals(8.5 to 11.0, options.paperSizeInches())
-        assertNull(options.timeoutMs)
-        assertFalse(options.landscape)
-        assertFalse(options.displayHeaderFooter)
-        assertEquals("", options.headerTemplate)
-        assertEquals("", options.footerTemplate)
-        assertTrue(options.printBackground)
-        assertEquals(1.0, options.scale, 0.001)
-        assertNull(options.width)
-        assertNull(options.height)
-        assertEquals("", options.pageRanges)
-    }
-
-    @Test
-    fun `pdf options with custom values`() {
-        val margin = PdfMargin(top = "2cm", bottom = "2cm", left = "1cm", right = "1cm")
-        val options = PdfOptions(
-            format = PdfFormat.A4,
-            landscape = true,
-            scale = 2.0,
-            margin = margin
-        )
-        assertEquals(PdfFormat.A4, options.format)
-        assertTrue(options.landscape)
-        assertEquals(2.0, options.scale, 0.001)
-        assertEquals("2cm", options.margin.top)
+    fun `default pdf paper is Letter`() {
+        assertEquals(8.5 to 11.0, PdfOptions().paperSizeInches())
+        assertEquals(8.27 to 11.69, PdfOptions(format = PdfFormat.A4).paperSizeInches().let { (w, h) ->
+            (kotlin.math.round(w * 100) / 100) to (kotlin.math.round(h * 100) / 100)
+        })
     }
 
     @Test
@@ -598,37 +380,6 @@ class PdfResultTest {
         val result1 = PdfResult(byteArrayOf(1, 2, 3))
         val result2 = PdfResult(byteArrayOf(1, 2, 4))
         assertFalse(result1 == result2)
-    }
-}
-
-class A11ySnapshotOptionsTest {
-
-    @Test
-    fun `default options`() {
-        val options = SnapshotOptions()
-        assertFalse(options.includeHidden)
-        assertNull(options.maxDepth)
-        assertFalse(options.interactive)
-        assertFalse(options.compact)
-    }
-
-    @Test
-    fun `custom options`() {
-        val options = SnapshotOptions(includeHidden = true, maxDepth = 10, interactive = true, compact = true)
-        assertTrue(options.includeHidden)
-        assertEquals(10, options.maxDepth)
-        assertTrue(options.interactive)
-        assertTrue(options.compact)
-    }
-}
-
-class DiffOptionsTest {
-
-    @Test
-    fun `default diff options`() {
-        val options = DiffOptions()
-        assertEquals(0.1, options.threshold, 0.001)
-        assertTrue(options.generateDiffImage)
     }
 }
 

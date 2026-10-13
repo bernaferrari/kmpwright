@@ -39,8 +39,8 @@ class SafetyContractTest {
         assertFailsWith<KmpwrightException> { page.evaluate("1 + 1") }
         assertFailsWith<KmpwrightException> { page.addCookies(listOf(Cookie("a", "b", "example.com"))) }
         assertFailsWith<KmpwrightException> { page.setContent("<p>unsafe</p>") }
-        assertFailsWith<KmpwrightException> { page.addScriptTag(ScriptTagOptions(content = "1")) }
-        assertFailsWith<KmpwrightException> { page.addStyleTag(StyleTagOptions(content = "body{}")) }
+        assertFailsWith<KmpwrightException> { page.addScriptTag(content = "1") }
+        assertFailsWith<KmpwrightException> { page.addStyleTag(content = "body{}") }
         assertFailsWith<KmpwrightException> { page.screenshot() }
         Unit
     }

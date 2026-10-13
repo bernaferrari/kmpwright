@@ -5,15 +5,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.bernaferrari.kmpwright.core.AndroidPlatformContext
 import com.bernaferrari.kmpwright.core.Browser
-import com.bernaferrari.kmpwright.core.ClickOptions
-import com.bernaferrari.kmpwright.core.GotoOptions
 import com.bernaferrari.kmpwright.core.KmpwrightAssertionError
 import com.bernaferrari.kmpwright.core.KmpwrightTimeoutException
 import com.bernaferrari.kmpwright.core.LoadState
 import com.bernaferrari.kmpwright.core.Page
-import com.bernaferrari.kmpwright.core.PressOptions
-import com.bernaferrari.kmpwright.core.SetContentOptions
-import com.bernaferrari.kmpwright.core.ActionOptions
 import com.bernaferrari.kmpwright.core.expect
 import com.bernaferrari.kmpwright.core.waitForNavigation
 import kotlinx.coroutines.Dispatchers
@@ -117,9 +112,9 @@ class KmpwrightParityInstrumentedTest {
         page.setContent("<button id=b>B</button><input id=i>$eventLogger")
         page.locator("#b").dblclick()
         assertEquals("mousedown:1,mouseup:1,click:1,mousedown:2,mouseup:2,click:2,dblclick:2", js("log.join(',')"))
-        page.locator("#b").click(ClickOptions(delayMs = 300))
+        page.locator("#b").click(delayMs = 300)
         assertTrue(js("times.mouseup[2] - times.mousedown[2]").toDouble() >= 250)
-        page.locator("#i").press("a", PressOptions(delayMs = 300))
+        page.locator("#i").press("a", delayMs = 300)
         assertTrue(js("times.keyup[times.keyup.length-1] - times.keydown[times.keydown.length-1]").toDouble() >= 250)
         page.locator("#i").press("ControlOrMeta+A")
         page.locator("#i").press("x")
@@ -147,7 +142,7 @@ class KmpwrightParityInstrumentedTest {
             document.body.appendChild(c); }, 300);</script>""")
         page.locator("#c").check()
         assertTrue(page.locator("#c").isChecked())
-        val missing = runCatching { page.locator("#file").setInputFiles(emptyList(), ActionOptions(timeoutMs = 300)) }.exceptionOrNull()
+        val missing = runCatching { page.locator("#file").setInputFiles(emptyList(), timeoutMs = 300) }.exceptionOrNull()
         assertTrue("$missing", missing is KmpwrightTimeoutException)
         val empty = runCatching { expect(page.locator("#missing")).toBeEmpty(timeoutMs = 200) }.exceptionOrNull()
         assertTrue("$empty", empty is KmpwrightAssertionError)
@@ -168,13 +163,13 @@ class KmpwrightParityInstrumentedTest {
     @Test
     fun domContentLoadedResolvesBeforeLoadAndStatusesAreReal() = pageTest {
         val started = TimeSource.Monotonic.markNow()
-        val result = page.goto("${server.origin}/slow-load", GotoOptions(waitUntil = LoadState.DOMContentLoaded))
+        val result = page.goto("${server.origin}/slow-load", waitUntil = LoadState.DOMContentLoaded)
         assertTrue("goto(DOMContentLoaded) took ${started.elapsedNow()}", started.elapsedNow().inWholeMilliseconds < 2_500)
         assertTrue(result.ok)
         assertEquals("ready", page.locator("#ready").innerText())
         page.waitForLoadState(LoadState.Load)
         val content = TimeSource.Monotonic.markNow()
-        page.setContent("<p id=c>content</p><img src='${server.origin}/slow.png'>", SetContentOptions(waitUntil = LoadState.DOMContentLoaded))
+        page.setContent("<p id=c>content</p><img src='${server.origin}/slow.png'>", waitUntil = LoadState.DOMContentLoaded)
         assertTrue("setContent(DOMContentLoaded) took ${content.elapsedNow()}", content.elapsedNow().inWholeMilliseconds < 2_500)
         assertEquals("content", page.locator("#c").innerText())
         page.waitForLoadState(LoadState.Load)

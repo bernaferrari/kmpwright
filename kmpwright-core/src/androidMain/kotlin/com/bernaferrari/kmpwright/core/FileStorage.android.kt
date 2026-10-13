@@ -1,5 +1,7 @@
 package com.bernaferrari.kmpwright.core
 
+import kotlinx.coroutines.IO
+
 import java.io.File
 
 internal actual fun fileWrite(path: String, content: String) {
@@ -43,3 +45,5 @@ internal actual fun mkdirs(path: String) {
 
 /** `user.home` is empty on Android; the app-private files directory is the home equivalent. */
 internal actual fun platformHomeDir(): String = AndroidAppStorage.requireFilesDir().absolutePath
+
+internal actual val fileDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO

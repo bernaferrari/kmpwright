@@ -44,7 +44,7 @@ A data class with one `SupportLevel` property per capability (`routeInterception
 
 <TypeTable
   type={{
-    backend: { type: 'BackendKind', description: 'The engine: AndroidWebView, IOSWebView, JvmCdp, or Unknown for a custom Page implementation.', default: 'BackendKind.Unknown' },
+    backend: { type: 'BackendKind', description: 'The engine: AndroidWebView, IOSWebView, JvmCdp, Browser (the in-browser demo backend), or Unknown for a custom Page implementation.', default: 'BackendKind.Unknown' },
     notes: { type: 'List<String>', description: 'Human-readable explanations of Partial levels and other backend behavior. Show them to users or log them; do not parse them.', default: 'emptyList()' },
   }}
 />
@@ -195,6 +195,10 @@ These are the exact `notes` strings each backend returns.
 </Tab>
 </Tabs>
 
+## The browser backend (live demo)
+
+The interactive demo on this site's home page runs KMPwright compiled to JavaScript (`BackendKind.Browser`). It drives a same-origin `<iframe>` with the same `Page` and `runCommand()` code, so snapshots, refs, locators, actions, assertions, evaluation and console capture behave as on the other backends. Browsers keep page JavaScript out of other origins, so it can only open `setContent` documents and pages of the hosting site. Input is synthesized as DOM events, and routing, network history, screenshots, PDF and downloads are unavailable. It exists to power the demo: build apps on Android, iOS or the JVM.
+
 ## What "Unsupported" looks like at runtime
 
 Unsupported features throw `KmpwrightUnsupportedException` rather than silently doing nothing. Some examples from the source:
@@ -206,7 +210,7 @@ Unsupported features throw `KmpwrightUnsupportedException` rather than silently 
 | `browser.targets()`, `attachTarget`, `newWindow` | "Browser target discovery requires CDP" (and similar) | Same | Works with a browser-scoped endpoint |
 | `page.emulateNetworkConditions(NetworkConditions.Slow3G)` | "This backend cannot throttle latency or throughput; only offline emulation is available (see PageCapabilities.networkEmulation)." | Same | Works |
 | `page.setDeviceScaleFactor(2.0)` | "Android WebView device scale is determined by the host display" | "WKWebView device scale is determined by the host screen" | Works |
-| `ScreenshotOptions(omitBackground = true)` | "ScreenshotOptions.omitBackground is not supported on Android WebView: …" | "ScreenshotOptions.omitBackground is not supported on iOS WKWebView: …" | Works |
+| `page.screenshot(omitBackground = true)` | "omitBackground is not supported on Android WebView: …" | "omitBackground is not supported on iOS WKWebView: …" | Works |
 | `launchBrowser(...)` | "Desktop browser process launch requires the JVM backend" | Same | Works |
 
 `page.emulateDevice(device)` does not throw on WebViews: it applies the viewport size and user agent and leaves the scale factor, mobile layout and touch support to the device.

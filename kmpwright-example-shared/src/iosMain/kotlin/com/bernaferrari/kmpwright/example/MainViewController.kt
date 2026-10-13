@@ -27,7 +27,8 @@ class NativeStudio(
     private val onOpenRecipe: (id: String, title: String) -> Unit,
 ) {
     private val platformContext = IOSPlatformContext(WKWebView())
-    private val state = StudioState(Browser(platformContext), MainScope()).also { it.loadDemo() }
+    private val state = StudioState(Browser(platformContext), MainScope()) { releaseWebViewKeyboard(platformContext) }
+        .also { it.loadDemo() }
 
     /** The screen currently on top; only it shows the shared web view. */
     private var activeScreen by mutableStateOf("Agent")

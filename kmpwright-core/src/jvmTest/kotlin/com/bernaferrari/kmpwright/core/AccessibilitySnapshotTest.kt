@@ -210,7 +210,7 @@ class AccessibilitySnapshotTest {
         val page = TestPage(MockWebViewController().apply { evalHandler = { if (it.contains("commitSnapshot")) json else null } })
         assertEquals(
             "@e1 [input type=\"search\"] placeholder=\"Search\"\n@e2 [link] \"Docs\" url=\"https://kmpwright.dev/docs\"",
-            page.snapshot(SnapshotOptions(interactive = true, urls = true)).tree
+            page.snapshot(interactive = true, urls = true).tree
         )
         assertEquals(
             "[main]\n  @e1 [input type=\"search\"] placeholder=\"Search\"\n@e2 [link] \"Docs\"",
@@ -265,15 +265,6 @@ class AccessibilitySnapshotTest {
 
         assertTrue(js.contains("el.innerText || el.textContent"))
         assertTrue(js.contains("INTERACTIVE_TAGS[tag] || INTERACTIVE_ROLES[explicitRole]"))
-    }
-
-    @Test
-    fun `SnapshotOptions defaults`() {
-        val options = SnapshotOptions()
-        assertFalse(options.includeHidden)
-        assertEquals(null, options.maxDepth)
-        assertFalse(options.interactive)
-        assertFalse(options.compact)
     }
 
     @Test

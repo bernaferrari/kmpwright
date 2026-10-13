@@ -49,7 +49,7 @@ class PageApiTest {
     @Test
     fun `goto with custom timeout`() {
         runBlocking {
-            val result = page.goto("https://example.com", GotoOptions(timeoutMs = 5000))
+            val result = page.goto("https://example.com", timeoutMs = 5000)
             assertTrue(result.ok)
         }
     }
@@ -57,7 +57,7 @@ class PageApiTest {
     @Test
     fun `goto with an explicit timeout`() {
         runBlocking {
-            val result = page.goto("https://example.com", GotoOptions(timeoutMs = 1_000))
+            val result = page.goto("https://example.com", timeoutMs = 1_000)
             assertEquals("https://example.com", result.url)
         }
     }
@@ -65,7 +65,7 @@ class PageApiTest {
     @Test
     fun `goto with waitUntil Load`() {
         runBlocking {
-            val result = page.goto("https://example.com", GotoOptions(waitUntil = LoadState.Load))
+            val result = page.goto("https://example.com", waitUntil = LoadState.Load)
             assertTrue(result.ok)
         }
     }
@@ -73,7 +73,7 @@ class PageApiTest {
     @Test
     fun `goto with waitUntil NetworkIdle`() {
         runBlocking {
-            val result = page.goto("https://example.com", GotoOptions(waitUntil = LoadState.NetworkIdle))
+            val result = page.goto("https://example.com", waitUntil = LoadState.NetworkIdle)
             assertTrue(result.ok)
         }
     }
@@ -185,7 +185,7 @@ class PageApiTest {
     fun `setContent with custom timeout`() {
         runBlocking {
             try {
-                page.setContent("<html></html>", SetContentOptions(timeoutMs = 100))
+                page.setContent("<html></html>", timeoutMs = 100)
             } catch (e: KmpwrightException) {
                 // Expected timeout in mock
             }
@@ -207,7 +207,7 @@ class PageApiTest {
     fun `screenshot with fullPage option throws for TestPage`() {
         runBlocking {
             try {
-                page.screenshot(ScreenshotOptions(fullPage = true))
+                page.screenshot(fullPage = true)
             } catch (e: IllegalStateException) {
                 // Expected - TestPage does not override createScreenshotController
             }
@@ -512,7 +512,7 @@ class PageApiTest {
     fun `annotated screenshot throws for TestPage without screenshot controller`() {
         runBlocking {
             try {
-                page.screenshot(ScreenshotOptions(annotate = true))
+                page.screenshot(annotate = true)
             } catch (e: IllegalStateException) {
                 // Expected - TestPage does not override createScreenshotController
             }

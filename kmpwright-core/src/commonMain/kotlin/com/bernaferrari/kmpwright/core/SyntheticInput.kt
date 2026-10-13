@@ -1,9 +1,12 @@
 package com.bernaferrari.kmpwright.core
 
+// Input synthesized as DOM events from page JavaScript. Used where the host has no native
+// input injection: iOS WKWebView and the browser (JS) backend.
+
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.withLock
 
-internal class IOSTouch(
+internal class SyntheticTouch(
     private val controller: WebViewController,
     private val config: KmpwrightConfig = KmpwrightConfig()
 ) : Touchscreen {
@@ -27,28 +30,28 @@ internal class IOSTouch(
         }
     }
 
-    override suspend fun tap(x: Double, y: Double, options: TapOptions): Unit = config.inputAction(options.timeoutMs, "tap") {
+    override suspend fun tap(x: Double, y: Double, modifiers: Int, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "tap") {
         gesture(x, y) { delay(10) }
     }
 
-    override suspend fun longTap(x: Double, y: Double, options: LongTapOptions): Unit = config.inputAction(options.timeoutMs, "long tap") {
-        gesture(x, y) { delay(options.durationMs) }
+    override suspend fun longTap(x: Double, y: Double, durationMs: Long, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "long tap") {
+        gesture(x, y) { delay(durationMs) }
     }
 
-    override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, options: ScrollOptions): Unit = config.inputAction(options.timeoutMs, "touch scroll") {
+    override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, steps: Int, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "touch scroll") {
         gesture(x, y) {
-            val steps = options.steps.coerceAtLeast(1)
-            for (i in 1..steps) {
-                injectTouchEvent("touchmove", x + deltaX * i / steps, y + deltaY * i / steps)
+            val stepCount = steps.coerceAtLeast(1)
+            for (i in 1..stepCount) {
+                injectTouchEvent("touchmove", x + deltaX * i / stepCount, y + deltaY * i / stepCount)
                 delay(5)
             }
         }
     }
 
-    override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, options: SwipeOptions): Unit = config.inputAction(options.timeoutMs, "swipe") {
-        require(options.speed.isFinite() && options.speed > 0) { "Swipe speed must be finite and positive" }
+    override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, speed: Double, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "swipe") {
+        require(speed.isFinite() && speed > 0) { "Swipe speed must be finite and positive" }
         val distance = kotlin.math.hypot(x2 - x1, y2 - y1)
-        val steps = (distance / options.speed * 1000 / 16).toInt().coerceAtLeast(1)
+        val steps = (distance / speed * 1000 / 16).toInt().coerceAtLeast(1)
         gesture(x1, y1) {
             for (i in 1..steps) {
                 val fraction = i.toDouble() / steps
@@ -58,8 +61,8 @@ internal class IOSTouch(
         }
     }
 
-    override suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions): Unit =
-        throw KmpwrightUnsupportedException("WKWebView cannot synthesize a trusted native pinch gesture")
+    override suspend fun pinch(x: Double, y: Double, scale: Double, timeoutMs: Long?): Unit =
+        throw KmpwrightUnsupportedException("JavaScript-synthesized input cannot produce a trusted pinch gesture")
 
     private suspend fun injectTouchEvent(type: String, x: Double, y: Double) {
         lastX = x
@@ -86,22 +89,22 @@ internal class IOSTouch(
     }
 }
 
-internal class IOSMouse(
+internal class SyntheticMouse(
     private val controller: WebViewController,
     /** Resolves per-call timeouts; a null `timeoutMs` uses [TimeoutConfig.action]. */
     private val config: KmpwrightConfig = KmpwrightConfig()
 ) : Mouse {
-    private val touch = IOSTouch(controller, config)
+    private val touch = SyntheticTouch(controller, config)
     private var lastX = 0.0
     private var lastY = 0.0
     private val pressedButtons = linkedSetOf<MouseButton>()
 
-    override suspend fun move(x: Double, y: Double, options: MoveOptions) {
-        val steps = options.steps.coerceAtLeast(1)
+    override suspend fun move(x: Double, y: Double, steps: Int, timeoutMs: Long?) {
+        val stepCount = steps.coerceAtLeast(1)
         val startX = lastX
         val startY = lastY
-        for (step in 1..steps) {
-            val progress = step.toDouble() / steps.toDouble()
+        for (step in 1..stepCount) {
+            val progress = step.toDouble() / stepCount.toDouble()
             val currentX = startX + ((x - startX) * progress)
             val currentY = startY + ((y - startY) * progress)
             dispatchMoveEvent(currentX, currentY)
@@ -110,52 +113,52 @@ internal class IOSMouse(
         }
     }
 
-    override suspend fun click(x: Double, y: Double, options: MouseClickOptions) {
-        repeat(options.clickCount.coerceAtLeast(1)) { index ->
-            move(x, y, MoveOptions(timeoutMs = options.timeoutMs))
-            touch.tap(x, y, TapOptions(timeoutMs = options.timeoutMs))
-            down(MouseDownOptions(button = options.button, clickCount = index + 1))
-            if (options.delayMs > 0) {
-                delay(options.delayMs)
+    override suspend fun click(x: Double, y: Double, button: MouseButton, clickCount: Int, delayMs: Long, timeoutMs: Long?) {
+        repeat(clickCount.coerceAtLeast(1)) { index ->
+            move(x, y, timeoutMs = timeoutMs)
+            touch.tap(x, y, timeoutMs = timeoutMs)
+            down(button, index + 1)
+            if (delayMs > 0) {
+                delay(delayMs)
             }
-            up(MouseUpOptions(button = options.button))
-            dispatchMouseEvent("click", x, y, options.button, mouseButtonsBitfield(pressedButtons), index + 1)
+            up(button)
+            dispatchMouseEvent("click", x, y, button, mouseButtonsBitfield(pressedButtons), index + 1)
         }
-        if (options.clickCount == 2) {
-            dispatchMouseEvent("dblclick", x, y, options.button, mouseButtonsBitfield(pressedButtons), 2)
+        if (clickCount == 2) {
+            dispatchMouseEvent("dblclick", x, y, button, mouseButtonsBitfield(pressedButtons), 2)
         }
     }
 
-    override suspend fun dblclick(x: Double, y: Double, options: MouseClickOptions) {
-        click(x, y, options.copy(clickCount = 2))
+    override suspend fun dblclick(x: Double, y: Double, button: MouseButton, delayMs: Long, timeoutMs: Long?) {
+        click(x, y, button, 2, delayMs, timeoutMs)
     }
 
-    override suspend fun down(options: MouseDownOptions) {
-        pressedButtons.add(options.button)
+    override suspend fun down(button: MouseButton, clickCount: Int) {
+        pressedButtons.add(button)
         dispatchMouseEvent(
             type = "mousedown",
             x = lastX,
             y = lastY,
-            button = options.button,
+            button = button,
             buttons = mouseButtonsBitfield(pressedButtons),
-            detail = options.clickCount
+            detail = clickCount
         )
     }
 
-    override suspend fun up(options: MouseUpOptions) {
-        val remainingButtons = pressedButtons - options.button
+    override suspend fun up(button: MouseButton) {
+        val remainingButtons = pressedButtons - button
         dispatchMouseEvent(
             type = "mouseup",
             x = lastX,
             y = lastY,
-            button = options.button,
+            button = button,
             buttons = mouseButtonsBitfield(remainingButtons),
             detail = 0
         )
-        pressedButtons.remove(options.button)
+        pressedButtons.remove(button)
     }
 
-    override suspend fun wheel(deltaX: Double, deltaY: Double, options: WheelOptions) {
+    override suspend fun wheel(deltaX: Double, deltaY: Double, timeoutMs: Long?) {
         controller.evaluateJavaScriptAsync("""
             (function() {
                 var target = document.elementFromPoint($lastX, $lastY) || document.scrollingElement || document.documentElement || document.body;
@@ -184,23 +187,23 @@ internal class IOSMouse(
         """.trimIndent())
     }
 
-    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions): Unit =
-        config.inputAction(options.timeoutMs, "mouse drag") {
-        val timeoutMs = config.actionTimeout(options.timeoutMs)
-        move(startX, startY, MoveOptions(timeoutMs = timeoutMs))
-        down(MouseDownOptions())
-        dispatchMouseEvent("dragstart", startX, startY, MouseButton.LEFT, mouseButtonsBitfield(pressedButtons), 0)
+    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, timeoutMs: Long?): Unit =
+        config.inputAction(timeoutMs, "mouse drag") {
+        val timeout = config.actionTimeout(timeoutMs)
+        move(startX, startY, timeoutMs = timeout)
+        down()
+        dispatchMouseEvent("dragstart", startX, startY, MouseButton.Left, mouseButtonsBitfield(pressedButtons), 0)
         touch.swipe(
             x1 = startX,
             y1 = startY,
             x2 = endX,
             y2 = endY,
-            options = SwipeOptions(timeoutMs = timeoutMs)
+            timeoutMs = timeout
         )
-        move(endX, endY, MoveOptions(timeoutMs = timeoutMs))
-        dispatchMouseEvent("drop", endX, endY, MouseButton.LEFT, mouseButtonsBitfield(pressedButtons), 0)
-        up(MouseUpOptions())
-        dispatchMouseEvent("dragend", endX, endY, MouseButton.LEFT, mouseButtonsBitfield(pressedButtons), 0)
+        move(endX, endY, timeoutMs = timeout)
+        dispatchMouseEvent("drop", endX, endY, MouseButton.Left, mouseButtonsBitfield(pressedButtons), 0)
+        up()
+        dispatchMouseEvent("dragend", endX, endY, MouseButton.Left, mouseButtonsBitfield(pressedButtons), 0)
     }
 
     private suspend fun dispatchMoveEvent(x: Double, y: Double) {
@@ -268,7 +271,7 @@ internal class IOSMouse(
     }
 }
 
-internal class IOSKeyboard(
+internal class SyntheticKeyboard(
     private val controller: WebViewController,
     /** Resolves per-call timeouts; a null `timeoutMs` uses [TimeoutConfig.action]. */
     private val config: KmpwrightConfig = KmpwrightConfig()
@@ -342,8 +345,8 @@ internal class IOSKeyboard(
     private val focused = FocusedElementInput(controller, config)
 
     /** Playwright `keyboard.type`: a full key event sequence (keydown, keypress, input, keyup) per character. */
-    override suspend fun type(text: String, options: TypeOptions): Unit = config.inputAction(options.timeoutMs, "keyboard type") {
-        focused.type(text, options.delayMs)
+    override suspend fun type(text: String, delayMs: Long, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "keyboard type") {
+        focused.type(text, delayMs)
     }
 
     override suspend fun down(key: String) {
@@ -359,12 +362,12 @@ internal class IOSKeyboard(
     }
 
     /**
-     * Playwright `keyboard.press`: combinations such as `"Control+A"`/`"ControlOrMeta+A"` (Meta on iOS),
-     * default actions (text insertion, select-all, Enter, Tab, Backspace, arrows) and [PressOptions.delayMs]
+     * Playwright `keyboard.press`: combinations such as `"Control+A"`/`"ControlOrMeta+A"` (Meta on Apple platforms),
+     * default actions (text insertion, select-all, Enter, Tab, Backspace, arrows) and [delayMs]
      * between keydown and keyup. Modifiers held with [down] apply to the key.
      */
-    override suspend fun press(key: String, options: PressOptions): Unit = config.inputAction(options.timeoutMs, "keyboard press") {
-        focused.press(key, options.delayMs, pressedKeys.filter { it.isModifierKey() }.toSet())
+    override suspend fun press(key: String, delayMs: Long, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "keyboard press") {
+        focused.press(key, delayMs, pressedKeys.filter { it.isModifierKey() }.toSet())
     }
 
     internal fun isModifierPressed(key: String): Boolean = pressedKeys.contains(canonicalModifierKey(key))

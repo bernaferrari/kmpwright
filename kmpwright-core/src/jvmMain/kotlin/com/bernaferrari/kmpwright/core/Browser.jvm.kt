@@ -324,7 +324,7 @@ public actual class Browser public actual constructor(
             providerSession = session
             try {
                 if (conn == null) conn = bootstrap?.connection ?: CdpConnection(
-                    session.websocketUrl, cdpConfig.connectionTimeoutMs, proxy = config.proxy
+                    session.websocketUrl, cdpConfig.connectionTimeoutMs, proxy = cdpConfig.connectionProxy
                 )
                 if (override == null) conn.connect()
                 connection = conn
@@ -487,8 +487,7 @@ internal val detachedTeardownScope = CoroutineScope(SupervisorJob() + Dispatcher
 
 internal fun shouldHideCdpScrollbars(config: KmpwrightConfig): Boolean {
     val cdp = config.cdp ?: return false
-    if (!cdp.headless || !cdp.hideScrollbars) return false
-    return cdp.browserArgs.none { it == "--show-scrollbars" || it.startsWith("--show-scrollbars=") }
+    return cdp.hideScrollbars
 }
 
 private class CdpScreenshotController(
@@ -994,7 +993,7 @@ internal class CdpPage(
             // Downloads are only written to a known location when a download path is configured.
             val saved = directory != null && guid != null && (mode == "allow" || mode == "allowAndName")
             val completion = kotlinx.coroutines.CompletableDeferred<String?>()
-            if (saved) pendingDownloads[guid!!] = completion else completion.complete(null)
+            if (saved) pendingDownloads[guid] = completion else completion.complete(null)
             val expectedPath = if (!saved) null else if (mode == "allowAndName") "$directory/$guid" else "$directory/$suggestedFilename"
             reportDownload(Download(url, suggestedFilename, pathProvider = {
                 completion.await()?.let { reported -> reported.ifEmpty { expectedPath } }

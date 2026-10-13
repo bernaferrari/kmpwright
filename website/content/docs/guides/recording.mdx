@@ -6,8 +6,8 @@ description: Record page video with an optional cursor and contact sheet, stream
 ```kotlin
 page.requireCapabilities(PageCapability.VideoRecording, PageCapability.Tracing)
 
-page.tracing.start(TracingOptions(path = "build/trace.json"))
-page.video.start(RecordingOptions(path = "build/checkout.mp4", contactSheetPath = "build/checkout.png"))
+page.tracing.start(path = "build/trace.json")
+page.video.start("build/checkout.mp4", contactSheetPath = "build/checkout.png")
 
 page.goto("https://example.com/shop")
 page.getByRole("button", name = "Add to cart").click()
@@ -28,13 +28,13 @@ Everything on this page uses Chrome DevTools Protocol domains (`Tracing`, `Profi
 | `PageCapability.VideoRecording` | `page.video` | Unsupported | Unsupported | Supported |
 | `PageCapability.Screencast` | `page.screencast()` | Unsupported | Unsupported | Supported |
 
-On Android and iOS every call throws `UnsupportedOperationException` (for example "Tracing is unavailable on this backend"). `page.screencast()` throws when you call it, before you collect the flow.
+On Android and iOS every call throws `KmpwrightUnsupportedException` (for example "Tracing is unavailable on this backend"). `page.screencast()` throws when you call it, before you collect the flow.
 
 To fail early in shared code, check capabilities first:
 
 ```kotlin
 if (page.capabilities().supports(PageCapability.VideoRecording)) {
-    page.video.start(RecordingOptions(path = "run.mp4"))
+    page.video.start("run.mp4")
 }
 // or throw up front:
 page.requireCapabilities(PageCapability.Tracing)
@@ -46,19 +46,17 @@ See [Capabilities](/docs/platforms/capabilities).
 
 ```kotlin
 page.video.start(
-    RecordingOptions(
-        path = "build/login.webm",
-        fps = 24,
-        cursor = true,
-        contactSheetPath = "build/login-sheet.png",
-    )
+    path = "build/login.webm",
+    fps = 24,
+    cursor = true,
+    contactSheetPath = "build/login-sheet.png",
 )
 // ... drive the page ...
 val result = page.video.stop()
 result.contactFrames.forEach { println("frame ${it.index} at ${it.timestampMs} ms") }
 ```
 
-`page.video.start(options)` records the page to a video file until `page.video.stop()` (agent-browser `record`). Recording is video only, without audio.
+`page.video.start(path, ...)` records the page to a video file until `page.video.stop()` (agent-browser `record`). Recording is video only, without audio.
 
 <Callout type="info">
 Encoding needs an `ffmpeg` executable on the JVM host. `start` runs `ffmpeg -version` and a short test encode first, and throws `KmpwrightException("ffmpeg is required before recording: …")` when it is missing. Point `ffmpegExecutable` at a full path if `ffmpeg` is not on `PATH`.
@@ -80,7 +78,7 @@ Encoding needs an `ffmpeg` executable on the JVM host. `start` runs `ffmpeg -ver
   }}
 />
 
-Invalid values throw `IllegalArgumentException` when you construct `RecordingOptions`.
+Out-of-range values make `start` throw `IllegalArgumentException`.
 
 `page.video.stop()` returns:
 
@@ -127,13 +125,13 @@ Experimental. The frame stream may change.
 </Callout>
 
 ```kotlin
-page.screencast(ScreencastOptions(maxFps = 10, quality = 70)).collect { frame ->
+page.screencast(maxFps = 10, quality = 70).collect { frame ->
     // frame.bytes is a JPEG
     preview.update(frame.bytes)
 }
 ```
 
-`page.screencast(options): Flow<ScreencastFrame>` streams JPEG frames of the page (agent-browser `screencast`). The flow is cold: each collector attaches its own CDP session and starts `Page.startScreencast`; cancelling the collector stops it.
+`page.screencast(maxFps = 30, quality = 80, maxWidth = 1920, maxHeight = 1080): Flow<ScreencastFrame>` streams JPEG frames of the page (agent-browser `screencast`). The flow is cold: each collector attaches its own CDP session and starts `Page.startScreencast`; cancelling the collector stops it.
 
 The flow is conflated: when your collector is slower than the page, intermediate frames are dropped and you always get the latest one. Chromium only emits frames when something changes, so a static page produces few frames; `maxFps` limits delivery and never adds duplicate frames.
 
@@ -153,7 +151,7 @@ The flow fails with `KmpwrightException` when the page crashes, its session deta
 ## Tracing
 
 ```kotlin
-page.tracing.start(TracingOptions(screenshots = true, path = "build/trace.json"))
+page.tracing.start(screenshots = true, path = "build/trace.json")
 page.goto("https://example.com")
 val json: ByteArray? = page.tracing.stop()
 ```

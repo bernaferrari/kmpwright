@@ -16,5 +16,5 @@ suspend fun verifyBrowserFeatureApi(page: com.bernaferrari.kmpwright.core.Page) 
     page.webMcp.invoke("greet", input, waitForResult = false)
     page.network.startHar()
     println(page.network.stopHar())
-    page.read(options = com.bernaferrari.kmpwright.core.ReadOptions(raw = true))
+    page.read(raw = true)
 }

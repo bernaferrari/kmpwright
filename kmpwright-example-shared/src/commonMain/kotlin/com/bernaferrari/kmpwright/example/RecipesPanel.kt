@@ -15,6 +15,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,7 +31,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -58,7 +62,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.decodeToImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -68,17 +71,6 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-/** Each recipe gets its own expressive shape so the grid reads at a glance. */
-@Composable
-private fun recipeShape(index: Int): Shape = when (index % 6) {
-    0 -> MaterialShapes.Cookie9Sided
-    1 -> MaterialShapes.Clover4Leaf
-    2 -> MaterialShapes.Sunny
-    3 -> MaterialShapes.SoftBurst
-    4 -> MaterialShapes.Cookie6Sided
-    else -> MaterialShapes.Pill
-}.toShape()
 
 @Composable
 internal fun RecipesPanel(state: StudioState, onRunStarted: () -> Unit, modifier: Modifier = Modifier) {
@@ -111,17 +103,38 @@ internal fun RecipeDetailPanel(state: StudioState, recipe: Recipe, modifier: Mod
     Box(modifier) { RecipeDetail(state, recipe, onBack = null, onRunStarted = {}) }
 }
 
+/** Recipes that show the agent side of KMPwright; the rest teach the Playwright-style API. */
+private val agentRecipeIds = setOf("agent", "read", "audit")
+
+/** Expressive shapes and tonal colors rotate so neighbouring cards never look alike. */
+private val recipeShapes = listOf(
+    MaterialShapes.Cookie9Sided, MaterialShapes.Clover4Leaf, MaterialShapes.Sunny,
+    MaterialShapes.SoftBurst, MaterialShapes.Cookie6Sided, MaterialShapes.Flower, MaterialShapes.Puffy,
+)
+
+private enum class RecipeTone { Primary, Secondary, Tertiary }
+
+@Composable
+private fun recipeToneColors(tone: RecipeTone) = when (tone) {
+    RecipeTone.Primary -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+    RecipeTone.Secondary -> MaterialTheme.colorScheme.secondaryContainer to MaterialTheme.colorScheme.onSecondaryContainer
+    RecipeTone.Tertiary -> MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
+}
+
 @Composable
 private fun RecipeGrid(onOpen: (Recipe) -> Unit, modifier: Modifier = Modifier) {
+    val hero = recipes.first { it.id == "agent" }
+    val forAgents = recipes.filter { it.id in agentRecipeIds && it != hero }
+    val basics = recipes.filter { it.id !in agentRecipeIds }
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 156.dp),
+        columns = GridCells.Adaptive(minSize = 168.dp),
         modifier = modifier,
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
-            Column(Modifier.padding(start = 4.dp, top = 4.dp, bottom = 6.dp)) {
+            Column(Modifier.padding(start = 4.dp, top = 4.dp)) {
                 Text("Recipes", style = MaterialTheme.typography.headlineSmallEmphasized)
                 Text(
                     "Runnable scripts that drive the page above. Read the code, press run, watch it happen.",
@@ -130,33 +143,112 @@ private fun RecipeGrid(onOpen: (Recipe) -> Unit, modifier: Modifier = Modifier) 
                 )
             }
         }
-        items(recipes, key = { it.id }) { recipe ->
-            val index = recipes.indexOf(recipe)
-            val hero = index == 0
+        item(span = { GridItemSpan(maxLineSpan) }, key = hero.id) { HeroRecipeCard(hero) { onOpen(hero) } }
+        item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("For agents") }
+        itemsIndexed(forAgents, key = { _, recipe -> recipe.id }) { index, recipe ->
+            RecipeCard(recipe, recipeShapes[(index + 1) % recipeShapes.size], RecipeTone.entries[(index + 1) % 3]) { onOpen(recipe) }
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Playwright basics") }
+        itemsIndexed(basics, key = { _, recipe -> recipe.id }) { index, recipe ->
+            RecipeCard(recipe, recipeShapes[(index + 3) % recipeShapes.size], RecipeTone.entries[index % 3]) { onOpen(recipe) }
+        }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text,
+        modifier = Modifier.padding(start = 4.dp, top = 12.dp),
+        style = MaterialTheme.typography.titleSmallEmphasized,
+        color = MaterialTheme.colorScheme.primary,
+    )
+}
+
+@Composable
+private fun StepCount(count: Int, container: androidx.compose.ui.graphics.Color, content: androidx.compose.ui.graphics.Color) {
+    Surface(shape = CircleShape, color = container, contentColor = content) {
+        Text(
+            if (count == 1) "1 step" else "$count steps",
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
+}
+
+/** The headline recipe: full width, bold color, and the agent loop spelled out. */
+@Composable
+private fun HeroRecipeCard(recipe: Recipe, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(
-                onClick = { onOpen(recipe) },
-                shape = MaterialTheme.shapes.extraLarge,
-                color = if (hero) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                contentColor = if (hero) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 156.dp),
+                modifier = Modifier.size(72.dp),
+                shape = MaterialShapes.Cookie9Sided.toShape(),
+                color = MaterialTheme.colorScheme.onPrimary,
+                contentColor = MaterialTheme.colorScheme.primary,
             ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Surface(
-                        modifier = Modifier.size(48.dp),
-                        shape = recipeShape(index),
-                        color = if (hero) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = if (hero) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
-                    ) {
-                        Box(contentAlignment = Alignment.Center) { Icon(recipe.icon, contentDescription = null) }
-                    }
-                    Text(recipe.title, style = MaterialTheme.typography.titleMediumEmphasized)
-                    Text(
-                        recipe.summary,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (hero) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Box(contentAlignment = Alignment.Center) { Icon(recipe.icon, contentDescription = null, modifier = Modifier.size(34.dp)) }
             }
+            Column(Modifier.weight(1f).padding(start = 18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(recipe.title, style = MaterialTheme.typography.titleLargeEmphasized)
+                Text(recipe.summary, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "snapshot -i  →  click @e3  →  snapshot",
+                    modifier = Modifier.padding(top = 4.dp),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecipeCard(recipe: Recipe, shape: androidx.graphics.shapes.RoundedPolygon, tone: RecipeTone, onClick: () -> Unit) {
+    val (container, onContainer) = recipeToneColors(tone)
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth().height(200.dp),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Surface(
+                    modifier = Modifier.size(52.dp),
+                    shape = shape.toShape(),
+                    color = container,
+                    contentColor = onContainer,
+                ) {
+                    Box(contentAlignment = Alignment.Center) { Icon(recipe.icon, contentDescription = null) }
+                }
+                Spacer(Modifier.weight(1f))
+                StepCount(recipe.steps.size, MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.weight(1f))
+            Text(recipe.title, style = MaterialTheme.typography.titleMediumEmphasized, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                recipe.summary,
+                modifier = Modifier.padding(top = 2.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -210,6 +302,7 @@ private fun RecipeDetail(state: StudioState, recipe: Recipe, onBack: (() -> Unit
                 val failed = runs.any { it.state == StepState.Failed }
                 val outcome = Activity(if (failed) "${recipe.title} failed — open the sheet for details" else "${recipe.title} finished", done = !failed)
                 state.activity = outcome
+                state.releasePageKeyboard()
                 state.refreshRefs()
                 delay(4_000)
                 if (state.activity == outcome) state.activity = null

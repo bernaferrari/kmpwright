@@ -65,3 +65,10 @@ internal actual fun readNativeScroll(platformContext: PlatformContext): NativeSc
     if (webView.width == 0) return null
     return NativeScroll(webView.scrollX.toFloat(), webView.scrollY.toFloat(), webView.width.toFloat())
 }
+
+internal actual fun releaseWebViewKeyboard(platformContext: PlatformContext) {
+    val webView = (platformContext as AndroidPlatformContext).webView ?: return
+    if (!webView.hasFocus()) return
+    val imm = webView.context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+    imm.hideSoftInputFromWindow(webView.windowToken, 0)
+}

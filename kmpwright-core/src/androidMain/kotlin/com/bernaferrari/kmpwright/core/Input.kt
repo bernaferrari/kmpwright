@@ -22,7 +22,7 @@ internal class AndroidTouch(
 ) : Touchscreen {
     private val webView: WebView = controller.getWebView()
 
-    override suspend fun tap(x: Double, y: Double, options: TapOptions): Unit = config.inputAction(options.timeoutMs, "tap") {
+    override suspend fun tap(x: Double, y: Double, modifiers: Int, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "tap") {
         press(x, y, 10)
     }
 
@@ -35,21 +35,21 @@ internal class AndroidTouch(
         dispatchTouch(MotionEvent.ACTION_UP, transform.x(x), transform.y(y), downTime)
     }
 
-    override suspend fun longTap(x: Double, y: Double, options: LongTapOptions) {
+    override suspend fun longTap(x: Double, y: Double, durationMs: Long, timeoutMs: Long?) {
         val transform = webView.cssToViewTransform()
         val downTime = SystemClock.uptimeMillis()
         dispatchTouch(MotionEvent.ACTION_DOWN, transform.x(x), transform.y(y), downTime)
-        delay(options.durationMs)
+        delay(durationMs)
         dispatchTouch(MotionEvent.ACTION_UP, transform.x(x), transform.y(y), downTime)
     }
 
-    override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, options: ScrollOptions) {
+    override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, steps: Int, timeoutMs: Long?) {
         val transform = webView.cssToViewTransform()
         val downTime = SystemClock.uptimeMillis()
-        val steps = options.steps.coerceAtLeast(1)
+        val stepCount = steps.coerceAtLeast(1)
         dispatchTouch(MotionEvent.ACTION_DOWN, transform.x(x), transform.y(y), downTime)
-        for (step in 1..steps) {
-            val progress = step.toDouble() / steps
+        for (step in 1..stepCount) {
+            val progress = step.toDouble() / stepCount
             dispatchTouch(
                 MotionEvent.ACTION_MOVE,
                 transform.x(x + (deltaX * progress)),
@@ -61,12 +61,12 @@ internal class AndroidTouch(
         dispatchTouch(MotionEvent.ACTION_UP, transform.x(x + deltaX), transform.y(y + deltaY), downTime)
     }
 
-    override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, options: SwipeOptions) {
+    override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, speed: Double, timeoutMs: Long?) {
         val transform = webView.cssToViewTransform()
         val dx = x2 - x1
         val dy = y2 - y1
         val distance = sqrt((dx * dx) + (dy * dy))
-        val durationMs = ((distance / options.speed.coerceAtLeast(1.0)) * 1000.0).toLong().coerceAtLeast(16L)
+        val durationMs = ((distance / speed.coerceAtLeast(1.0)) * 1000.0).toLong().coerceAtLeast(16L)
         val steps = (durationMs / 16L).coerceAtLeast(1L).toInt()
         val downTime = SystemClock.uptimeMillis()
 
@@ -84,7 +84,7 @@ internal class AndroidTouch(
         dispatchTouch(MotionEvent.ACTION_UP, transform.x(x2), transform.y(y2), downTime)
     }
 
-    override suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions) {
+    override suspend fun pinch(x: Double, y: Double, scale: Double, timeoutMs: Long?) {
         onMain {
             webView.zoomBy(scale.toFloat().coerceIn(0.01f, 100f))
         }
@@ -125,7 +125,7 @@ internal class AndroidMouse(
     private val webView: WebView = controller.getWebView()
     private val touch = AndroidTouch(controller, config)
 
-    override suspend fun move(x: Double, y: Double, options: MoveOptions) {
+    override suspend fun move(x: Double, y: Double, steps: Int, timeoutMs: Long?) {
         controller.evaluateJavaScript(
             """
             (function() {
@@ -145,53 +145,54 @@ internal class AndroidMouse(
         ) { }
     }
 
-    /** Playwright semantics: [MouseClickOptions.delayMs] is the time between press and release (and between clicks). */
-    override suspend fun click(x: Double, y: Double, options: MouseClickOptions): Unit = config.inputAction(options.timeoutMs, "mouse click") {
-        val clicks = options.clickCount.coerceAtLeast(1)
-        repeat(clicks) { index ->
-            if (index > 0 && options.delayMs > 0) delay(options.delayMs)
-            touch.press(x, y, options.delayMs)
+    /** Playwright semantics: [delayMs] is the time between press and release (and between clicks). */
+    override suspend fun click(x: Double, y: Double, button: MouseButton, clickCount: Int, delayMs: Long, timeoutMs: Long?): Unit =
+        config.inputAction(timeoutMs, "mouse click") {
+            val clicks = clickCount.coerceAtLeast(1)
+            repeat(clicks) { index ->
+                if (index > 0 && delayMs > 0) delay(delayMs)
+                touch.press(x, y, delayMs)
+            }
         }
+
+    override suspend fun dblclick(x: Double, y: Double, button: MouseButton, delayMs: Long, timeoutMs: Long?) {
+        click(x, y, button, 2, delayMs, timeoutMs)
     }
 
-    override suspend fun dblclick(x: Double, y: Double, options: MouseClickOptions) {
-        click(x, y, options.copy(clickCount = 2))
-    }
-
-    override suspend fun down(options: MouseDownOptions) {
+    override suspend fun down(button: MouseButton, clickCount: Int) {
         controller.evaluateJavaScript(
             """
             document.dispatchEvent(new MouseEvent('mousedown', {
                 bubbles: true,
                 cancelable: true,
-                button: ${options.button.ordinal}
+                button: ${button.ordinal}
             }))
             """.trimIndent()
         ) { }
     }
 
-    override suspend fun up(options: MouseUpOptions) {
+    override suspend fun up(button: MouseButton) {
         controller.evaluateJavaScript(
             """
             document.dispatchEvent(new MouseEvent('mouseup', {
                 bubbles: true,
                 cancelable: true,
-                button: ${options.button.ordinal}
+                button: ${button.ordinal}
             }))
             """.trimIndent()
         ) { }
     }
 
     /** Deltas are CSS pixels. */
-    override suspend fun wheel(deltaX: Double, deltaY: Double, options: WheelOptions) {
+    override suspend fun wheel(deltaX: Double, deltaY: Double, timeoutMs: Long?) {
         val transform = webView.cssToViewTransform()
         onMain {
             webView.scrollBy(transform.length(deltaX).roundToInt(), transform.length(deltaY).roundToInt())
         }
     }
 
-    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions): Unit =
-        config.inputAction(options.timeoutMs, "mouse drag") {
+    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, timeoutMs: Long?): Unit =
+        config.inputAction(timeoutMs, "mouse drag") {
         touch.swipe(startX, startY, endX, endY)
     }
 }
@@ -219,8 +220,8 @@ internal class AndroidKeyboard(
      * Playwright `keyboard.type`: keydown, keypress, beforeinput, input and keyup for every character,
      * sent to the focused element in the renderer (an IME [insertText] has no key events).
      */
-    override suspend fun type(text: String, options: TypeOptions): Unit = config.inputAction(options.timeoutMs, "keyboard type") {
-        focused.type(text, options.delayMs)
+    override suspend fun type(text: String, delayMs: Long, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "keyboard type") {
+        focused.type(text, delayMs)
     }
 
     override suspend fun down(key: String) {
@@ -271,12 +272,12 @@ internal class AndroidKeyboard(
 
     /**
      * Playwright `keyboard.press`: modifiers of a combination go down in order, then the key,
-     * [PressOptions.delayMs], key up and modifiers up in reverse. Named keys (Enter, Tab, Backspace,
+     * [delayMs], key up and modifiers up in reverse. Named keys (Enter, Tab, Backspace,
      * arrows...) are native [KeyEvent]s; characters and shortcuts with Control/Meta/Alt (`"Control+A"`,
      * `"ControlOrMeta+A"` = Control on Android) use the page runtime's synthetic key sequence, which
      * inserts the character or applies the shortcut's editing default (select-all).
      */
-    override suspend fun press(key: String, options: PressOptions): Unit = config.inputAction(options.timeoutMs, "keyboard press") {
+    override suspend fun press(key: String, delayMs: Long, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "keyboard press") {
         val (mainKey, modifiers) = parseKeyCombination(key)
         val held = pressedKeys.filter { it.isModifierKey() }.toSet()
         val shortcut = (modifiers + held).any { it == KeyboardModifiers.CONTROL || it == KeyboardModifiers.META || it == KeyboardModifiers.ALT }
@@ -284,7 +285,7 @@ internal class AndroidKeyboard(
             // Injected KeyEvents neither run editing shortcuts (Ctrl+A) nor reliably insert characters into
             // an editor focused from script (the IME connection may still point at another editor): use the
             // same synthetic sequence as Locator.press, which applies the default action of the key.
-            focused.press(key, options.delayMs, held)
+            focused.press(key, delayMs, held)
             return@inputAction
         }
         val acquired = mutableListOf<String>()
@@ -294,7 +295,7 @@ internal class AndroidKeyboard(
             }
             down(mainKey)
             acquired += mainKey
-            if (options.delayMs > 0) delay(options.delayMs)
+            if (delayMs > 0) delay(delayMs)
         } finally {
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { acquired.asReversed().forEach { up(it) } }
         }

@@ -21,7 +21,7 @@ All types are immutable data classes; use `copy(...)` to derive variants. Source
 <TypeTable
   type={{
     allowedOriginRules: { type: 'Set<String>', description: 'Origins pages may navigate to. Empty allows every origin. See "allowedOriginRules" below.', default: 'emptySet()' },
-    installMode: { type: 'InstallMode', description: 'Whether KMPwright may install its in-page runtime (selector engines, actionability checks). Only Disabled changes behavior; see below.', default: 'InstallMode.DocumentStartPreferred' },
+    installMode: { type: 'InstallMode', description: 'Whether KMPwright may install its in-page runtime (selector engines, actionability checks, refs).', default: 'InstallMode.Automatic' },
     inputMode: { type: 'InputMode', description: 'How input is delivered: JsOnly, TouchOnly or Hybrid. See below.', default: 'InputMode.Hybrid' },
     timeouts: { type: 'TimeoutConfig', description: 'Defaults used whenever a per-call timeoutMs is null.', default: 'TimeoutConfig()' },
     debug: { type: 'DebugConfig', description: 'Debug switches; only debug.enabled is enforced by the core.', default: 'DebugConfig()' },
@@ -29,12 +29,11 @@ All types are immutable data classes; use `copy(...)` to derive variants. Source
     strictSelectors: { type: 'Boolean', description: 'Single-element locator operations fail when the selector matches more than one element ("Strict mode violation"), like Playwright. Set false to act on the first match.', default: 'true' },
     allowEval: { type: 'Boolean', description: 'When false, page.evaluate, waitForFunction, locator.evaluate, addScriptTag and other arbitrary-script APIs throw "JavaScript evaluation is disabled…".', default: 'true' },
     allowDomExtraction: { type: 'Boolean', description: 'When false, APIs that return page content throw "DOM extraction is disabled…": content(), snapshots, HAR capture, response bodies, page.read and HttpReader, WebMCP context.', default: 'true' },
-    enableTraceExport: { type: 'Boolean', description: 'When false, page.tracing.start(TracingOptions(path = …)) throws "Trace export is disabled by KmpwrightConfig.enableTraceExport". Traces returned in memory by stop() are still allowed. JVM only.', default: 'true' },
+    enableTraceExport: { type: 'Boolean', description: 'When false, page.tracing.start(path = …) throws "Trace export is disabled by KmpwrightConfig.enableTraceExport". Traces returned in memory by stop() are still allowed. JVM only.', default: 'true' },
     viewport: { type: 'Viewport?', description: 'Applied to pages KMPwright creates. Android: size of managed WebViews in CSS pixels. iOS: frame of created WKWebViews (1280x800 when null). JVM: full device metrics (size, scale factor, mobile, touch) of new pages, windows and context pages. Never applied to a host-provided web view or an attached CDP tab.', default: 'null' },
     userAgent: { type: 'String?', description: 'User agent applied when a page is created: every Android WebView and iOS WKWebView KMPwright drives (including a host-provided one), and new JVM pages. Use page.setUserAgent to change it later.', default: 'null' },
     iosSchemeInterception: { type: 'IosSchemeInterceptionConfig?', description: 'Registers a custom URL scheme handler on WKWebViews KMPwright creates, so documents and subresources under that scheme go through page.route. Ignored for host-provided web views.', default: 'null' },
     cdp: { type: 'CdpConfig?', description: 'How the JVM backend connects to Chromium. Required on the JVM unless you use launchBrowser, which sets it.', default: 'null' },
-    proxy: { type: 'ProxyConfig?', description: 'JVM only: HTTP proxy for KMPwright\'s own CDP WebSocket connection. It does not proxy the browser\'s traffic.', default: 'null' },
   }}
 />
 
@@ -53,8 +52,7 @@ This is a configuration-time origin allowlist. For agent-browser's `--allowed-do
 
 | Value | Effect |
 |---|---|
-| `DocumentStartPreferred` (default) | The runtime is installed on demand. |
-| `AlwaysEvaluate` | Same as `DocumentStartPreferred` in the current implementation. |
+| `Automatic` (default) | Installed at document start where the platform allows it, and on demand otherwise. |
 | `Disabled` | Locators, `getBy*`, snapshots and other APIs that need the runtime throw "Selector helpers are disabled by KmpwrightConfig.installMode". |
 
 ### `InputMode`
@@ -109,9 +107,8 @@ JVM only. See [JVM](/docs/platforms/jvm) for connection details.
     websocketUrl: { type: 'String?', description: 'A ws:// or wss:// CDP endpoint, or an http(s):// DevTools endpoint that KMPwright resolves through /json/version or /json/list (the query string is kept). Takes precedence over provider.', default: 'null' },
     provider: { type: 'CloudProvider?', description: 'Create a session with a cloud provider, or AutoConnect to a local Chrome. Credentials come from environment variables.', default: 'null' },
     connectionTimeoutMs: { type: 'Long', description: 'Connect timeout of the CDP WebSocket (and its HTTP client).', default: '30_000' },
-    browserArgs: { type: 'List<String>', description: 'Not passed to any browser. KMPwright only checks it for --show-scrollbars, which disables scrollbar hiding. Use BrowserLaunchOptions.arguments to pass Chromium flags.', default: 'emptyList()' },
-    headless: { type: 'Boolean', description: 'Tells KMPwright the remote browser is headless. It does not launch or reconfigure anything; it only enables hideScrollbars.', default: 'true' },
-    hideScrollbars: { type: 'Boolean', description: 'Hide native scrollbars in screenshots when headless is true, for stable images.', default: 'true' },
+    connectionProxy: { type: 'ProxyConfig?', description: 'Proxy for KMPwright\'s own DevTools WebSocket to a remote or cloud browser (for networks that only reach the provider through a proxy). It does not change how the browser loads pages; use launchBrowser(proxy = …) for that.', default: 'null' },
+    hideScrollbars: { type: 'Boolean', description: 'Hide native scrollbars in screenshots for stable images, like Playwright\'s headless screenshots. launchBrowser turns it off for headed launches and when arguments contain --show-scrollbars.', default: 'true' },
     remoteBrowserSharesFileSystem: { type: 'Boolean', description: 'Allow file uploads through an explicit CDP endpoint or cloud provider only when Chromium can read the same absolute paths as the JVM. launchBrowser enables this for its local process. This does not transfer files.', default: 'false' },
   }}
 />
@@ -130,18 +127,26 @@ Every optional variable is listed on the [JVM page](/docs/platforms/jvm#cloud-pr
 
 ## `ProxyConfig`
 
-JVM only. KMPwright uses `host` and `port` as the HTTP proxy for its own WebSocket connection to the CDP endpoint (useful when a cloud provider is only reachable through a proxy). It does not configure the browser's proxy; pass `--proxy-server=…` in `BrowserLaunchOptions.arguments` for that.
+An HTTP or SOCKS proxy, shaped like Playwright's `proxy` option. JVM only. It is used in two places:
+
+- `launchBrowser(path, proxy = …)` routes the launched browser's traffic (Playwright: `chromium.launch({ proxy })`). KMPwright passes `--proxy-server` and `--proxy-bypass-list`.
+- `CdpConfig.connectionProxy` routes only KMPwright's WebSocket to a remote or cloud browser.
+
+```kotlin
+val launched = launchBrowser(
+    chromePath,
+    proxy = ProxyConfig("http://proxy.example.com:3128", bypass = listOf("localhost", "*.internal.example.com")),
+)
+```
 
 <TypeTable
   type={{
-    url: { type: 'String', description: 'Proxy URL, for example "http://proxy.example.com:8080".', required: true },
-    bypass: { type: 'List<String>', description: 'Not used by the current implementation.', default: 'emptyList()' },
-    username: { type: 'String?', description: 'Not used by the current implementation.', default: 'null' },
-    password: { type: 'String?', description: 'Not used by the current implementation. Never printed by toString().', default: 'null' },
+    server: { type: 'String', description: 'Proxy URL such as "http://proxy.example.com:3128" or "socks5://proxy:1080". Credentials in the URL are rejected.', required: true },
+    bypass: { type: 'List<String>', description: 'Hosts that skip the proxy. "*.example.com" matches example.com and its subdomains.', default: 'emptyList()' },
   }}
 />
 
-Derived properties: `host` (the URL's host), `port` (default 8080), `scheme` (default `"http"`). `toString()` masks the password and credentials embedded in the URL.
+Proxy authentication is not supported (Playwright\'s `username`/`password`), because Chromium does not accept credentials in its proxy flags. Use an unauthenticated proxy or a local forwarding proxy that adds credentials. Android WebView and WKWebView have no per-page proxy: on Android, `androidx.webkit.ProxyController` sets a process-wide override.
 
 ## `Viewport`
 
@@ -204,4 +209,4 @@ Failures throw `KmpwrightException`: "Action denied by policy: Click", "Action N
 ## Related
 
 - [Errors](/docs/reference/errors)
-- [JVM](/docs/platforms/jvm) for `BrowserLaunchOptions`.
+- [JVM](/docs/platforms/jvm) for `launchBrowser` parameters.

@@ -33,7 +33,7 @@ class IOSReliabilityProbe {
                     check(page.locator("text=Unique text").getAttribute("id") == "nested") { "Nested text identity" }
 
                     step = "2/5 link navigation"; progress(step)
-                    val navigation = async(start = CoroutineStart.UNDISPATCHED) { page.waitForNavigation(WaitForNavigationOptions(timeoutMs = 3_000)) }
+                    val navigation = async(start = CoroutineStart.UNDISPATCHED) { page.waitForNavigation(timeoutMs = 3_000) }
                     page.locator("a").click()
                     check(navigation.await()?.url == "$baseUrl/next")
                     check(page.url.value == "$baseUrl/next")
@@ -80,7 +80,7 @@ class IOSReliabilityProbe {
                     check(page.localStorage.entries().isEmpty() && page.sessionStorage.entries().isEmpty())
 
                     step = "5/5 native PDF and context clearing"; progress(step)
-                    val pdf = page.pdf(PdfOptions(format = PdfFormat.Content, margin = PdfMargin("0", "0", "0", "0")))
+                    val pdf = page.pdf(format = PdfFormat.Content, margin = PdfMargin("0", "0", "0", "0"))
                     check(pdf.bytes.take(4).toByteArray().decodeToString() == "%PDF")
                     val context = browser.newContext()
                     try {

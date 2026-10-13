@@ -43,7 +43,7 @@ class CdpNativeEmulationBrowserTest {
             exchange.responseBody.use { it.write(body) }
         }
         server.start()
-        val launched = launchBrowser(BrowserLaunchOptions(executable!!))
+        val launched = launchBrowser(executable!!)
         try {
             block(launched.browser.newPage(), "http://127.0.0.1:${server.address.port}")
         } finally {

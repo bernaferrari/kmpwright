@@ -25,7 +25,9 @@ class CdpConsistencyBrowserTest {
 
     @Test
     fun `fullPage and clip are mutually exclusive like Playwright`() {
-        val error = assertFailsWith<IllegalArgumentException> { ScreenshotOptions(fullPage = true, clip = Rectangle(0.0, 0.0, 1.0, 1.0)) }
+        val error = assertFailsWith<IllegalArgumentException> {
+            runBlocking { TestPage().screenshot(fullPage = true, clip = Rectangle(0.0, 0.0, 1.0, 1.0)) }
+        }
         assertEquals("fullPage and clip are mutually exclusive", error.message)
     }
 
@@ -82,7 +84,7 @@ class CdpConsistencyBrowserTest {
         try {
             page.setContent("<div id=frames><iframe srcdoc='<button>First</button>'></iframe><iframe srcdoc='<button>Second</button>'></iframe></div>")
             for (frame in listOf(page.frameLocator("iframe"), page.locator("#frames").frameLocator("iframe"))) {
-                val error = assertFailsWith<KmpwrightException> { frame.locator("button").click(ClickOptions(timeoutMs = 300)) }
+                val error = assertFailsWith<KmpwrightException> { frame.locator("button").click(timeoutMs = 300) }
                 assertTrue(error.message!!, error.message!!.contains("Strict", ignoreCase = true))
             }
             assertEquals("Second", page.frameLocator("iframe:nth-of-type(2)").locator("button").innerText())
@@ -133,7 +135,7 @@ class CdpConsistencyBrowserTest {
             exchange.responseBody.use { it.write(body) }
         }
         server.start()
-        val launched = launchBrowser(BrowserLaunchOptions(executable!!), config)
+        val launched = launchBrowser(executable!!, config = config)
         try {
             block(launched.browser, "http://127.0.0.1:${server.address.port}")
         } finally {
@@ -161,14 +163,14 @@ class CdpConsistencyBrowserTest {
 
         // A page clip is viewport-relative even when the document is scrolled.
         page.evaluate("window.scrollTo(0, 3100)")
-        val clip = ImageIO.read(ByteArrayInputStream(page.screenshot(ScreenshotOptions(clip = Rectangle(10.0, 10.0, 20.0, 20.0))).bytes))
+        val clip = ImageIO.read(ByteArrayInputStream(page.screenshot(clip = Rectangle(10.0, 10.0, 20.0, 20.0)).bytes))
         assertEquals(0x00FF00, clip.getRGB(10, 10) and 0xFFFFFF)
-        assertFailsWith<KmpwrightException> { page.screenshot(ScreenshotOptions(clip = Rectangle(1000.0, 1000.0, 10.0, 10.0))) }
+        assertFailsWith<KmpwrightException> { page.screenshot(clip = Rectangle(1000.0, 1000.0, 10.0, 10.0)) }
 
         // JPEG and WEBP element screenshots are honored; WEBP cannot be diffed on the JVM.
-        val jpeg = page.locator("#target").screenshot(ScreenshotOptions(format = ScreenshotFormat.JPEG, quality = 50))
+        val jpeg = page.locator("#target").screenshot(format = ScreenshotFormat.Jpeg, quality = 50)
         assertEquals("JPEG", imageFormatOf(jpeg.bytes))
-        val webp = page.locator("#target").screenshot(ScreenshotOptions(format = ScreenshotFormat.WEBP))
+        val webp = page.locator("#target").screenshot(format = ScreenshotFormat.Webp)
         assertEquals("WEBP", imageFormatOf(webp.bytes))
         assertFailsWith<KmpwrightException> { page.visualDiff(webp, webp) }
     }
@@ -286,7 +288,7 @@ class CdpConsistencyBrowserTest {
         val page = browser.newPage()
         page.setContent("<p>PDF</p>")
         assertTrue(page.pdf().bytes.decodeToString(0, 5) == "%PDF-")
-        assertTrue(page.pdf(PdfOptions(timeoutMs = 20_000)).bytes.isNotEmpty())
+        assertTrue(page.pdf(timeoutMs = 20_000).bytes.isNotEmpty())
     }
 
     @Test
@@ -296,9 +298,9 @@ class CdpConsistencyBrowserTest {
         assumeTrue("ffmpeg is required for video recording", ffmpeg)
         page.setContent("<p>video</p>")
         val dir = java.nio.file.Files.createTempDirectory("kmpwright-video")
-        page.video.start(RecordingOptions(path = dir.resolve("a.webm").toString()))
+        page.video.start(path = dir.resolve("a.webm").toString())
         try {
-            val error = assertFailsWith<KmpwrightException> { page.video.start(RecordingOptions(path = dir.resolve("b.webm").toString())) }
+            val error = assertFailsWith<KmpwrightException> { page.video.start(path = dir.resolve("b.webm").toString()) }
             assertTrue(error.message!!.contains("already active"))
         } finally {
             runCatching { page.video.stop() }

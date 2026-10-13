@@ -37,7 +37,7 @@ class HttpReaderTest {
             else -> request.respond("<h1>HTML</h1>", "text/html")
         } }.use { fixture ->
             assertEquals("# Negotiated", HttpReader().read(fixture.base + "/negotiated").content)
-            val fallback = HttpReader().read(fixture.base + "/page", ReadOptions(requireMarkdown = true))
+            val fallback = HttpReader().read(fixture.base + "/page", requireMarkdown = true)
             assertEquals("markdown-url", fallback.source)
             assertEquals(fixture.base + "/page.md", fallback.finalUrl)
             assertEquals("# Fallback", fallback.content)
@@ -47,7 +47,7 @@ class HttpReaderTest {
     @Test fun `explicit accept suppresses negotiation fallbacks`() = runBlocking {
         val attempts = mutableListOf<String>()
         Fixture { request -> attempts += request.requestURI.path; request.respond("<h1>HTML &amp; entities</h1><script>hidden()</script>", "text/html") }.use { fixture ->
-            val result = HttpReader().read(fixture.base + "/page", ReadOptions(headers = mapOf("aCcEpT" to "text/html")))
+            val result = HttpReader().read(fixture.base + "/page", headers = mapOf("aCcEpT" to "text/html"))
             assertEquals(listOf("/page"), attempts)
             assertEquals("# HTML & entities", result.content)
             assertFalse(result.content.contains("hidden"))
@@ -62,10 +62,10 @@ class HttpReaderTest {
             "/guide/start" -> request.respond("<h1>Shell</h1>", "text/html")
             else -> request.respond("Missing", "text/plain", 404)
         } }.use { fixture ->
-            val result = HttpReader().read(fixture.base + "/guide/start", ReadOptions(requireMarkdown = true))
+            val result = HttpReader().read(fixture.base + "/guide/start", requireMarkdown = true)
             assertEquals("llms-link", result.source)
             assertTrue(result.content.contains("Use Kotlin"))
-            val index = HttpReader().read(fixture.base + "/guide/start", ReadOptions(llms = LlmsReadMode.Index, filter = "Start"))
+            val index = HttpReader().read(fixture.base + "/guide/start", llms = LlmsReadMode.Index, filter = "Start")
             assertTrue(index.content.contains(fixture.base + "/guide/content-start.md"))
             assertFalse(index.content.contains("Wrong"))
             assertFalse(index.content.contains("[Other]"))
@@ -95,7 +95,7 @@ class HttpReaderTest {
                 request.responseHeaders.add("Location", destination.base + "/target")
                 request.sendResponseHeaders(307, -1); request.close()
             }.use { source ->
-                val result = HttpReader().read(source.base, ReadOptions(headers = mapOf("Authorization" to "Bearer private", "X-Private-Key" to "secret")))
+                val result = HttpReader().read(source.base, headers = mapOf("Authorization" to "Bearer private", "X-Private-Key" to "secret"))
                 assertEquals("# Safe", result.content)
             }
         }
@@ -109,7 +109,7 @@ class HttpReaderTest {
             request.sendResponseHeaders(200, bytes.size.toLong())
             request.responseBody.use { it.write(bytes) }
         }.use { fixture ->
-            val result = HttpReader().read(fixture.base, ReadOptions(raw = true, maxBytes = 1024))
+            val result = HttpReader().read(fixture.base, raw = true, maxBytes = 1024)
             assertTrue(result.truncated)
             assertTrue(result.content.toByteArray().size <= 1024)
             assertFalse(result.content.contains('\uFFFD'))
@@ -123,13 +123,13 @@ class HttpReaderTest {
             request.responseHeaders.add("Content-Type", "text/plain; charset=ISO-8859-1")
             request.sendResponseHeaders(200, bytes.size.toLong())
             request.responseBody.use { it.write(bytes) }
-        }.use { fixture -> assertEquals("Café", HttpReader().read(fixture.base, ReadOptions(raw = true)).content) }
+        }.use { fixture -> assertEquals("Café", HttpReader().read(fixture.base, raw = true).content) }
     }
 
     @Test fun `reader preserves caller cancellation and cleans timed out IO`() = runBlocking {
         Fixture { request -> Thread.sleep(200); runCatching { request.respond("late") } }.use { fixture ->
-            assertNull(withTimeoutOrNull(10) { HttpReader().read(fixture.base, ReadOptions(timeoutMs = 1_000)) })
-            try { HttpReader().read(fixture.base, ReadOptions(timeoutMs = 30)); fail("Read deadline must terminate IO") }
+            assertNull(withTimeoutOrNull(10) { HttpReader().read(fixture.base, timeoutMs = 1_000) })
+            try { HttpReader().read(fixture.base, timeoutMs = 30); fail("Read deadline must terminate IO") }
             catch (error: KmpwrightException) { assertTrue(error.message.orEmpty().contains("Timeout")) }
         }
     }

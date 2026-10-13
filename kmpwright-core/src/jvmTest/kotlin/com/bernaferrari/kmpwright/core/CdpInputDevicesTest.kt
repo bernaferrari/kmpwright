@@ -13,12 +13,12 @@ class CdpInputDevicesTest {
     @Test fun `cancelling long tap and downAndUp releases input`() = kotlinx.coroutines.test.runTest {
         val bridge = RecordingCdpInputBridge()
         val touch = CdpTouch(bridge)
-        val tap = launch { touch.longTap(10.0, 20.0, LongTapOptions(durationMs = 60_000)) }
+        val tap = launch { touch.longTap(10.0, 20.0, durationMs = 60_000) }
         runCurrent()
         tap.cancel(); tap.join()
         assertEquals("touchEnd", bridge.commands.last().params["type"])
         val keyboard = CdpKeyboard(bridge)
-        val key = launch { keyboard.press("Control", PressOptions(delayMs = 60_000)) }
+        val key = launch { keyboard.press("Control", delayMs = 60_000) }
         runCurrent()
         key.cancel(); key.join()
         assertEquals("keyUp", bridge.commands.last().params["type"])
@@ -40,29 +40,29 @@ class CdpInputDevicesTest {
                 TestLocator(selector, controller)
 
             override fun createTouch(): Touchscreen = object : Touchscreen {
-                override suspend fun tap(x: Double, y: Double, options: TapOptions) {}
-                override suspend fun longTap(x: Double, y: Double, options: LongTapOptions) {}
-                override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, options: ScrollOptions) {}
-                override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, options: SwipeOptions) {}
-                override suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions) {}
+                override suspend fun tap(x: Double, y: Double, modifiers: Int, timeoutMs: Long?) {}
+                override suspend fun longTap(x: Double, y: Double, durationMs: Long, timeoutMs: Long?) {}
+                override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, steps: Int, timeoutMs: Long?) {}
+                override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, speed: Double, timeoutMs: Long?) {}
+                override suspend fun pinch(x: Double, y: Double, scale: Double, timeoutMs: Long?) {}
             }
 
             override fun createMouse(): Mouse = object : Mouse {
-                override suspend fun move(x: Double, y: Double, options: MoveOptions) {}
-                override suspend fun click(x: Double, y: Double, options: MouseClickOptions) {}
-                override suspend fun dblclick(x: Double, y: Double, options: MouseClickOptions) {}
-                override suspend fun down(options: MouseDownOptions) {}
-                override suspend fun up(options: MouseUpOptions) {}
-                override suspend fun wheel(deltaX: Double, deltaY: Double, options: WheelOptions) {}
-                override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions) {}
+                override suspend fun move(x: Double, y: Double, steps: Int, timeoutMs: Long?) {}
+                override suspend fun click(x: Double, y: Double, button: MouseButton, clickCount: Int, delayMs: Long, timeoutMs: Long?) {}
+                override suspend fun dblclick(x: Double, y: Double, button: MouseButton, delayMs: Long, timeoutMs: Long?) {}
+                override suspend fun down(button: MouseButton, clickCount: Int) {}
+                override suspend fun up(button: MouseButton) {}
+                override suspend fun wheel(deltaX: Double, deltaY: Double, timeoutMs: Long?) {}
+                override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, timeoutMs: Long?) {}
             }
 
             override fun createKeyboard(): Keyboard = object : Keyboard {
                 override suspend fun insertText(text: String) {}
-                override suspend fun type(text: String, options: TypeOptions) {}
+                override suspend fun type(text: String, delayMs: Long, timeoutMs: Long?) {}
                 override suspend fun down(key: String) {}
                 override suspend fun up(key: String) {}
-                override suspend fun press(key: String, options: PressOptions) {}
+                override suspend fun press(key: String, delayMs: Long, timeoutMs: Long?) {}
             }
         }
 
@@ -141,8 +141,8 @@ class CdpInputDevicesTest {
     fun `canceled click releases its button and preserves caller held buttons`() = kotlinx.coroutines.test.runTest {
         val bridge = RecordingCdpInputBridge()
         val mouse = CdpMouse(bridge)
-        mouse.down(MouseDownOptions(button = MouseButton.RIGHT))
-        val job = launch { mouse.click(1.0, 2.0, MouseClickOptions(delayMs = 10_000)) }
+        mouse.down(button = MouseButton.Right)
+        val job = launch { mouse.click(1.0, 2.0, delayMs = 10_000) }
         runCurrent()
         job.cancel(); job.join()
         val release = bridge.commands.last()
@@ -151,7 +151,7 @@ class CdpInputDevicesTest {
         assertEquals(2, release.params["buttons"])
         mouse.move(3.0, 4.0)
         assertEquals(2, bridge.commands.last().params["buttons"])
-        mouse.up(MouseUpOptions(button = MouseButton.RIGHT))
+        mouse.up(button = MouseButton.Right)
     }
 
     @Test

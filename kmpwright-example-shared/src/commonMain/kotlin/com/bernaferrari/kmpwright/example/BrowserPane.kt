@@ -132,33 +132,32 @@ private fun AddressBar(state: StudioState, modifier: Modifier = Modifier) {
                     modifier = Modifier.size(18.dp),
                     tint = if (secure) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                BasicTextField(
-                    state = address,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 12.dp)
-                        .onFocusChanged { focused = it.isFocused }
-                        .semantics { contentDescription = "Address" },
-                    lineLimits = TextFieldLineLimits.SingleLine,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
-                    onKeyboardAction = { go() },
-                    decorator = { field ->
-                        Box(contentAlignment = Alignment.CenterStart) {
-                            if (address.text.isEmpty()) {
-                                Text(
-                                    "Search or type a URL",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            field()
-                        }
-                    },
-                )
+                // Placeholder drawn behind the field rather than through BasicTextField's
+                // `decorator`: that composable fun interface does not link on Kotlin/Native with
+                // the current Compose compiler.
+                Box(Modifier.weight(1f).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
+                    if (address.text.isEmpty()) {
+                        Text(
+                            "Search or type a URL",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    BasicTextField(
+                        state = address,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { focused = it.isFocused }
+                            .semantics { contentDescription = "Address" },
+                        lineLimits = TextFieldLineLimits.SingleLine,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
+                        onKeyboardAction = { go() },
+                    )
+                }
                 AnimatedContent(
                     targetState = state.busy,
                     transitionSpec = { (fadeIn() + scaleIn(initialScale = 0.6f)) togetherWith fadeOut() },

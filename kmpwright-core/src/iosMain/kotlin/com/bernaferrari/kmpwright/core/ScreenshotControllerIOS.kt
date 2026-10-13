@@ -30,27 +30,38 @@ internal class IOSScreenshotController(
     /**
      * Honors [ScreenshotOptions.format] PNG/JPEG (with [ScreenshotOptions.quality]). ImageIO on iOS
      * cannot encode WebP, and WKWebView always paints the page's base background, so WEBP and
-     * [ScreenshotOptions.omitBackground] throw [KmpwrightUnsupportedException].
+     * [omitBackground] throw [KmpwrightUnsupportedException].
      */
     override suspend fun capture(options: ScreenshotOptions): ScreenshotResult {
         require(options.scale.isFinite() && options.scale > 0) { "Screenshot scale must be positive" }
         require(options.quality in 0..100) { "Screenshot quality must be between 0 and 100" }
         if (options.omitBackground) {
             throw KmpwrightUnsupportedException(
-                "ScreenshotOptions.omitBackground is not supported on iOS WKWebView: it always paints an opaque page background"
+                "omitBackground is not supported on iOS WKWebView: it always paints an opaque page background"
             )
         }
-        if (options.format == ScreenshotFormat.WEBP) {
+        if (options.format == ScreenshotFormat.Webp) {
             throw KmpwrightUnsupportedException("WEBP screenshots are not supported on iOS (ImageIO cannot encode WebP); use PNG or JPEG")
         }
         return withContext(Dispatchers.Main) {
             val clip = options.clip
+            if (options.fullPage) {
+                val pointsPerCss = webView.bounds.useContents { size.width } / webView.captureViewportCssWidth()
+                return@withContext captureWebViewDocument(webView, DocumentScreenshotOptions(pixelsPerCssPixel = pointsPerCss * webView.snapshotScreenScale() * options.scale, format = options.format, quality = options.quality))
+            }
+            if (options.captureBeyondViewport && clip != null) {
+                val pointsPerCss = webView.bounds.useContents { size.width } / webView.captureViewportCssWidth()
+                val docClip = clip.copy(x = clip.x + webView.captureNumber("window.scrollX"), y = clip.y + webView.captureNumber("window.scrollY"))
+                return@withContext captureWebViewDocument(webView, DocumentScreenshotOptions(docClip, pointsPerCss * webView.snapshotScreenScale() * options.scale, format = options.format, quality = options.quality))
+            }
             val rect = when {
-                options.fullPage -> webView.fullPageSnapshotRect()
                 clip != null -> {
                     val (width, height) = webView.bounds.useContents { size.width to size.height }
-                    val trimmed = trimScreenshotClip(clip, width, height)
-                    CGRectMake(trimmed.x, trimmed.y, trimmed.width, trimmed.height)
+                    val cssWidth = webView.captureViewportCssWidth()
+                    val pointsPerCss = width / cssWidth
+                    val trimmed = trimScreenshotClip(clip, cssWidth, height / pointsPerCss)
+                    val native = cssRectangleToNative(trimmed, cssWidth, width)
+                    CGRectMake(native.x, native.y, native.width, native.height)
                 }
                 else -> webView.viewportSnapshotRect()
             }
@@ -63,7 +74,7 @@ internal class IOSScreenshotController(
     }
 
     override suspend fun captureFullPage(scale: Double): ScreenshotResult = withContext(Dispatchers.Main) {
-        webView.capturePngSnapshot(webView.fullPageSnapshotRect(), scale)
+        capture(ScreenshotOptions(fullPage = true, scale = scale))
     }
 
     override suspend fun captureClip(
@@ -73,7 +84,7 @@ internal class IOSScreenshotController(
         height: Double,
         scale: Double
     ): ScreenshotResult = withContext(Dispatchers.Main) {
-        webView.capturePngSnapshot(CGRectMake(x, y, width, height), scale)
+        capture(ScreenshotOptions(clip = Rectangle(x, y, width, height), scale = scale))
     }
 
     override fun getPageDimensions(): PageDimensions = onMainThread {
@@ -94,17 +105,6 @@ internal fun WKWebView.viewportSnapshotRect(): CValue<CGRect> {
     return CGRectMake(0.0, 0.0, width, height)
 }
 
-/**
- * The scrollable document. WKWebView renders tiles outside the visible
- * viewport for snapshot requests, so no scroll-and-stitch pass is required.
- * Main thread only.
- */
-@OptIn(ExperimentalForeignApi::class)
-internal fun WKWebView.fullPageSnapshotRect(): CValue<CGRect> {
-    val (width, height) = scrollView.contentSize.useContents { width to height }
-    return if (width <= 0.0 || height <= 0.0) viewportSnapshotRect() else CGRectMake(0.0, 0.0, width, height)
-}
-
 /** Screen pixels per point used by WebKit when rasterizing snapshots. Main thread only. */
 @OptIn(ExperimentalForeignApi::class)
 internal fun WKWebView.snapshotScreenScale(): Double =
@@ -118,7 +118,7 @@ internal fun WKWebView.snapshotScreenScale(): Double =
  */
 @OptIn(ExperimentalForeignApi::class)
 internal suspend fun WKWebView.capturePngSnapshot(rect: CValue<CGRect>, scale: Double): ScreenshotResult =
-    captureSnapshot(rect, scale, ScreenshotFormat.PNG, 100)
+    captureSnapshot(rect, scale, ScreenshotFormat.Png, 100)
 
 /** Like [capturePngSnapshot], encoding PNG or JPEG ([quality] 0..100 for JPEG). */
 @OptIn(ExperimentalForeignApi::class)
@@ -134,6 +134,7 @@ internal suspend fun WKWebView.captureSnapshot(rect: CValue<CGRect>, scale: Doub
 
     val configuration = WKSnapshotConfiguration().apply {
         this.rect = rect
+        afterScreenUpdates = true
         if (safeScale != 1.0) snapshotWidth = NSNumber(logicalWidth * safeScale)
     }
     return suspendCancellableCoroutine { continuation ->
@@ -146,11 +147,11 @@ internal suspend fun WKWebView.captureSnapshot(rect: CValue<CGRect>, scale: Doub
                 return@takeSnapshotWithConfiguration
             }
             val pngData = when (format) {
-                ScreenshotFormat.JPEG -> UIImageJPEGRepresentation(image, quality / 100.0)
+                ScreenshotFormat.Jpeg -> UIImageJPEGRepresentation(image, quality / 100.0)
                 else -> UIImagePNGRepresentation(image)
             }
             if (pngData == null) {
-                continuation.resumeWith(Result.failure(KmpwrightException("iOS snapshot failed: ${format.name} encoding returned no data.")))
+                continuation.resumeWith(Result.failure(KmpwrightException("iOS snapshot failed: ${format.name.uppercase()} encoding returned no data.")))
                 return@takeSnapshotWithConfiguration
             }
             val (pixelWidth, pixelHeight) = image.pixelSize()

@@ -24,11 +24,10 @@ class CdpProtocolMethodsTest {
     }
 
     @Test
-    fun `cdp scrollbar hiding follows headless config and explicit show override`() {
+    fun `cdp scrollbar hiding follows config`() {
         assertTrue(shouldHideCdpScrollbars(KmpwrightConfig(cdp = CdpConfig())))
-        assertFalse(shouldHideCdpScrollbars(KmpwrightConfig(cdp = CdpConfig(headless = false))))
         assertFalse(shouldHideCdpScrollbars(KmpwrightConfig(cdp = CdpConfig(hideScrollbars = false))))
-        assertFalse(shouldHideCdpScrollbars(KmpwrightConfig(cdp = CdpConfig(browserArgs = listOf("--show-scrollbars")))))
+        assertFalse(shouldHideCdpScrollbars(KmpwrightConfig()))
     }
 
     @Test

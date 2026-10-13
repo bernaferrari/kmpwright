@@ -302,10 +302,11 @@
           "status": "supported",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.ScreenshotOptions",
-              "member": "fullPage"
+              "owner": "com.bernaferrari.kmpwright.core.Page",
+              "member": "screenshot"
             }
-          ]
+          ],
+          "notes": "page.screenshot(fullPage = true)."
         },
         {
           "name": "--annotate",
@@ -323,11 +324,11 @@
           "status": "partial",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.ScreenshotOptions",
-              "member": "format"
+              "owner": "com.bernaferrari.kmpwright.core.Page",
+              "member": "screenshot"
             }
           ],
-          "notes": "Kmpwright also exposes WEBP; agent-browser's pinned docs list PNG/JPEG."
+          "notes": "page.screenshot(format = ScreenshotFormat.Jpeg). Kmpwright also exposes WEBP; agent-browser's pinned docs list PNG/JPEG."
         },
         {
           "name": "--if-changed",
@@ -384,51 +385,55 @@
           "status": "supported",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.SnapshotOptions",
-              "member": "interactive"
+              "owner": "com.bernaferrari.kmpwright.core.Page",
+              "member": "snapshot"
             }
-          ]
+          ],
+          "notes": "page.snapshot(interactive = true)."
         },
         {
           "name": "--urls",
           "status": "supported",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.SnapshotOptions",
-              "member": "urls"
+              "owner": "com.bernaferrari.kmpwright.core.Page",
+              "member": "snapshot"
             }
           ],
-          "notes": "Links print their resolved href as url=\"...\" on every backend."
+          "notes": "page.snapshot(urls = true). Links print their resolved href as url=\"...\" on every backend."
         },
         {
           "name": "-c",
           "status": "supported",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.SnapshotOptions",
-              "member": "compact"
+              "owner": "com.bernaferrari.kmpwright.core.Page",
+              "member": "snapshot"
             }
-          ]
+          ],
+          "notes": "page.snapshot(compact = true)."
         },
         {
           "name": "-d",
           "status": "supported",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.SnapshotOptions",
-              "member": "maxDepth"
+              "owner": "com.bernaferrari.kmpwright.core.Page",
+              "member": "snapshot"
             }
-          ]
+          ],
+          "notes": "page.snapshot(maxDepth = n)."
         },
         {
           "name": "-s",
           "status": "supported",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.SnapshotOptions",
-              "member": "selector"
+              "owner": "com.bernaferrari.kmpwright.core.Page",
+              "member": "snapshot"
             }
-          ]
+          ],
+          "notes": "page.snapshot(selector = ...)."
         }
       ],
       "notes": "Text output uses agent-browser's format (`@e1 [heading] \"Title\" [level=1]`, flat -i list with one level of same-origin iframe content nested). CDP snapshots follow native Chromium AX roles, names, states and hierarchy, including aria-owns and scoped stable references. includeHidden and native WebViews use bounded DOM traversal. -s accepts any KMPwright selector."
@@ -1267,11 +1272,11 @@
     {
       "option": "--headed",
       "status": "partial",
-      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "notes": "Owned desktop Chromium launch parameter launchBrowser(headless = false); native WebViews cannot launch desktop processes.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
-          "member": "headless"
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
         }
       ]
     },
@@ -1309,22 +1314,22 @@
     {
       "option": "--executable-path",
       "status": "partial",
-      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "notes": "Owned desktop Chromium launch parameter launchBrowser(executablePath); native WebViews cannot launch desktop processes.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
-          "member": "executablePath"
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
         }
       ]
     },
     {
       "option": "--extension",
       "status": "partial",
-      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes. Unpacked extensions require a Chromium distribution that permits them.",
+      "notes": "Owned desktop Chromium launch parameter launchBrowser(extensionDirectories = ...); native WebViews cannot launch desktop processes. Unpacked extensions require a Chromium distribution that permits them.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
-          "member": "extensionDirectories"
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
         }
       ]
     },
@@ -1342,11 +1347,11 @@
     {
       "option": "--args",
       "status": "partial",
-      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "notes": "Owned desktop Chromium launch parameter launchBrowser(arguments = ...); native WebViews cannot launch desktop processes.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
-          "member": "arguments"
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
         }
       ]
     },
@@ -1366,23 +1371,29 @@
     },
     {
       "option": "--proxy",
-      "status": "supported",
+      "status": "partial",
       "apiRefs": [
         {
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
+        },
+        {
           "owner": "com.bernaferrari.kmpwright.core.ProxyConfig",
-          "member": "url"
+          "member": "server"
         }
-      ]
+      ],
+      "notes": "JVM launches only: launchBrowser(executablePath, proxy = ProxyConfig(...)); no proxy authentication. Android WebView and WKWebView have no per-page proxy."
     },
     {
       "option": "--proxy-bypass",
-      "status": "supported",
+      "status": "partial",
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.ProxyConfig",
           "member": "bypass"
         }
-      ]
+      ],
+      "notes": "JVM launches only (launchBrowser); no proxy authentication. Android WebView and WKWebView have no per-page proxy."
     },
     {
       "option": "--cdp",
@@ -1438,11 +1449,11 @@
     {
       "option": "--ignore-https-errors",
       "status": "partial",
-      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "notes": "Owned desktop Chromium launch parameter launchBrowser(ignoreHttpsErrors = true); native WebViews cannot launch desktop processes.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
-          "member": "ignoreHttpsErrors"
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
         }
       ]
     },
@@ -1451,11 +1462,11 @@
       "status": "partial",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.DefaultWebSettings",
-          "member": "allowFileAccess"
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
         }
       ],
-      "notes": "Only platform WebView settings expose related controls."
+      "notes": "JVM launches can pass Chromium file-access flags through launchBrowser(arguments = ...). Native WebView file-access settings are not exposed publicly."
     },
     {
       "option": "--color-scheme",
@@ -1569,33 +1580,33 @@
     {
       "option": "--webgpu",
       "status": "partial",
-      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "notes": "Owned desktop Chromium launch parameter launchBrowser(webGpu = true); native WebViews cannot launch desktop processes.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
-          "member": "webGpu"
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
         }
       ]
     },
     {
       "option": "--no-webmcp",
       "status": "partial",
-      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "notes": "Owned desktop Chromium launch parameter launchBrowser(webMcp = false); native WebViews cannot launch desktop processes.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
-          "member": "webMcp"
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
         }
       ]
     },
     {
       "option": "--profile",
       "status": "partial",
-      "notes": "Owned desktop Chromium launch option; native WebViews cannot launch desktop processes.",
+      "notes": "Owned desktop Chromium launch parameter launchBrowser(profileSnapshot = ChromeProfileSource(...)); native WebViews cannot launch desktop processes.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
-          "member": "profileSnapshot"
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
         }
       ]
     },
@@ -1668,22 +1679,22 @@
     {
       "option": "--screenshot-quality",
       "status": "partial",
-      "notes": "Typed screenshot options; encoding support depends on the backend capabilities.",
+      "notes": "page.screenshot(quality = ...) named parameter; encoding support depends on the backend capabilities.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.ScreenshotOptions",
-          "member": "quality"
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "screenshot"
         }
       ]
     },
     {
       "option": "--screenshot-format",
       "status": "partial",
-      "notes": "Typed screenshot options; encoding support depends on the backend capabilities.",
+      "notes": "page.screenshot(format = ...) named parameter; encoding support depends on the backend capabilities.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.ScreenshotOptions",
-          "member": "format"
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "screenshot"
         }
       ]
     },
@@ -1701,22 +1712,26 @@
     {
       "option": "--use-system-ca",
       "status": "partial",
-      "notes": "JVM/Android readers can combine system and custom trust, or use only the explicit bundle. Darwin uses platform trust; Chromium uses its platform verification plus isolated Linux NSS imports.",
+      "notes": "read(url, useSystemCa = ...) on HttpReader and Page. JVM/Android readers can combine system and custom trust, or use only the explicit bundle. Darwin uses platform trust; Chromium uses its platform verification plus isolated Linux NSS imports.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.ReadOptions",
-          "member": "useSystemCa"
+          "owner": "com.bernaferrari.kmpwright.core.HttpReader",
+          "member": "read"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "read"
         }
       ]
     },
     {
       "option": "--enable",
       "status": "partial",
-      "notes": "Feature APIs and Chromium launch feature flags replace built-in CLI enable switches.",
+      "notes": "Feature APIs and Chromium launch feature flags (launchBrowser(webMcp = ...), arguments) replace built-in CLI enable switches.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
-          "member": "webMcp"
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
         }
       ]
     },
@@ -1758,15 +1773,15 @@
     {
       "option": "--ca-cert",
       "status": "partial",
-      "notes": "Owned Linux Chromium uses a temporary NSS HOME and certutil; JVM/Android HTTP readers support per-instance PEM/DER trust. Darwin custom trust is explicitly unsupported. Real HTTPS tests verify private trust and hostname rejection; Linux NSS browser integration requires Linux validation.",
+      "notes": "launchBrowser(caCertificatePath = ...) and HttpReader.read(url, caCertificatePath = ...). Owned Linux Chromium uses a temporary NSS HOME and certutil; JVM/Android HTTP readers support per-instance PEM/DER trust. Darwin custom trust is explicitly unsupported. Real HTTPS tests verify private trust and hostname rejection; Linux NSS browser integration requires Linux validation.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchOptions",
-          "member": "caCertificatePath"
+          "owner": "com.bernaferrari.kmpwright.core.BrowserLaunchKt",
+          "member": "launchBrowser"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.ReadOptions",
-          "member": "caCertificatePath"
+          "owner": "com.bernaferrari.kmpwright.core.HttpReader",
+          "member": "read"
         }
       ]
     },

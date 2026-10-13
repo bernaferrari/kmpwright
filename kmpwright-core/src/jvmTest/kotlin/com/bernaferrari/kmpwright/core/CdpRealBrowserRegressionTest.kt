@@ -24,7 +24,7 @@ class CdpRealBrowserRegressionTest {
             exchange.responseBody.use { it.write(body) }
         }
         server.start()
-        val launched = launchBrowser(BrowserLaunchOptions(executable!!))
+        val launched = launchBrowser(executable!!)
         try {
             val page = launched.browser.newPage()
             val origin = "http://127.0.0.1:${server.address.port}"
@@ -36,7 +36,7 @@ class CdpRealBrowserRegressionTest {
 
             assertTrue(page.goto("$origin/").ok)
             // Same-document navigations never fire a load event; they must not time out.
-            val fragment = withTimeout(5_000) { page.goto("$origin/#section", GotoOptions(timeoutMs = 4_000)) }
+            val fragment = withTimeout(5_000) { page.goto("$origin/#section", timeoutMs = 4_000) }
             assertTrue("fragment navigation failed: $fragment", fragment.ok)
 
             page.setContent("<title>Set content</title><p id=p>Hello</p>")
@@ -51,7 +51,7 @@ class CdpRealBrowserRegressionTest {
             // Scaled full-page captures must include content below the fold.
             page.setContent("""<style>body{margin:0}</style><div style="height:3000px;background:#fff"></div>
                 <div style="height:200px;background:rgb(255,0,0)"></div>""")
-            val shot = page.screenshot(ScreenshotOptions(fullPage = true, scale = 0.5))
+            val shot = page.screenshot(fullPage = true, scale = 0.5)
             val image = ImageIO.read(ByteArrayInputStream(shot.bytes))
             assertEquals(image.width to image.height, shot.width to shot.height)
             assertTrue("full-page height ${shot.height} must cover the document", shot.height >= 1550)

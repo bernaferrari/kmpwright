@@ -19,15 +19,15 @@ class IOSConsistencyDocumentTest {
         val page = IOSPage(IOSWebViewController(KmpwrightConfig(viewport = Viewport(320, 480))))
         try {
             page.setContent("<body style='margin:0'><div id=box style='width:100px;height:50px;background:#ff0000'></div></body>")
-            val jpeg = page.screenshot(ScreenshotOptions(format = ScreenshotFormat.JPEG, quality = 60))
+            val jpeg = page.screenshot(format = ScreenshotFormat.Jpeg, quality = 60)
             assertEquals("JPEG", imageFormatOf(jpeg.bytes))
-            val element = page.locator("#box").screenshot(ScreenshotOptions(format = ScreenshotFormat.JPEG))
+            val element = page.locator("#box").screenshot(format = ScreenshotFormat.Jpeg)
             assertEquals("JPEG", imageFormatOf(element.bytes))
             assertEquals("PNG", imageFormatOf(page.locator("#box").screenshot().bytes))
-            assertFailsWith<KmpwrightUnsupportedException> { page.screenshot(ScreenshotOptions(format = ScreenshotFormat.WEBP)) }
-            assertFailsWith<KmpwrightUnsupportedException> { page.screenshot(ScreenshotOptions(omitBackground = true)) }
-            assertFailsWith<KmpwrightUnsupportedException> { page.locator("#box").screenshot(ScreenshotOptions(omitBackground = true)) }
-            assertFailsWith<KmpwrightException> { page.screenshot(ScreenshotOptions(clip = Rectangle(5_000.0, 5_000.0, 10.0, 10.0))) }
+            assertFailsWith<KmpwrightUnsupportedException> { page.screenshot(format = ScreenshotFormat.Webp) }
+            assertFailsWith<KmpwrightUnsupportedException> { page.screenshot(omitBackground = true) }
+            assertFailsWith<KmpwrightUnsupportedException> { page.locator("#box").screenshot(omitBackground = true) }
+            assertFailsWith<KmpwrightException> { page.screenshot(clip = Rectangle(5_000.0, 5_000.0, 10.0, 10.0)) }
         } finally { page.close() }
     }
 
@@ -38,8 +38,8 @@ class IOSConsistencyDocumentTest {
         try {
             page.setContent("<p>PDF</p>")
             assertTrue(page.pdf().bytes.decodeToString(0, 5) == "%PDF-")
-            assertTrue(page.pdf(PdfOptions(format = PdfFormat.Content, timeoutMs = 20_000)).bytes.isNotEmpty())
-            assertFailsWith<KmpwrightUnsupportedException> { page.pdf(PdfOptions(format = PdfFormat.A4)) }
+            assertTrue(page.pdf(format = PdfFormat.Content, timeoutMs = 20_000).bytes.isNotEmpty())
+            assertFailsWith<KmpwrightUnsupportedException> { page.pdf(format = PdfFormat.A4) }
         } finally { page.close() }
     }
 

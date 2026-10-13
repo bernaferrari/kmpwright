@@ -51,13 +51,13 @@ Run the `KmpwrightExampleApp` scheme on an arm64 simulator. The Xcode build phas
 
 ## What is on screen
 
-The app has a live browser and three screens: **Agent**, **Recipes** and **Inspect**. They all share one `Browser` and one page, so whatever you do on one screen is visible on the others. Page operations are serialized, so the console, a running recipe and the ref overlay never interleave actions on the same WebView.
+The app is built with Material 3 Expressive (dynamic color, expressive motion, `ButtonGroup`-style toggles, `LoadingIndicator`, `MaterialShapes`). It has a live browser and three screens: **Agent**, **Recipes** and **Inspect**. They all share one `Browser` and one page, so whatever you do on one screen is visible on the others. Page operations are serialized, so the console, a running recipe and the ref overlay never interleave actions on the same WebView.
 
 On launch the app loads a bundled playground page (a docs search box, a sign-up form and a counter) and takes an interactive snapshot.
 
 ### Agent
 
-An agent console for the [`runCommand`](/docs/coming-from-agent-browser) grammar. Type a command such as `open en.wikipedia.org/wiki/Kotlin`, `snapshot -i`, `click @e3` or `fill @e2 "hello"`; each entry shows the command, its text output, how long it took, and, for `screenshot`, the captured image. Suggestion chips run common commands (`snapshot -i`, `get title`, `scroll down`, `screenshot`, `help`) or prefill ones that need a ref. Typing `clear` empties the console.
+An agent console for the [`runCommand`](/docs/agents/commands) grammar. Type a command such as `open en.wikipedia.org/wiki/Kotlin`, `snapshot -i`, `click @e3` or `fill @e3 "hello"`. Results appear newest first, right under the composer: the command, its text output, how long it took, and, for `screenshot`, the captured image. Every `@eN` in an output is tappable and writes `click @eN` into the composer. Suggestion chips run common commands (`snapshot -i`, `screenshot`, `get title`, `scroll down`, `back`, `help`), and starter cards walk through the loop the first time. Typing `clear` empties the console.
 
 This is the same loop an LLM runs: snapshot, read refs, act on a ref.
 
@@ -67,13 +67,13 @@ After every snapshot and every command that can change the page, the app takes a
 
 - **Tap a badge** to run `click @eN`.
 - **Long-press a badge** to switch to the Agent screen with a command prefilled: `fill @eN ""` for text boxes, search boxes and combo boxes, `click @eN` for everything else.
-- Badges follow the page when it scrolls. A toggle in the browser toolbar shows or hides them.
+- Badges stay glued to their elements while the page scrolls. The `#` toggle next to the address bar shows or hides them.
 
-The badges are built from public APIs only: `page.snapshot(SnapshotOptions(interactive = true))` for the refs, then `page.locator(ref).boundingBox()` for each position.
+The badges are built from public APIs only: `page.snapshot(interactive = true)` for the refs, then `page.locator(ref).boundingBox()` for each position. Boxes are stored in document coordinates, and the overlay adds the WebView's native scroll offset every frame, so scrolling never needs a JavaScript round trip.
 
 ### Recipes
 
-Runnable scripts, each showing the Kotlin code it executes and a step timeline that marks every step as pending, running, done or failed, with its output (text or a screenshot). The recipes cover:
+Runnable scripts, each showing the Kotlin code it executes and a step timeline that marks every step as pending, running, done or failed, with its output (text or a screenshot). Pressing **Run recipe** collapses the panel so you watch the page being driven, with the current step (and then a finished or failed result) shown in a banner. The grid leads with the agent loop, then groups recipes into *For agents* and *Playwright basics*:
 
 | Recipe | What it shows |
 | --- | --- |
@@ -81,7 +81,7 @@ Runnable scripts, each showing the Kotlin code it executes and a step timeline t
 | Click and assert | `locator`, `click`, `expect(...).toHaveText` |
 | Fill a form | `fill`, `selectOption`, `check`, waiting for the result |
 | Type like a person | `pressSequentially` with a delay between keys |
-| Full-page screenshot | `ScreenshotOptions(fullPage = true)` |
+| Full-page screenshot | `page.screenshot(fullPage = true)` |
 | Mock the network | `page.route` answering an API call from Kotlin |
 | Save and restore a session | `storageState()` and `setStorageState()` |
 | Read for an LLM | `page.read` (HTTP fetch as Markdown) |
@@ -95,8 +95,8 @@ Tabs for the page's console messages (`page.consoleMessages()`), recorded networ
 
 ## Adaptive layout
 
-- **Phones:** the browser sits above the active screen with a drag handle between them to resize the split. A bottom navigation bar switches screens.
-- **Tablets and unfolded foldables** (840 dp wide and up): a navigation rail, the active screen as a side panel, and the browser filling the rest.
+- **Phones:** the browser fills the screen and the active screen lives in a bottom sheet. Collapsed, the sheet always shows the Agent / Recipes / Inspect switcher and the command composer; focusing the composer expands the sheet so the keyboard never covers it.
+- **Tablets and unfolded foldables** (840 dp wide and up): the active screen as a side panel, with the browser filling the rest.
 
 The same `WebView` instance moves between layouts when the window size changes; it is not recreated.
 
@@ -118,13 +118,17 @@ The integration is small and is a good template for your own app:
 3. When the screen leaves composition, it calls `browser.dispose()` (the non-suspending teardown) and destroys the WebView.
 
 ```kotlin
-val state = remember(platformContext) { StudioState(Browser(platformContext), scope) }
+val state = remember(platformContext) {
+    StudioState(Browser(platformContext), scope) { releaseWebViewKeyboard(platformContext) }
+}
 DisposableEffect(state) {
     onDispose {
-        state.close()                      // calls browser.dispose()
+        state.dispose()                    // calls browser.dispose()
         disposePlatformContext(platformContext)
     }
 }
 ```
+
+After automation types into the page, the sample hides the soft keyboard the page opened (`releaseWebViewKeyboard`) without touching its own text fields.
 
 See [`kmpwright-example-shared/src/commonMain`](https://github.com/bernaferrari/kmpwright/tree/main/kmpwright-example-shared/src/commonMain) for the full source.

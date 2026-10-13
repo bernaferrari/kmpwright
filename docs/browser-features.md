@@ -44,7 +44,7 @@ line, `@eN [role] "name"` for elements with refs and `[role] "name"` for structu
 children indented two spaces. Text inputs print as `[input type="email"]` with
 `placeholder="…"`, headings add `[level=N]`, states print as `[checked]`, `[disabled]`,
 `[expanded]`, `[selected]`, `[required]` (mixed checkboxes as `[checked=mixed]`), field
-values as `value="…"`, and with `SnapshotOptions(urls = true)` links add `url="…"`.
+values as `value="…"`, and with `snapshot(urls = true)` links add `url="…"`.
 `interactive = true` keeps only ref lines, flat except for content nested under a ref
 such as a same-origin iframe (one level is inlined, like agent-browser); `compact = true`
 drops structure that contains no refs or values. Page text is printed as JSON string
@@ -97,7 +97,7 @@ WebMCP as unavailable.
 ## Web Vitals and SPA navigation
 
 ```kotlin
-val report = page.webVitals(WebVitalsOptions(settleMs = 3_000))
+val report = page.webVitals(settleMs = 3_000)
 println(report.metrics) // LCP, CLS, INP, FCP and TTFB when observed
 println(report.hydration)
 println(report.hydratedComponents)
@@ -120,9 +120,9 @@ origins, waits for the requested URL and updates the page URL flow.
 ## Accessibility audits
 
 ```kotlin
-val report = page.accessibilityAudit(AccessibilityAuditOptions(
+val report = page.accessibilityAudit(
     tags = setOf("wcag2a", "wcag2aa"), selector = "main"
-))
+)
 for (issue in report.violations) {
     println("${issue.id}: ${issue.help} (${issue.nodeCount} nodes)")
 }
@@ -184,7 +184,7 @@ trusted click, upload, screenshots and overlay interception.
 `HttpReader().read(url)` fetches readable content without launching a browser.
 `page.read()` extracts the current document; `page.read(url)` reads through HTTP
 without navigating and applies the page's navigation policy and allowed domains.
-HTTP reads do not share browser cookies. `ReadOptions` supports raw content,
+HTTP reads do not share browser cookies. `read` parameters support raw content,
 strict `text/markdown`, heading outlines and section filtering, explicit headers,
 and nearest-ancestor `llms.txt` / `llms-full.txt` discovery. Relative links and
 redirects are normalized and checked before fetching. Custom headers stay at the
@@ -193,8 +193,8 @@ budget (maximum 16 MiB); truncated UTF-8 content ends at a complete character.
 A single deadline covers redirects, negotiation and discovered documents.
 
 ```kotlin
-val article = HttpReader().read("https://example.com/guide", ReadOptions(outline = true))
-val index = HttpReader().read("https://example.com/docs", ReadOptions(llms = LlmsReadMode.Index))
+val article = HttpReader().read("https://example.com/guide", outline = true)
+val index = HttpReader().read("https://example.com/docs", llms = LlmsReadMode.Index)
 val current = page.read()
 val requests = page.network.requests(filter = "/api", limit = 20)
 val detail = page.network.detail(requests.first().id)
@@ -223,7 +223,7 @@ held by the caller.
 
 ```kotlin
 val capture = scope.launch {
-    page.screencast(ScreencastOptions(maxFps = 30, quality = 85, maxWidth = 1280))
+    page.screencast(maxFps = 30, quality = 85, maxWidth = 1280)
         .collect { frame -> /* display or forward frame.bytes as JPEG */ }
 }
 capture.cancelAndJoin()
@@ -247,10 +247,10 @@ scopes. CDP snapshots follow the native AX hierarchy; `includeHidden` falls back
 ## Video recording
 
 ```kotlin
-page.video.start(RecordingOptions(
+page.video.start(
     path = "capture.mp4", // .webm also supported; FFmpeg must be installed
     fps = 30, cursor = true, contactSheetPath = "contact.png"
-))
+)
 page.locator("button").click()
 val video = page.video.stop()
 println("${video.frameCount} frames in ${video.durationMs} ms")
@@ -323,12 +323,12 @@ truncation is explicit in `_kmpwrightTruncated`; unavailable bodies retain metad
 page.storageState().save("signed-in.state", password = statePassword)
 page.setStorageState(StorageState.load("signed-in.state", password = statePassword))
 
-val autosave = page.autosaveStorageState(StorageStateAutosaveOptions(
+val autosave = page.autosaveStorageState(
     path = "signed-in.state", password = statePassword, intervalMs = 30_000
-))
+)
 // Inspect autosave.error and autosave.lastSavedAt; a write error stops the job.
 autosave.stop()
-val result = page.login(profile, AuthLoginOptions(navigate = false))
+val result = page.login(profile, navigate = false)
 ```
 
 `page.storageState()` returns an in-memory `StorageState` (URL, cookies, local and
@@ -340,24 +340,21 @@ previous save when writing fails. Login uses configured selectors or discovers
 usable controls in the password form; ambiguous controls require explicit selectors.
 It validates origins, document/control identities and form destinations before each
 credential. Input events are synthetic. `submitted` means a submit was attempted;
-it does not prove authentication succeeded. `navigate=false` fills the open document.
+it does not prove authentication succeeded. `navigate = false` fills the open document.
 
 ## Launch an owned Chromium process
 
 ```kotlin
-val launched = launchBrowser(BrowserLaunchOptions(
-    executablePath = "/path/to/chrome", headless = true, webGpu = false
-))
-try {
+launchBrowser("/path/to/chrome", headless = true, webGpu = false).use { launched ->
     val page = launched.browser.newPage()
     page.goto("https://example.com")
-} finally { launched.close() }
+}
 ```
 
 The JVM launcher owns its process, loopback debugging endpoint and temporary profile.
 Caller-provided `userDataDirectory` profiles survive shutdown and can be reused.
 Reserved profile/debugging flags cannot be overridden. Startup and process shutdown
-are bounded. `webGpu=true` enables upstream's headless preset; Linux requests software
+are bounded. `webGpu = true` enables upstream's headless preset; Linux requests software
 Vulkan/SwiftShader. Hardware/driver/browser support still determines actual GPU
 availability. Native WebViews explicitly reject desktop launch. `useSystemKeychain`
 is opt-in; custom Chromium arguments are passed as distinct process arguments.
@@ -365,15 +362,14 @@ is opt-in; custom Chromium arguments are passed as distinct process arguments.
 ## Owned Chromium launch and profiles
 
 ```kotlin
-val launched = launchBrowser(BrowserLaunchOptions(
-    executablePath = "/path/to/chromium", webGpu = true,
+launchBrowser(
+    "/path/to/chromium", webGpu = true,
     // A copied existing profile; changes never write back to the source.
     profileSnapshot = ChromeProfileSource("/path/to/chrome/user-data", "Work")
-))
-try {
+).use { launched ->
     val page = launched.browser.newPage()
     page.goto("https://example.com")
-} finally { launched.close() }
+}
 ```
 
 `ChromeProfiles.list(directory)` reads Chrome's Local State; `resolve` accepts an
@@ -396,9 +392,9 @@ have explicit cleanup. Linux shared memory below 256 MiB selects disk-backed sto
 ## Private certificate authorities
 
 ```kotlin
-val document = HttpReader().read("https://internal.example", ReadOptions(
-    caCertificatePath = "/path/to/ca.pem", useSystemCa = true
-))
+val document = HttpReader().read(
+    "https://internal.example", caCertificatePath = "/path/to/ca.pem", useSystemCa = true
+)
 ```
 
 JVM/Android readers accept bounded PEM bundles or one DER certificate and preserve

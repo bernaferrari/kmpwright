@@ -10,6 +10,7 @@ import com.bernaferrari.kmpwright.core.PlatformContext
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.useContents
 import platform.UIKit.UIView
+import platform.UIKit.endEditing
 import platform.UIKit.UIViewAutoresizingFlexibleHeight
 import platform.UIKit.UIViewAutoresizingFlexibleWidth
 import platform.WebKit.WKWebView
@@ -58,4 +59,10 @@ internal actual fun readNativeScroll(platformContext: PlatformContext): NativeSc
     val width = webView.bounds.useContents { size.width }
     if (width <= 0.0) return null
     return webView.scrollView.contentOffset.useContents { NativeScroll(x.toFloat(), y.toFloat(), width.toFloat()) }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual fun releaseWebViewKeyboard(platformContext: PlatformContext) {
+    // Only resigns first responders inside the web view; Compose text fields are untouched.
+    (platformContext as IOSPlatformContext).webView?.endEditing(true)
 }

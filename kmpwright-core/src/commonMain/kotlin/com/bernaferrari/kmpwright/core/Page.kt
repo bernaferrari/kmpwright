@@ -9,8 +9,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * A browser tab or WebView, modelled on Playwright's `Page` and extended with the agent features of
  * Vercel's agent-browser (`snapshot`, `@eN` refs, `--allowed-domains`, `runCommand`).
  *
- * Every operation is `suspend`; options are data classes; a `timeoutMs` of null uses the matching
- * [TimeoutConfig] default. Selector-taking conveniences such as `page.click("#save")` are extension
+ * Every operation is `suspend`; options are named parameters (Playwright's `page.screenshot({ fullPage: true })`
+ * is `page.screenshot(fullPage = true)`); a `timeoutMs` of null uses the matching [TimeoutConfig] default. Selector-taking conveniences such as `page.click("#save")` are extension
  * functions (see `PageConvenience.kt`).
  */
 public interface Page : ElementFinder {
@@ -75,26 +75,27 @@ public interface Page : ElementFinder {
     // ------------------------------------------------------------------ navigation
 
     /**
-     * Navigates the main frame and waits for [GotoOptions.waitUntil] (`DOMContentLoaded` returns before
+     * Navigates the main frame and waits for [waitUntil] (`DOMContentLoaded` returns before
      * subresources such as images finish; `Load` at the load event). Returns the result (final URL after
      * redirects and its HTTP status): [NavigationResult.ok] is Playwright's `response.ok()` (status
      * 200..299); a failed or refused navigation has `ok == false` and a non-null [NavigationResult.error].
+     * [timeoutMs] null uses [TimeoutConfig.navigation].
      * @throws KmpwrightTimeoutException when the navigation does not finish in time.
      */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun goto(url: String, options: GotoOptions = GotoOptions()): NavigationResult
+    public suspend fun goto(url: String, waitUntil: LoadState = LoadState.Load, timeoutMs: Long? = null): NavigationResult
 
-    /** Reloads the page and waits for the new document. */
+    /** Reloads the page and waits for the new document to reach [waitUntil]; [timeoutMs] null uses [TimeoutConfig.navigation]. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun reload(options: ReloadOptions = ReloadOptions()): NavigationResult
+    public suspend fun reload(waitUntil: LoadState = LoadState.Load, timeoutMs: Long? = null): NavigationResult
 
-    /** Navigates back in history; null when there is no previous entry. */
+    /** Navigates back in history and waits for [waitUntil]; null when there is no previous entry. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun goBack(options: HistoryNavigationOptions = HistoryNavigationOptions()): NavigationResult?
+    public suspend fun goBack(waitUntil: LoadState = LoadState.Load, timeoutMs: Long? = null): NavigationResult?
 
-    /** Navigates forward in history; null when there is no next entry. */
+    /** Navigates forward in history and waits for [waitUntil]; null when there is no next entry. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun goForward(options: HistoryNavigationOptions = HistoryNavigationOptions()): NavigationResult?
+    public suspend fun goForward(waitUntil: LoadState = LoadState.Load, timeoutMs: Long? = null): NavigationResult?
 
     /** Client-side navigation through the app router (Next.js) or `history.pushState` (agent-browser `pushstate`). */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
@@ -103,17 +104,18 @@ public interface Page : ElementFinder {
     /**
      * Waits until the page URL matches [url] (a Playwright URL glob: an exact URL when it has no glob
      * characters; see [route] for the rules). Same-document navigations (pushState, hash changes) count.
+     * Then waits for [waitUntil]; [timeoutMs] null uses [TimeoutConfig.navigation].
      */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun waitForURL(url: String, options: WaitForURLOptions = WaitForURLOptions())
+    public suspend fun waitForURL(url: String, waitUntil: LoadState = LoadState.Load, timeoutMs: Long? = null)
 
-    /** Waits until the page URL matches [url]. */
+    /** Waits until the page URL matches [url], then for [waitUntil]. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun waitForURL(url: Regex, options: WaitForURLOptions = WaitForURLOptions())
+    public suspend fun waitForURL(url: Regex, waitUntil: LoadState = LoadState.Load, timeoutMs: Long? = null)
 
-    /** Waits until [predicate] accepts the page URL. */
+    /** Waits until [predicate] accepts the page URL, then for [waitUntil]. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun waitForURL(options: WaitForURLOptions = WaitForURLOptions(), predicate: (String) -> Boolean)
+    public suspend fun waitForURL(waitUntil: LoadState = LoadState.Load, timeoutMs: Long? = null, predicate: (String) -> Boolean)
 
     /**
      * Waits for the document to reach [state]: `DOMContentLoaded` (CDP: `Page.domContentEventFired`;
@@ -129,13 +131,21 @@ public interface Page : ElementFinder {
     /**
      * Waits for the next navigation; returns null when none happens in time. Prefer the action-scoped
      * overload `waitForNavigation { click(...) }`, which cannot miss a fast navigation.
+     *
+     * [url] is a Playwright URL glob (exact URL when it has no glob characters; `regex:` prefix for a
+     * regular expression) and null accepts any navigation. A non-null [waitUntil] also waits for that load
+     * state. Same-document navigations (pushState, replaceState, hash changes) count, as in Playwright.
+     * [timeoutMs] null uses [TimeoutConfig.navigation].
      */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun waitForNavigation(options: WaitForNavigationOptions = WaitForNavigationOptions()): NavigationResult?
+    public suspend fun waitForNavigation(url: String? = null, waitUntil: LoadState? = null, timeoutMs: Long? = null): NavigationResult?
 
-    /** Waits for an event by name (`"console"`, `"request"`, `"load"`...); null on timeout. */
+    /**
+     * Waits for an event by name (`"console"`, `"request"`, `"load"`...) accepted by [predicate] (any
+     * event when null); null on timeout. [timeoutMs] null uses [TimeoutConfig.default].
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun waitForEvent(event: String, options: WaitForEventOptions = WaitForEventOptions()): Any?
+    public suspend fun waitForEvent(event: String, timeoutMs: Long? = null, predicate: ((Any?) -> Boolean)? = null): Any?
 
     /**
      * Polls [expression] (evaluated once per poll; a returned Promise is awaited and a returned function is
@@ -194,25 +204,68 @@ public interface Page : ElementFinder {
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
     public suspend fun content(): String
 
-    /** Replaces the document with [html]. */
+    /** Replaces the document with [html] and waits for [waitUntil]; [timeoutMs] null uses [TimeoutConfig.navigation]. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun setContent(html: String, options: SetContentOptions = SetContentOptions())
+    public suspend fun setContent(html: String, waitUntil: LoadState = LoadState.Load, timeoutMs: Long? = null)
 
     /**
-     * Captures the viewport, the full page or a clip. With [ScreenshotOptions.annotate] the snapshot
-     * refs are drawn on the image and returned in [ScreenshotResult.annotations] (agent-browser
-     * `screenshot --annotate`).
+     * Captures the viewport, the full page or a clip.
+     *
+     * - [clip] is in CSS pixels relative to the top-left of the viewport (Playwright semantics); it
+     *   cannot be combined with [fullPage], and a clip entirely outside the viewport is an error.
+     * - [format] and [quality] (JPEG/WEBP only, 0..100) are honored on every backend.
+     * - [omitBackground] makes the default white page background transparent; it needs CDP (PNG or
+     *   WEBP) and throws [KmpwrightUnsupportedException] on Android and iOS WebViews, which cannot
+     *   render without their own background.
+     * - [annotate] draws the snapshot refs on the image and returns them in
+     *   [ScreenshotResult.annotations] (agent-browser `screenshot --annotate`).
+     * - [timeoutMs] null uses [TimeoutConfig.default].
+     *
+     * @throws IllegalArgumentException when [fullPage] and [clip] are both set.
      */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun screenshot(options: ScreenshotOptions = ScreenshotOptions()): ScreenshotResult
+    public suspend fun screenshot(
+        fullPage: Boolean = false,
+        clip: Rectangle? = null,
+        omitBackground: Boolean = false,
+        quality: Int = 90,
+        format: ScreenshotFormat = ScreenshotFormat.Png,
+        scale: Double = 1.0,
+        annotate: Boolean = false,
+        timeoutMs: Long? = null
+    ): ScreenshotResult
 
-    /** Renders the page as PDF. */
+    /**
+     * Renders the page as PDF. The defaults work on every backend: [format] null means Letter on CDP
+     * and Android and the content canvas ([PdfFormat.Content]) on iOS, and [margin] defaults to zero
+     * like Playwright. [printBackground] defaults to true (Playwright: false) because WebView backends
+     * always print backgrounds. Options a backend cannot honor throw [KmpwrightUnsupportedException].
+     * [width] and [height] (inches) override the paper size of [format]; [timeoutMs] null uses [TimeoutConfig.default].
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun pdf(options: PdfOptions = PdfOptions()): PdfResult
+    public suspend fun pdf(
+        format: PdfFormat? = null,
+        landscape: Boolean = false,
+        displayHeaderFooter: Boolean = false,
+        headerTemplate: String = "",
+        footerTemplate: String = "",
+        printBackground: Boolean = true,
+        scale: Double = 1.0,
+        width: Double? = null,
+        height: Double? = null,
+        margin: PdfMargin = PdfMargin(),
+        pageRanges: String = "",
+        timeoutMs: Long? = null
+    ): PdfResult
 
-    /** Experimental: cold, latest-frame-wins frame stream (agent-browser `screencast`; CDP only). */
+    /**
+     * Experimental: cold, latest-frame-wins frame stream (agent-browser `screencast`; CDP only). Chrome
+     * emits changed frames; [maxFps] (1..60) limits delivery rather than forcing synthetic duplicates.
+     * [quality] is the JPEG quality (0..100); [maxWidth] and [maxHeight] are 1..8192.
+     * @throws IllegalArgumentException when a value is out of range.
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class)
-    public fun screencast(options: ScreencastOptions = ScreencastOptions()): Flow<ScreencastFrame>
+    public fun screencast(maxFps: Int = 30, quality: Int = 80, maxWidth: Int = 1920, maxHeight: Int = 1080): Flow<ScreencastFrame>
 
     /** Runs [script] before page scripts in later documents and child frames; returns an id for [removeInitScript]. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
@@ -222,21 +275,54 @@ public interface Page : ElementFinder {
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
     public suspend fun removeInitScript(id: String)
 
-    /** Adds a `<script>` tag; returns its element id. */
+    /**
+     * Adds a `<script>` tag loading [url] or containing [content] (one is required); returns its element
+     * id ([id], or a generated one when empty).
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun addScriptTag(options: ScriptTagOptions): String
+    public suspend fun addScriptTag(
+        url: String? = null,
+        content: String? = null,
+        type: String = "text/javascript",
+        id: String = "",
+        async: Boolean = false,
+        defer: Boolean = false
+    ): String
 
-    /** Adds a `<style>` or stylesheet `<link>`; returns its element id. */
+    /**
+     * Adds a stylesheet `<link>` for [url] or a `<style>` with [content] (one is required); returns its
+     * element id ([id], or a generated one when empty).
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun addStyleTag(options: StyleTagOptions): String
+    public suspend fun addStyleTag(url: String? = null, content: String? = null, id: String = ""): String
 
-    /** Fetches [url] over HTTP (or reads this page when null) and returns readable text (agent-browser `read`). */
+    /**
+     * Fetches [url] over HTTP (or reads this page when null) and returns readable text (agent-browser
+     * `read`). The parameters are those of [HttpReader.read]; [timeoutMs] null uses [TimeoutConfig.default].
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun read(url: String? = null, options: ReadOptions = ReadOptions()): ReadResult
+    public suspend fun read(
+        url: String? = null,
+        raw: Boolean = false,
+        requireMarkdown: Boolean = false,
+        llms: LlmsReadMode? = null,
+        outline: Boolean = false,
+        filter: String? = null,
+        headers: Map<String, String> = emptyMap(),
+        allowedDomains: Set<String> = emptySet(),
+        maxBytes: Int = 2 * 1024 * 1024,
+        caCertificatePath: String? = null,
+        useSystemCa: Boolean = true,
+        timeoutMs: Long? = null
+    ): ReadResult
 
-    /** Core Web Vitals of the current document (agent-browser `vitals`). */
+    /**
+     * Core Web Vitals (agent-browser `vitals`) of [url] (the current document when null). With [reload]
+     * the page is reloaded so load metrics are measured from the start; [settleMs] waits for late
+     * metrics. [timeoutMs] null uses [TimeoutConfig.default].
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun webVitals(options: WebVitalsOptions = WebVitalsOptions()): WebVitalsReport
+    public suspend fun webVitals(url: String? = null, reload: Boolean = true, settleMs: Long = 3_000, timeoutMs: Long? = null): WebVitalsReport
 
     /** Runtime metrics of the current document. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
@@ -246,9 +332,18 @@ public interface Page : ElementFinder {
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
     public suspend fun serviceWorkers(): List<ServiceWorker>
 
-    /** Runs an accessibility audit of the current document. */
+    /**
+     * Runs an axe accessibility audit of the current document (or of [selector]). [tags] are axe rule
+     * tags such as `wcag2a`/`wcag2aa` (empty runs all enabled rules); at most [maxNodesPerRule] nodes are
+     * reported per rule. [timeoutMs] null uses [TimeoutConfig.default].
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun accessibilityAudit(options: AccessibilityAuditOptions = AccessibilityAuditOptions()): AccessibilityAuditReport
+    public suspend fun accessibilityAudit(
+        tags: Set<String> = emptySet(),
+        selector: String? = null,
+        maxNodesPerRule: Int = 10,
+        timeoutMs: Long? = null
+    ): AccessibilityAuditReport
 
     /**
      * Up to the last 200 console messages of this page (Playwright's `page.consoleMessages()`), by
@@ -277,9 +372,27 @@ public interface Page : ElementFinder {
     /**
      * Takes an accessibility snapshot (agent-browser `snapshot`). Interactive elements get refs such as
      * `@e3` that `locator("@e3")` and the selector conveniences accept until the next snapshot.
+     *
+     * The parameters mirror agent-browser's `snapshot` flags:
+     * - [interactive] `-i`: only elements with refs (buttons, links, inputs, iframes and named
+     *   headings/landmarks), as a flat list; refs nested in a ref (such as iframe content) are indented.
+     * - [compact] `-c`: drop structural nodes that contain no refs or values.
+     * - [maxDepth] `-d`: limit the tree depth.
+     * - [selector] `-s`: snapshot only the subtree of this selector.
+     * - [cursor] `-C`: also include elements that are only interactive through `cursor: pointer`/`onclick`.
+     * - [includeHidden]: include elements hidden from assistive technology.
+     * - [urls] `-u`: print each link's resolved `href` as `url="..."`.
      */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun snapshot(options: SnapshotOptions = SnapshotOptions()): Snapshot
+    public suspend fun snapshot(
+        interactive: Boolean = false,
+        compact: Boolean = false,
+        maxDepth: Int? = null,
+        selector: String? = null,
+        cursor: Boolean = false,
+        includeHidden: Boolean = false,
+        urls: Boolean = false
+    ): Snapshot
 
     /** Line diff of two snapshots (agent-browser `diff snapshot`). */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
@@ -303,9 +416,21 @@ public interface Page : ElementFinder {
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
     public suspend fun boundedContent(boundary: ContentBoundary? = null): String
 
-    /** A snapshot tree wrapped in boundary markers (agent-browser `--content-boundaries`). */
+    /**
+     * A [snapshot] tree wrapped in boundary markers (agent-browser `--content-boundaries`); the snapshot
+     * parameters are those of [snapshot].
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun boundedSnapshot(options: SnapshotOptions = SnapshotOptions(), boundary: ContentBoundary? = null): String
+    public suspend fun boundedSnapshot(
+        interactive: Boolean = false,
+        compact: Boolean = false,
+        maxDepth: Int? = null,
+        selector: String? = null,
+        cursor: Boolean = false,
+        includeHidden: Boolean = false,
+        urls: Boolean = false,
+        boundary: ContentBoundary? = null
+    ): String
 
     /** Applies an [ActionPolicy] to every later action (agent-browser `--action-policy`). */
     public fun setActionPolicy(policy: ActionPolicy)
@@ -322,9 +447,13 @@ public interface Page : ElementFinder {
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
     public suspend fun setAllowedDomains(domains: List<String>)
 
-    /** Fills and submits the login form described by [profile] (agent-browser `auth login`). */
+    /**
+     * Fills and submits the login form described by [profile] (agent-browser `auth login`). With
+     * [navigate] it first opens the saved profile URL (false fills the already-open login document);
+     * [submit] false fills without submitting.
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun login(profile: AuthProfile, options: AuthLoginOptions = AuthLoginOptions()): AuthLoginResult
+    public suspend fun login(profile: AuthProfile, navigate: Boolean = true, submit: Boolean = true): AuthLoginResult
 
     // ------------------------------------------------------------------ network
 
@@ -410,9 +539,14 @@ public interface Page : ElementFinder {
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
     public suspend fun setStorageState(state: StorageState)
 
-    /** Saves [storageState] periodically to a file until [StorageStateAutosave.stop]. */
+    /**
+     * Saves [storageState] to [path] now and then every [intervalMs] (one second to one day) until
+     * [StorageStateAutosave.stop]. Like [StorageState.save], [password] must be passed explicitly; null
+     * writes plaintext.
+     * @throws IllegalArgumentException when [path] or [password] is blank or [intervalMs] is out of range.
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun autosaveStorageState(options: StorageStateAutosaveOptions): StorageStateAutosave
+    public suspend fun autosaveStorageState(path: String, password: String?, intervalMs: Long = 30_000): StorageStateAutosave
 
     // ------------------------------------------------------------------ emulation
 
@@ -535,9 +669,16 @@ public interface Clipboard {
 
 /** Chrome trace recording (CDP only). */
 public interface Tracing {
-    /** Starts recording a trace. */
+    /**
+     * Starts recording a trace of the comma-separated trace event [categories], optionally with
+     * [screenshots]; when [path] is set the trace is also written there when stopped.
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun start(options: TracingOptions = TracingOptions())
+    public suspend fun start(
+        categories: String = "blink,devtools.timeline,v8,benchmark",
+        screenshots: Boolean = false,
+        path: String? = null
+    )
 
     /** Stops recording and returns the trace JSON, or null when no trace was active. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
@@ -557,9 +698,30 @@ public interface Profiler {
 
 /** Video recording of the page (agent-browser `record`; CDP only, encoding requires ffmpeg). */
 public interface Video {
-    /** Starts recording to [RecordingOptions.path]. */
+    /**
+     * Starts recording the page to [path], a video file whose extension picks the container (for example
+     * `.mp4` or `.webm`); an existing file is only replaced with [overwrite].
+     *
+     * [fps] is 1..60, [quality] the JPEG quality of captured frames (0..100) and [maxWidth]/[maxHeight]
+     * (2..4096) bound the frame size. [cursor] draws the pointer. With [contactSheetPath] (a `.png`) a
+     * contact sheet of up to [maxContactSheetFrames] (1..100) frames that differ by more than
+     * [contactSheetThreshold] (0..1) is written on stop. [ffmpegExecutable] encodes the video.
+     * @throws IllegalArgumentException when a value is out of range.
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun start(options: RecordingOptions)
+    public suspend fun start(
+        path: String,
+        fps: Int = 30,
+        quality: Int = 85,
+        maxWidth: Int = 1920,
+        maxHeight: Int = 1080,
+        cursor: Boolean = true,
+        contactSheetPath: String? = null,
+        contactSheetThreshold: Double = 0.05,
+        maxContactSheetFrames: Int = 100,
+        overwrite: Boolean = false,
+        ffmpegExecutable: String = "ffmpeg"
+    )
 
     /** Stops recording and returns the written file. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
@@ -609,53 +771,6 @@ public class FileChooser internal constructor(
     override fun toString(): String = "FileChooser(isMultiple=$isMultiple)"
 }
 
-/** Options for [Page.goto]. [timeoutMs] null uses [TimeoutConfig.navigation]. */
-public data class GotoOptions(
-    val waitUntil: LoadState = LoadState.Load,
-    val timeoutMs: Long? = null
-)
-
-/** Options for [Page.setContent]. [timeoutMs] null uses [TimeoutConfig.navigation]. */
-public data class SetContentOptions(
-    val waitUntil: LoadState = LoadState.Load,
-    val timeoutMs: Long? = null
-)
-
-/** Options for [Page.reload]. [timeoutMs] null uses [TimeoutConfig.navigation]. */
-public data class ReloadOptions(
-    val waitUntil: LoadState = LoadState.Load,
-    val timeoutMs: Long? = null
-)
-
-/** Options for [Page.goBack] and [Page.goForward]. [timeoutMs] null uses [TimeoutConfig.navigation]. */
-public data class HistoryNavigationOptions(
-    val waitUntil: LoadState = LoadState.Load,
-    val timeoutMs: Long? = null
-)
-
-/** Options for [Page.waitForURL]. [timeoutMs] null uses [TimeoutConfig.navigation]. */
-public data class WaitForURLOptions(
-    val waitUntil: LoadState = LoadState.Load,
-    val timeoutMs: Long? = null
-)
-
-/**
- * Options for [Page.waitForNavigation]. [url] is a Playwright URL glob (exact URL when it has no glob
- * characters; `regex:` prefix for a regular expression); [timeoutMs] null uses [TimeoutConfig.navigation].
- * Same-document navigations (pushState, replaceState, hash changes) count, as in Playwright.
- */
-public data class WaitForNavigationOptions(
-    val url: String? = null,
-    val waitUntil: LoadState? = null,
-    val timeoutMs: Long? = null
-)
-
-/** Options for [Page.waitForEvent]. [timeoutMs] null uses [TimeoutConfig.default]. */
-public data class WaitForEventOptions(
-    val predicate: ((Any?) -> Boolean)? = null,
-    val timeoutMs: Long? = null
-)
-
 /** Document lifecycle states. */
 public enum class LoadState {
     DOMContentLoaded,
@@ -695,55 +810,28 @@ public data class JsResult(
     val type: String
 )
 
-/**
- * Options for [Page.screenshot] and [Locator.screenshot].
- *
- * - [clip] is in CSS pixels relative to the top-left of the viewport (Playwright semantics); it
- *   cannot be combined with [fullPage], and a clip entirely outside the viewport is an error.
- * - [format] and [quality] (JPEG/WEBP only, 0..100) are honored on every backend.
- * - [omitBackground] makes the default white page background transparent; it needs CDP (PNG or
- *   WEBP) and throws [KmpwrightUnsupportedException] on Android and iOS WebViews, which cannot
- *   render without their own background.
- *
- * @throws IllegalArgumentException when [fullPage] and [clip] are both set.
- */
-public data class ScreenshotOptions @Throws(IllegalArgumentException::class) public constructor(
-    val fullPage: Boolean = false,
-    val clip: Rectangle? = null,
-    val omitBackground: Boolean = false,
-    val quality: Int = 90,
-    val format: ScreenshotFormat = ScreenshotFormat.PNG,
-    val scale: Double = 1.0,
-    /** Draw snapshot refs on the image (agent-browser `screenshot --annotate`); page screenshots only. */
-    val annotate: Boolean = false,
-    /** null uses [TimeoutConfig.default]. */
-    val timeoutMs: Long? = null
-) {
-    init {
-        require(!(fullPage && clip != null)) { "fullPage and clip are mutually exclusive" }
-    }
-}
-
-/** Image formats for [ScreenshotOptions]. */
+/** Image formats for [Page.screenshot] and [Locator.screenshot]. */
 public enum class ScreenshotFormat {
-    PNG,
-    JPEG,
-    WEBP
+    Png,
+    Jpeg,
+    Webp
 }
 
 /**
- * A captured image. [annotations] lists the refs drawn by `ScreenshotOptions(annotate = true)`.
+ * A captured image. [annotations] lists the refs drawn by `page.screenshot(annotate = true)`.
  */
 public data class ScreenshotResult(
     val bytes: ByteArray,
     val width: Int,
     val height: Int,
-    val annotations: List<Annotation> = emptyList()
+    val annotations: List<Annotation> = emptyList(),
+    /** True only when the caller explicitly requested a bounded partial document capture. */
+    val truncated: Boolean = false
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is ScreenshotResult) return false
-        return bytes.contentEquals(other.bytes) && width == other.width && height == other.height && annotations == other.annotations
+        return bytes.contentEquals(other.bytes) && width == other.width && height == other.height && annotations == other.annotations && truncated == other.truncated
     }
 
     override fun hashCode(): Int {
@@ -751,6 +839,7 @@ public data class ScreenshotResult(
         result = 31 * result + width
         result = 31 * result + height
         result = 31 * result + annotations.hashCode()
+        result = 31 * result + truncated.hashCode()
         return result
     }
 }
@@ -966,29 +1055,6 @@ public class ServiceWorker(
     public suspend fun unregister(): Boolean = unregisterAction()
 }
 
-/**
- * Options for [Page.pdf]. The defaults work on every backend: [format] null means Letter on CDP and
- * Android and the content canvas ([PdfFormat.Content]) on iOS, and margins default to zero like
- * Playwright. [printBackground] defaults to true (Playwright: false) because WebView backends
- * always print backgrounds. Options a backend cannot honor throw [KmpwrightUnsupportedException].
- */
-public data class PdfOptions(
-    /** Paper size; null uses the backend default (Letter, or [PdfFormat.Content] on iOS). */
-    val format: PdfFormat? = null,
-    val landscape: Boolean = false,
-    val displayHeaderFooter: Boolean = false,
-    val headerTemplate: String = "",
-    val footerTemplate: String = "",
-    val printBackground: Boolean = true,
-    val scale: Double = 1.0,
-    val width: Double? = null,
-    val height: Double? = null,
-    val margin: PdfMargin = PdfMargin(),
-    val pageRanges: String = "",
-    /** null uses [TimeoutConfig.default]. */
-    val timeoutMs: Long? = null
-)
-
 /** PDF page margins as CSS lengths (`in`, `cm`, `mm`, `px`, `pt`); zero by default, like Playwright. */
 public data class PdfMargin(
     val top: String = "0",
@@ -997,7 +1063,7 @@ public data class PdfMargin(
     val right: String = "0"
 )
 
-/** Paper formats for [PdfOptions]. */
+/** Paper formats for [Page.pdf]. */
 public enum class PdfFormat {
     Letter,
     Legal,
@@ -1027,23 +1093,6 @@ public data class PdfResult(
     override fun hashCode(): Int = bytes.contentHashCode()
 }
 
-/** Options for [Page.addScriptTag]. */
-public data class ScriptTagOptions(
-    val url: String? = null,
-    val content: String? = null,
-    val type: String = "text/javascript",
-    val id: String = "",
-    val async: Boolean = false,
-    val defer: Boolean = false
-)
-
-/** Options for [Page.addStyleTag]. */
-public data class StyleTagOptions(
-    val url: String? = null,
-    val content: String? = null,
-    val id: String = ""
-)
-
 /** Values for `prefers-color-scheme`. */
 public enum class ColorScheme {
     Light,
@@ -1057,13 +1106,3 @@ public enum class DownloadBehavior {
     Deny,
     Allow
 }
-
-/** Options for [Tracing.start]. */
-public data class TracingOptions(
-    /** Comma-separated trace event categories. */
-    val categories: String = "blink,devtools.timeline,v8,benchmark",
-    /** Whether to include screenshots in the trace. */
-    val screenshots: Boolean = false,
-    /** File the trace is also written to when stopped. */
-    val path: String? = null
-)

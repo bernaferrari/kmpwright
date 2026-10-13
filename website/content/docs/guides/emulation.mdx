@@ -30,11 +30,11 @@ Each backend applies an override natively when it can. When it can't, KMPwright 
 | `emulateMedia(colorScheme)` | JavaScript | Native for `Light` and `Dark` when the web view is in a window; JavaScript otherwise and for `NoPreference` | Native (`Emulation.setEmulatedMedia`) |
 | `setGeolocation` | JavaScript | JavaScript | Native (`Emulation.setGeolocationOverride`) |
 | `setOffline` | JavaScript | JavaScript | Native (`Network.emulateNetworkConditions`) |
-| `emulateNetworkConditions` with latency or throughput | Throws `UnsupportedOperationException` | Throws `UnsupportedOperationException` | Native |
+| `emulateNetworkConditions` with latency or throughput | Throws `KmpwrightUnsupportedException` | Throws `KmpwrightUnsupportedException` | Native |
 | `setViewportSize` | Resizes the WebView's layout (CSS px times display density) | Sets the `WKWebView` frame | Native (`Emulation.setDeviceMetricsOverride`) |
-| `setDeviceScaleFactor` | Throws `UnsupportedOperationException` | Throws `UnsupportedOperationException` | Native |
+| `setDeviceScaleFactor` | Throws `KmpwrightUnsupportedException` | Throws `KmpwrightUnsupportedException` | Native |
 | `setUserAgent` | `WebSettings.userAgentString` | `customUserAgent` | `Network.setUserAgentOverride` |
-| `emulateDevice` | Applies viewport and user agent, then throws (see below) | Applies viewport and user agent, then throws (see below) | Viewport, user agent and scale factor |
+| `emulateDevice` | WebView size and user agent (see below) | `WKWebView` frame and user agent (see below) | Viewport, scale factor, mobile, touch and user agent |
 
 `PageCapability.NetworkEmulation` is `Supported` on JVM and `Partial` on Android and iOS (offline only). The `notes` from `page.capabilities()` explain the color scheme and geolocation fallbacks in plain text. Check them at runtime:
 
@@ -99,7 +99,7 @@ page.emulateNetworkConditions(null)                                 // remove th
 | `NetworkConditions.Offline` | | offline | |
 
 - Negative values throw `IllegalArgumentException`.
-- On Android and iOS, any non-zero latency or throughput throws `UnsupportedOperationException`. Only `offline` is emulated there.
+- On Android and iOS, any non-zero latency or throughput throws `KmpwrightUnsupportedException`. Only `offline` is emulated there.
 - `setOffline(x)` and `emulateNetworkConditions(...)` set the same state. The last call wins.
 - Playwright has `context.setOffline()` but no throttling API. KMPwright's `emulateNetworkConditions` matches CDP's `Network.emulateNetworkConditions`.
 
@@ -113,7 +113,7 @@ page.setDeviceScaleFactor(2.0)         // JVM only
 
 - `setViewportSize(width, height)` requires positive values.
 - `viewportSize()` is not `suspend`. It returns the current size in CSS pixels. Android converts device pixels with the display density. iOS reports the web view's bounds. JVM reports the emulated size or, without an override, the last size it observed.
-- `setDeviceScaleFactor(scale)` requires a finite positive value. Android and iOS throw `UnsupportedOperationException`, because the host display sets the scale there.
+- `setDeviceScaleFactor(scale)` requires a finite positive value. Android and iOS throw `KmpwrightUnsupportedException`, because the host display sets the scale there.
 - On Android and iOS, the WebView is a native view. If it's laid out inside your UI, your layout may resize it again.
 
 `KmpwrightConfig.viewport` and `KmpwrightConfig.userAgent` set the initial size and user agent for WebViews that KMPwright creates on Android and iOS. The iOS default frame is 1280×800. The JVM backend doesn't read these fields, so call `setViewportSize`/`setUserAgent` on the page there.
@@ -129,15 +129,16 @@ The user agent applies to requests made after the call.
 ## Device presets
 
 ```kotlin
-page.emulateDevice(Devices.iPhone15)            // JVM: viewport + UA + scale factor
+page.emulateDevice(Devices.iPhone15)            // JVM: viewport, scale, mobile, touch + UA. WebViews: size + UA
 val pixel = Devices.all.getValue("Pixel 7")
 ```
 
-`emulateDevice(device)` applies `device.viewport.width`/`height`, then `device.userAgent`, then `device.viewport.deviceScaleFactor`. It does not apply `isMobile`, `hasTouch` or `isLandscape`. On JVM the metrics override always uses `mobile = false`.
+`emulateDevice(device)` first validates the descriptor (positive `width`/`height`, a finite positive `deviceScaleFactor`, a non-blank `userAgent`) and throws `IllegalArgumentException` without changing anything if it is invalid. Then it applies the viewport and then `device.userAgent`. Pages the page opens later (popups) inherit the device.
 
-<Callout type="warn">
-On Android and iOS, `emulateDevice` sets the viewport and user agent and then throws `UnsupportedOperationException` from the scale-factor step. To emulate a device there, call `setViewportSize(d.viewport.width, d.viewport.height)` and `setUserAgent(d.userAgent)` yourself.
-</Callout>
+| Backend | Viewport step |
+|---|---|
+| JVM (CDP) | Playwright-style: one `Emulation.setDeviceMetricsOverride` with `width`, `height`, `deviceScaleFactor` and `mobile = isMobile` (plus a portrait or landscape `screenOrientation` from `isLandscape` when `isMobile`), then touch emulation with 5 touch points when `hasTouch`, or disabled otherwise. |
+| Android, iOS | The WebView size only, as `setViewportSize(width, height)`. The scale factor, mobile layout and touch support come from the device and are not emulated (listed in `capabilities().notes`). It does not throw for the scale factor. |
 
 | Property | Name (`Devices.all` key) | Viewport | Scale |
 |---|---|---|---|

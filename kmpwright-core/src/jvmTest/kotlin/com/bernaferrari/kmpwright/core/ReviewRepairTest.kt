@@ -50,8 +50,8 @@ class ReviewRepairTest {
             val page = TestPage()
             val pending = async(start = CoroutineStart.UNDISPATCHED) {
                 assertFailsWith<KmpwrightException> {
-                    if (event) page.waitForEvent("console", WaitForEventOptions(timeoutMs = 60_000))
-                    else page.waitForNavigation(WaitForNavigationOptions(timeoutMs = 60_000))
+                    if (event) page.waitForEvent("console", timeoutMs = 60_000)
+                    else page.waitForNavigation(timeoutMs = 60_000)
                 }
             }
             page.close()
@@ -94,7 +94,7 @@ class ReviewRepairTest {
             }
         }
         val failure = assertFailsWith<KmpwrightTimeoutException> {
-            CdpLocator(controller, "button", KmpwrightConfig()).click(ClickOptions(timeoutMs = 200))
+            CdpLocator(controller, "button", KmpwrightConfig()).click(timeoutMs = 200)
         }
         assertTrue(failure.message!!, failure.message!!.contains("intercepted"))
         assertEquals(0, inputCommands)

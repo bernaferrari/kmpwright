@@ -5,7 +5,7 @@ internal interface ScreenshotController {
     suspend fun capture(options: ScreenshotOptions): ScreenshotResult {
         require(options.scale.isFinite() && options.scale > 0) { "Screenshot scale must be positive" }
         require(options.quality in 0..100) { "Screenshot quality must be between 0 and 100" }
-        if (options.format != ScreenshotFormat.PNG || options.omitBackground) {
+        if (options.format != ScreenshotFormat.Png || options.omitBackground) {
             throw KmpwrightException("This backend supports PNG screenshots with the page background only")
         }
         return when {

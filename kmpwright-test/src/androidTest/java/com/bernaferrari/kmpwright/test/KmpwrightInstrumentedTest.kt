@@ -11,7 +11,6 @@ import com.bernaferrari.kmpwright.core.Cookie
 import com.bernaferrari.kmpwright.core.DialogResponse
 import com.bernaferrari.kmpwright.core.Page
 import com.bernaferrari.kmpwright.core.Viewport
-import com.bernaferrari.kmpwright.core.ScreenshotOptions
 import com.bernaferrari.kmpwright.core.ScreenshotFormat
 import com.bernaferrari.kmpwright.core.Locator
 import com.bernaferrari.kmpwright.core.KmpwrightConfig
@@ -88,7 +87,7 @@ class KmpwrightInstrumentedTest {
         page.setContent("<div style='height:3000px;background:#fdd'>First page</div><h1>Last page</h1>")
         page.scroll(com.bernaferrari.kmpwright.core.ScrollDirection.Down, 100.0)
         val before = page.evaluate("window.scrollY").value
-        val result = page.pdf(com.bernaferrari.kmpwright.core.PdfOptions(format = com.bernaferrari.kmpwright.core.PdfFormat.A4))
+        val result = page.pdf(format = com.bernaferrari.kmpwright.core.PdfFormat.A4)
         assertEquals(before, page.evaluate("window.scrollY").value)
         val file = java.io.File.createTempFile("kmpwright-pdf-test-", ".pdf", InstrumentationRegistry.getInstrumentation().targetContext.cacheDir)
         try {
@@ -153,7 +152,7 @@ class KmpwrightInstrumentedTest {
         // The fixture is about collecting buffered entries, so wait until the first paint exists;
         // a busy device can take longer than settleMs to produce it.
         page.waitForFunction("performance.getEntriesByType('paint').some(function(e){return e.name === 'first-contentful-paint'})")
-        val report = page.webVitals(com.bernaferrari.kmpwright.core.WebVitalsOptions(reload = false, settleMs = 200))
+        val report = page.webVitals(reload = false, settleMs = 200)
         assertTrue(report.supportedEntryTypes.contains("paint"))
         assertNotNull(report.fcp)
         assertEquals("0", page.evaluate("Object.keys(window).filter(function(k){return k.startsWith('__kmpwrightVitals_')}).length").value)
@@ -290,7 +289,7 @@ class KmpwrightInstrumentedTest {
     fun testPageWaitForNavigation() {
         runPageTest {
             val navigation = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-                page.waitForNavigation(com.bernaferrari.kmpwright.core.WaitForNavigationOptions(timeoutMs = 3_000))
+                page.waitForNavigation(timeoutMs = 3_000)
             }
             page.setContent("<h1>Navigation waiter fixture</h1>")
             assertTrue("Navigation must complete successfully", navigation.await()?.ok == true)
@@ -301,7 +300,7 @@ class KmpwrightInstrumentedTest {
     fun testPageWaitForEvent() {
         runPageTest {
             val event = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-                page.waitForEvent("domcontentloaded", com.bernaferrari.kmpwright.core.WaitForEventOptions(timeoutMs = 3_000))
+                page.waitForEvent("domcontentloaded", timeoutMs = 3_000)
             }
             page.setContent("<h1>Navigation event fixture</h1>")
             assertEquals(com.bernaferrari.kmpwright.core.LoadState.DOMContentLoaded, event.await())
@@ -376,7 +375,7 @@ class KmpwrightInstrumentedTest {
             page.waitForLoadState(com.bernaferrari.kmpwright.core.LoadState.Load)
 
             val viewport = page.screenshot()
-            val fullPage = page.screenshot(ScreenshotOptions(fullPage = true))
+            val fullPage = page.screenshot(fullPage = true)
             assertTrue(fullPage.bytes.isNotEmpty())
             assertTrue(fullPage.height > viewport.height * 2)
 
@@ -785,7 +784,7 @@ class KmpwrightInstrumentedTest {
     @Test
     fun rendererCrashFailsThePageWithoutKillingTheApp() = runPageTest {
         page.setContent("<h1>before crash</h1>")
-        val navigation = page.goto("chrome://crash", com.bernaferrari.kmpwright.core.GotoOptions(timeoutMs = 10_000))
+        val navigation = page.goto("chrome://crash", timeoutMs = 10_000)
         assertFalse(navigation.ok)
         assertTrue(navigation.error.orEmpty(), navigation.error.orEmpty().contains("crashed", ignoreCase = true))
         try {
@@ -824,7 +823,7 @@ class KmpwrightInstrumentedTest {
             ${colors.joinToString("") { "<div style='background:$it'></div>" }}""")
         val dpr = page.evaluate("window.devicePixelRatio").value.toDouble()
         val scrollHeight = page.evaluate("document.documentElement.scrollHeight").value.toDouble()
-        val shot = page.screenshot(ScreenshotOptions(fullPage = true))
+        val shot = page.screenshot(fullPage = true)
         assertEquals(scrollHeight * dpr, shot.height.toDouble(), 3.0)
         val bitmap = BitmapFactory.decodeByteArray(shot.bytes, 0, shot.bytes.size)
         try {

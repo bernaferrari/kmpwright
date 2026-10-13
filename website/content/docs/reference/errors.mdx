@@ -5,7 +5,7 @@ description: The exception types KMPwright throws, which failures are returned i
 
 ```kotlin
 try {
-    page.getByRole("button", name = "Save").click(ClickOptions(timeoutMs = 5_000))
+    page.getByRole("button", name = "Save").click(timeoutMs = 5_000)
 } catch (e: KmpwrightTimeoutException) {
     // "Element role=button[...] is not enabled after 5000ms while trying to click: <button disabled>"
 } catch (e: KmpwrightUnsupportedException) {
@@ -23,10 +23,10 @@ try {
 | `KmpwrightTimeoutException(message, cause = null)` | An operation did not finish within its timeout. Extends `KmpwrightException`, so `catch (e: KmpwrightException)` also catches timeouts. |
 | `KmpwrightUnsupportedException(message, cause = null)` | The backend (or the page's configuration) lacks a capability: downloads on WebViews, CDP-only APIs, throttling on WebViews, disabled native input, unmet `requireCapabilities`. Extends `KmpwrightException`. Check [Capabilities](/docs/platforms/capabilities) first. |
 | `KmpwrightAssertionError(message, cause = null)` | An `expect(...)` assertion did not hold in time. Extends Kotlin's `AssertionError`, **not** `KmpwrightException`, so `catch (e: KmpwrightException)` does not catch it. |
-| `IllegalArgumentException` (Kotlin) | Invalid arguments, mostly from option constructors and validation: "Startup timeout must be between one and 120 seconds", "fullPage and clip are mutually exclusive", "Screenshot scale must be positive", "Autosave password must not be blank; pass null to write plaintext". |
+| `IllegalArgumentException` (Kotlin) | Invalid arguments, mostly from parameter validation: "Startup timeout must be between one and 120 seconds", "fullPage and clip are mutually exclusive", "Screenshot scale must be positive", "Autosave password must not be blank; pass null to write plaintext". |
 | `IllegalStateException` (Kotlin) | Misuse of the host: creating an Android `Browser` off the main thread, `browser.page()` when no page exists on Android or iOS. |
 
-KMPwright converts its own timeouts to `KmpwrightTimeoutException` and never lets `kotlinx.coroutines.TimeoutCancellationException` escape a page API, because that type is a `CancellationException` and would silently cancel your coroutine. Cancellation of your own coroutine (including an outer `withTimeout`) propagates unchanged. One exception today: when Chromium does not publish its endpoint within `BrowserLaunchOptions.startupTimeoutMs`, `launchBrowser` fails with `TimeoutCancellationException`.
+KMPwright converts its own timeouts to `KmpwrightTimeoutException` and never lets `kotlinx.coroutines.TimeoutCancellationException` escape a page API, because that type is a `CancellationException` and would silently cancel your coroutine. Cancellation of your own coroutine (including an outer `withTimeout`) propagates unchanged. This includes `launchBrowser`: when Chromium does not become ready within `startupTimeoutMs`, it throws `KmpwrightTimeoutException` ("Chromium did not become ready within …ms").
 
 `page.requireCapabilities(...)` throws `KmpwrightUnsupportedException` ("Page capability requirements are not satisfied: …").
 
@@ -42,7 +42,7 @@ Some failures are values, like in Playwright:
 |---|---|
 | `goto`, `reload`, `goBack`, `goForward`, `pushState`, `waitForNavigation` | `NavigationResult(ok = false, error = "…")` for blocked, refused or failed navigations, and `ok = false` with `error = null` for a committed 4xx/5xx page. Only a timeout (and a few pre-checks below) throw. |
 | `goBack`, `goForward` | `null` when there is no history entry. |
-| `waitForNavigation(options)` (without an action) | `null` on timeout. |
+| `waitForNavigation(url, waitUntil, timeoutMs)` (without an action) | `null` on timeout. |
 | `waitForEvent` | `null` on timeout. |
 | `Locator.isVisible`, `count`, `textContent`… | `false`, `0`, `null` when nothing matches (see [Locator queries](/docs/reference/locator#locator-queries)). |
 | `PageEvents.response` / `waitForResponse` | A failed request arrives as a `Response` with status 0 and the network error in `statusText`. |
@@ -65,7 +65,7 @@ All are `KmpwrightTimeoutException`. `N` is the timeout that applied.
 | `No navigation matching … happened within the timeout` | Action-scoped `waitForNavigation { }`. |
 | `Timeout Nms exceeded evaluating JavaScript` / `evaluating a page script` | A script did not return in time. |
 | `Timeout Nms exceeded while performing tap` (or other gesture) | Native input through `page.touchscreen`, `page.mouse`, `page.keyboard`. |
-| `Timeout reading HTTP content` | `page.read` / `HttpReader` exceeded `ReadOptions.timeoutMs`. |
+| `Timeout reading HTTP content` | `page.read` / `HttpReader` exceeded its `timeoutMs` (null uses `TimeoutConfig.default`). |
 
 ## Assertion failures
 
@@ -110,7 +110,6 @@ Errors that retrying cannot fix fail immediately with `KmpwrightException`:
 | `Clicking … did not check it` | The click did not change the state (custom widget). |
 | `Strict mode violation: '…' resolved to N elements (…). Use first(), last(), nth() or a more specific selector.` | The selector is ambiguous with `strictSelectors = true`. |
 | `… needs a locator created by the same page` / `dragTo target must belong to the same page` | `and`, `or`, `has`, `hasNot` or `dragTo` received a locator from another page. |
-| `Annotated screenshots are page screenshots; use page.screenshot(ScreenshotOptions(annotate = true))` | `annotate = true` on `Locator.screenshot`. |
 
 ## Selectors and refs
 
@@ -150,7 +149,7 @@ Errors that retrying cannot fix fail immediately with `KmpwrightException`:
 | `Blocked by KMPwright domain filter: host` (optionally `(redirected to url)`) | `NavigationResult.error` | `setAllowedDomains` blocked the navigation or its redirect. Blocked subresources fail as network errors. |
 | `Domain filter entry '…' is not a host name or '*.' wildcard` | Thrown | Invalid `setAllowedDomains` entry. |
 | `Frame origin is not allowed by KmpwrightConfig: url` | Thrown (JVM) | A frame operation targeted a disallowed origin. |
-| `HTTP read origin is not allowed: url` / `HTTP read domain is not allowed: host` | Thrown | `page.read` blocked by `allowedOriginRules` or `ReadOptions.allowedDomains`. |
+| `HTTP read origin is not allowed: url` / `HTTP read domain is not allowed: host` | Thrown | `page.read` blocked by `allowedOriginRules` or the `allowedDomains` parameter. |
 
 ## Disabled by configuration
 
@@ -158,7 +157,7 @@ Errors that retrying cannot fix fail immediately with `KmpwrightException`:
 |---|---|
 | `JavaScript evaluation is disabled…` / `Script insertion is disabled by KmpwrightConfig.allowEval` | `allowEval = false` |
 | `DOM extraction is disabled…` / `HAR capture is disabled…` / `Response body access is disabled…` / `HTTP content extraction is disabled…` | `allowDomExtraction = false` |
-| `Trace export is disabled by KmpwrightConfig.enableTraceExport` | `enableTraceExport = false` with `TracingOptions.path` |
+| `Trace export is disabled by KmpwrightConfig.enableTraceExport` | `enableTraceExport = false` with a `path` passed to `tracing.start` |
 | `Native touch is disabled by InputMode.JsOnly` / `Native mouse requires InputMode.Hybrid` / `Native keyboard requires InputMode.Hybrid` | `inputMode` (`KmpwrightUnsupportedException`) |
 | `Debug mode cannot be enabled when KmpwrightConfig.productionMode is true` | `productionMode` with `debug.enabled` (`IllegalArgumentException`) |
 
@@ -175,9 +174,9 @@ All `KmpwrightUnsupportedException`:
 | `Tracing is unavailable on this backend` / `Profiling …` / `Video recording …` / `Screencast …` / `HAR capture …` / `File chooser interception …` / `Response body retrieval …` | Backends without that hook |
 | `This backend cannot throttle latency or throughput; only offline emulation is available (see PageCapabilities.networkEmulation).` | Android, iOS |
 | `Android WebView device scale is determined by the host display` / `WKWebView device scale is determined by the host screen` | `setDeviceScaleFactor` |
-| `ScreenshotOptions.omitBackground is not supported on Android WebView: …` / `… on iOS WKWebView: …` / `WEBP screenshots are not supported on iOS (ImageIO cannot encode WebP); use PNG or JPEG` | `screenshot()` options |
+| `omitBackground is not supported on Android WebView: …` / `… on iOS WKWebView: …` / `WEBP screenshots are not supported on iOS (ImageIO cannot encode WebP); use PNG or JPEG` | `screenshot()` parameters |
 | `Cookie attribute reads require WebView GET_COOKIE_INFO support` | Android `cookies()` on an old WebView provider |
-| `Android PDF capture supports paper size, orientation and margins; …` / `WKWebView PDF export supports only the content canvas (format null or Content) with zero margins, …` | `pdf()` options |
+| `Android PDF capture supports paper size, orientation and margins; …` / `WKWebView PDF export supports only the content canvas (format null or Content) with zero margins, …` | `pdf()` parameters |
 | `WKWebView cannot synthesize a trusted native pinch gesture` | iOS `touchscreen.pinch` |
 | `Desktop browser process launch requires the JVM backend` / `Desktop Chrome profiles are unavailable on native WebViews` | `launchBrowser`, `ChromeProfiles` on mobile |
 | `This CDP endpoint is page-scoped. Open a browser-scoped endpoint to manage multiple pages.` / `Target management requires a browser-scoped CDP endpoint` | JVM with a `/devtools/page/…` endpoint |

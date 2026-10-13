@@ -175,7 +175,7 @@ class IOSBackendContractTest {
         val screenshotController = RecordingScreenshotController()
         val page = IOSPage(controller, screenshotControllerFactory = { screenshotController })
 
-        val screenshot = page.screenshot(ScreenshotOptions(fullPage = true))
+        val screenshot = page.screenshot(fullPage = true)
         assertEquals(320, screenshot.width)
         assertTrue(screenshotController.fullPageCalls == 1)
         assertEquals("pdf", page.pdf().bytes.decodeToString())

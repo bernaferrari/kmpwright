@@ -1,7 +1,7 @@
 package com.bernaferrari.kmpwright.core
 
 /**
- * Host allowlist used by [Page.setAllowedDomains] and [ReadOptions.allowedDomains], with
+ * Host allowlist used by [Page.setAllowedDomains] and the `allowedDomains` of [HttpReader.read], with
  * agent-browser `--allowed-domains` semantics (see [hostMatchesDomainPattern]); [ActionPolicy]
  * domain lists use the same rule.
  *

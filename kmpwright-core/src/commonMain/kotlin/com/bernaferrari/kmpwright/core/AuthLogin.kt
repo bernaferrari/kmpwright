@@ -5,8 +5,6 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-/** Navigate defaults to the saved profile URL; false fills the already-open login document. */
-public data class AuthLoginOptions(val navigate: Boolean = true, val submit: Boolean = true)
 /** Outcome of [Page.login]; `submitted` does not prove the login succeeded. */
 public data class AuthLoginResult(val url: String, val submitted: Boolean)
 
@@ -15,10 +13,10 @@ public data class AuthLoginResult(val url: String, val submitted: Boolean)
  * runs in one document task; changed targets fail before the remaining credential is written.
  * Input/change events are synthetic. A submitted result is not proof of successful authentication.
  */
-internal suspend fun Page.loginWithProfile(profile: AuthProfile, options: AuthLoginOptions): AuthLoginResult {
+internal suspend fun Page.loginWithProfile(profile: AuthProfile, navigate: Boolean, submit: Boolean): AuthLoginResult {
     val expectedOrigin = canonicalHttpOrigin(normalizeReaderUrl(profile.url))
         ?: throw KmpwrightException("Auth profile requires an HTTP(S) URL")
-    if (options.navigate) goto(profile.url)
+    if (navigate) goto(profile.url)
     if (canonicalHttpOrigin(url.value) != expectedOrigin) throw KmpwrightException("Auth target origin does not match the saved profile")
     val result = evaluate("""
         (function(){
@@ -51,7 +49,7 @@ internal suspend fun Page.loginWithProfile(profile: AuthProfile, options: AuthLo
             return ranked[0];
           });
           if (!username || username.tagName!=='INPUT' || !/^(text|email|tel)$/.test(username.type)) throw new Error('Auth username target must be an editable input');
-          var submit=${options.submit} ? selected(${profile.submitSelector?.let(::jsStringLiteral) ?: "null"},function(){
+          var submit=${submit} ? selected(${profile.submitSelector?.let(::jsStringLiteral) ?: "null"},function(){
             var buttons=Array.from(root.querySelectorAll('button[type=submit],input[type=submit],button:not([type])')).filter(usable);
             if (buttons.length!==1) throw new Error('Could not select one usable submit control');
             return buttons[0];

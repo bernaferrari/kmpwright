@@ -91,7 +91,7 @@ Keep the copy up to date with the KMPwright version you depend on; the API is pr
 Whichever mechanism you use, these points prevent most mistakes:
 
 - The package is `com.bernaferrari.kmpwright.core`, and every page and locator method is `suspend`.
-- Names follow Playwright (`goto`, `goBack`, `getByRole`, `pressSequentially`, `waitForSelector`), but options are Kotlin data classes (`ClickOptions(force = true)`), not JavaScript option objects.
+- Names follow Playwright (`goto`, `goBack`, `getByRole`, `pressSequentially`, `waitForSelector`), but options are Kotlin named arguments (`click(force = true)`), not JavaScript option objects.
 - `timeoutMs = null` uses the configured default (`TimeoutConfig`), it does not disable the timeout.
 - Some features depend on the backend; check `page.capabilities()` (see [Capabilities](/docs/platforms/capabilities)).
 - For agents that drive pages, refs such as `@e3` come from the latest `snapshot()` and must be refreshed after the page changes (see [Snapshots and refs](/docs/agents/snapshots)).

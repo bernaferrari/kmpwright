@@ -5,7 +5,9 @@ public enum class BackendKind {
     Unknown,
     AndroidWebView,
     IOSWebView,
-    JvmCdp
+    JvmCdp,
+    /** A same-origin `<iframe>` driven from Kotlin/JS in a web page. */
+    Browser
 }
 
 /**

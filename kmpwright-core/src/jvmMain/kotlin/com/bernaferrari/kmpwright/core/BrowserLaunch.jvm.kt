@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public actual suspend fun launchBrowser(options: BrowserLaunchOptions, config: KmpwrightConfig): LaunchedBrowser = withContext(Dispatchers.IO) {
+internal actual suspend fun launchPlatformBrowser(options: BrowserLaunchOptions, config: KmpwrightConfig): LaunchedBrowser = withContext(Dispatchers.IO) {
     val extensions = options.extensionDirectories.map { path -> Path.of(path).toAbsolutePath().normalize().also { directory ->
         require(Files.isDirectory(directory) && Files.isRegularFile(directory.resolve("manifest.json"))) { "Extension directory must contain manifest.json: $path" }
     }.toString() }
@@ -37,6 +37,10 @@ public actual suspend fun launchBrowser(options: BrowserLaunchOptions, config: K
                     (available == null && (Files.exists(Path.of("/.dockerenv")) || Files.exists(Path.of("/run/.containerenv"))))) add("--disable-dev-shm-usage")
             }
             if (options.ignoreHttpsErrors) add("--ignore-certificate-errors")
+            options.proxy?.let { proxy ->
+                add("--proxy-server=${proxy.server}")
+                if (proxy.bypass.isNotEmpty()) add("--proxy-bypass-list=" + proxy.bypass.joinToString(";"))
+            }
             if (extensions.isNotEmpty()) add("--load-extension=" + extensions.joinToString(","))
             val features = options.arguments.filter { it.startsWith("--enable-features=") }
                 .flatMap { it.substringAfter('=').split(',') }.toMutableList()
@@ -78,7 +82,13 @@ public actual suspend fun launchBrowser(options: BrowserLaunchOptions, config: K
             }
             error("Unreachable")
         }
-        val cdp = (config.cdp ?: CdpConfig()).copy(websocketUrl = ws, provider = null, remoteBrowserSharesFileSystem = true)
+        val base = config.cdp ?: CdpConfig()
+        val cdp = base.copy(
+            websocketUrl = ws, provider = null, remoteBrowserSharesFileSystem = true,
+            // Headed windows keep their scrollbars, as in Playwright; --show-scrollbars opts out too.
+            hideScrollbars = base.hideScrollbars && options.headless &&
+                options.arguments.none { it == "--show-scrollbars" || it.startsWith("--show-scrollbars=") },
+        )
         browser = Browser(JvmPlatformContext(), config.copy(cdp = cdp))
         withTimeout(options.startupTimeoutMs) { browser.version() }
         OwnedLaunchedBrowser(browser, running, directory, ownsProfile, endpointContents, caHome, shutdownHook)
@@ -88,6 +98,14 @@ public actual suspend fun launchBrowser(options: BrowserLaunchOptions, config: K
             try { browser?.close() } catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
             try { cleanupLaunchedBrowser(process, directory, ownsProfile, endpointContents, caHome) }
             catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
+        }
+        // A startup deadline is a launch failure, not a cancellation of the caller.
+        if (error is TimeoutCancellationException) {
+            throw KmpwrightTimeoutException(
+                "Chromium did not become ready within ${options.startupTimeoutMs}ms. " +
+                    "Check the executablePath passed to launchBrowser, or raise startupTimeoutMs on slow machines.",
+                error,
+            )
         }
         throw error
     }

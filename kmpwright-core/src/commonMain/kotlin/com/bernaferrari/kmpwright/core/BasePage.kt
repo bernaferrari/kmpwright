@@ -110,29 +110,35 @@ internal abstract class BasePage protected constructor(
     protected abstract fun createKeyboard(): Keyboard
 
     private fun guardedTouch(delegate: Touchscreen): Touchscreen = object : Touchscreen {
-        override suspend fun tap(x: Double, y: Double, options: TapOptions) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.tap(x, y, options) }
-        override suspend fun longTap(x: Double, y: Double, options: LongTapOptions) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.longTap(x, y, options) }
-        override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, options: ScrollOptions) { checkPolicy(ActionType.Scroll, currentPageUrl()); delegate.scroll(x, y, deltaX, deltaY, options) }
-        override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, options: SwipeOptions) { checkPolicy(ActionType.Drag, currentPageUrl()); delegate.swipe(x1, y1, x2, y2, options) }
-        override suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions) { checkPolicy(ActionType.Scroll, currentPageUrl()); delegate.pinch(x, y, scale, options) }
+        override suspend fun tap(x: Double, y: Double, modifiers: Int, timeoutMs: Long?) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.tap(x, y, modifiers, timeoutMs) }
+        override suspend fun longTap(x: Double, y: Double, durationMs: Long, timeoutMs: Long?) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.longTap(x, y, durationMs, timeoutMs) }
+        override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, steps: Int, timeoutMs: Long?) { checkPolicy(ActionType.Scroll, currentPageUrl()); delegate.scroll(x, y, deltaX, deltaY, steps, timeoutMs) }
+        override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, speed: Double, timeoutMs: Long?) { checkPolicy(ActionType.Drag, currentPageUrl()); delegate.swipe(x1, y1, x2, y2, speed, timeoutMs) }
+        override suspend fun pinch(x: Double, y: Double, scale: Double, timeoutMs: Long?) { checkPolicy(ActionType.Scroll, currentPageUrl()); delegate.pinch(x, y, scale, timeoutMs) }
     }
 
     private fun guardedMouse(delegate: Mouse): Mouse = object : Mouse {
-        override suspend fun move(x: Double, y: Double, options: MoveOptions) { checkPolicy(ActionType.Hover, currentPageUrl()); delegate.move(x, y, options) }
-        override suspend fun click(x: Double, y: Double, options: MouseClickOptions) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.click(x, y, options) }
-        override suspend fun dblclick(x: Double, y: Double, options: MouseClickOptions) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.dblclick(x, y, options) }
-        override suspend fun down(options: MouseDownOptions) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.down(options) }
-        override suspend fun up(options: MouseUpOptions) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.up(options) }
-        override suspend fun wheel(deltaX: Double, deltaY: Double, options: WheelOptions) { checkPolicy(ActionType.Scroll, currentPageUrl()); delegate.wheel(deltaX, deltaY, options) }
-        override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions) { checkPolicy(ActionType.Drag, currentPageUrl()); delegate.drag(startX, startY, endX, endY, options) }
+        override suspend fun move(x: Double, y: Double, steps: Int, timeoutMs: Long?) { checkPolicy(ActionType.Hover, currentPageUrl()); delegate.move(x, y, steps, timeoutMs) }
+        override suspend fun click(x: Double, y: Double, button: MouseButton, clickCount: Int, delayMs: Long, timeoutMs: Long?) {
+            checkPolicy(ActionType.Click, currentPageUrl()); delegate.click(x, y, button, clickCount, delayMs, timeoutMs)
+        }
+        override suspend fun dblclick(x: Double, y: Double, button: MouseButton, delayMs: Long, timeoutMs: Long?) {
+            checkPolicy(ActionType.Click, currentPageUrl()); delegate.dblclick(x, y, button, delayMs, timeoutMs)
+        }
+        override suspend fun down(button: MouseButton, clickCount: Int) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.down(button, clickCount) }
+        override suspend fun up(button: MouseButton) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.up(button) }
+        override suspend fun wheel(deltaX: Double, deltaY: Double, timeoutMs: Long?) { checkPolicy(ActionType.Scroll, currentPageUrl()); delegate.wheel(deltaX, deltaY, timeoutMs) }
+        override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, timeoutMs: Long?) {
+            checkPolicy(ActionType.Drag, currentPageUrl()); delegate.drag(startX, startY, endX, endY, timeoutMs)
+        }
     }
 
     private fun guardedKeyboard(delegate: Keyboard): Keyboard = object : Keyboard {
         override suspend fun insertText(text: String) { checkPolicy(ActionType.Type, currentPageUrl()); delegate.insertText(text) }
-        override suspend fun type(text: String, options: TypeOptions) { checkPolicy(ActionType.Type, currentPageUrl()); delegate.type(text, options) }
+        override suspend fun type(text: String, delayMs: Long, timeoutMs: Long?) { checkPolicy(ActionType.Type, currentPageUrl()); delegate.type(text, delayMs, timeoutMs) }
         override suspend fun down(key: String) { checkPolicy(ActionType.Press, currentPageUrl()); delegate.down(key) }
         override suspend fun up(key: String) { checkPolicy(ActionType.Press, currentPageUrl()); delegate.up(key) }
-        override suspend fun press(key: String, options: PressOptions) { checkPolicy(ActionType.Press, currentPageUrl()); delegate.press(key, options) }
+        override suspend fun press(key: String, delayMs: Long, timeoutMs: Long?) { checkPolicy(ActionType.Press, currentPageUrl()); delegate.press(key, delayMs, timeoutMs) }
     }
 
     override fun capabilities(): PageCapabilities = PageCapabilities()
@@ -497,22 +503,22 @@ internal abstract class BasePage protected constructor(
 
     // ------------------------------------------------------------------ navigation
 
-    override suspend fun goto(url: String, options: GotoOptions): NavigationResult {
+    override suspend fun goto(url: String, waitUntil: LoadState, timeoutMs: Long?): NavigationResult {
         checkPolicy(ActionType.Navigate, url)
-        return gotoApproved(url, options)
+        return gotoApproved(url, waitUntil, timeoutMs)
     }
 
-    private suspend fun gotoApproved(url: String, options: GotoOptions): NavigationResult {
+    private suspend fun gotoApproved(url: String, waitUntil: LoadState = LoadState.Load, timeoutMs: Long? = null): NavigationResult {
         validateNavigationOrigin(url)
-        val timeout = config.navigationTimeout(options.timeoutMs)
+        val timeout = config.navigationTimeout(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
         approvedNavigationUrl.value = url
         networkIdleSince.value = 0
         invalidateOnNavigation()
         val previous = currentPageUrl()
         val result = navigate(timeout, url, acceptSameUrl = previous != null && sameUrl(previous, url),
-            description = "navigating to \"$url\"", waitUntil = options.waitUntil) { controller.loadUrl(url) }
-        return finishLoad(result, options.waitUntil, started, timeout)
+            description = "navigating to \"$url\"", waitUntil = waitUntil) { controller.loadUrl(url) }
+        return finishLoad(result, waitUntil, started, timeout)
     }
 
     private fun validateNavigationOrigin(url: String) {
@@ -529,22 +535,22 @@ internal abstract class BasePage protected constructor(
         }
     }
 
-    override suspend fun reload(options: ReloadOptions): NavigationResult {
+    override suspend fun reload(waitUntil: LoadState, timeoutMs: Long?): NavigationResult {
         checkPolicy(ActionType.Navigate, currentPageUrl())
-        val timeout = config.navigationTimeout(options.timeoutMs)
+        val timeout = config.navigationTimeout(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
         invalidateOnNavigation()
-        val result = navigate(timeout, currentPageUrl(), acceptSameUrl = true, description = "reloading", waitUntil = options.waitUntil) { controller.reload() }
-        return finishLoad(result, options.waitUntil, started, timeout)
+        val result = navigate(timeout, currentPageUrl(), acceptSameUrl = true, description = "reloading", waitUntil = waitUntil) { controller.reload() }
+        return finishLoad(result, waitUntil, started, timeout)
     }
 
-    override suspend fun goBack(options: HistoryNavigationOptions): NavigationResult? = traverseHistory(-1, options)
+    override suspend fun goBack(waitUntil: LoadState, timeoutMs: Long?): NavigationResult? = traverseHistory(-1, waitUntil, timeoutMs)
 
-    override suspend fun goForward(options: HistoryNavigationOptions): NavigationResult? = traverseHistory(1, options)
+    override suspend fun goForward(waitUntil: LoadState, timeoutMs: Long?): NavigationResult? = traverseHistory(1, waitUntil, timeoutMs)
 
-    private suspend fun traverseHistory(delta: Int, options: HistoryNavigationOptions): NavigationResult? {
+    private suspend fun traverseHistory(delta: Int, waitUntil: LoadState, timeoutMs: Long?): NavigationResult? {
         checkPolicy(ActionType.Navigate, currentPageUrl())
-        val timeout = config.navigationTimeout(options.timeoutMs)
+        val timeout = config.navigationTimeout(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
         val label = if (delta < 0) "going back" else "going forward"
         if (controller.canTraverseHistory(delta) == false) return null
@@ -587,12 +593,12 @@ internal abstract class BasePage protected constructor(
                 }
                 return null
             }
-            return finishLoad(result, options.waitUntil, started, timeout)
+            return finishLoad(result, waitUntil, started, timeout)
         }
         invalidateOnNavigation()
         val result = navigate(timeout, null, acceptSameUrl = true, description = label, urlChangeFallback = true,
-            waitUntil = options.waitUntil, start = start)
-        return finishLoad(result, options.waitUntil, started, timeout)
+            waitUntil = waitUntil, start = start)
+        return finishLoad(result, waitUntil, started, timeout)
     }
 
     private suspend fun pollForUrlChange(before: String?, timeoutMs: Long): String? {
@@ -605,17 +611,17 @@ internal abstract class BasePage protected constructor(
         return null
     }
 
-    override suspend fun setContent(html: String, options: SetContentOptions) {
+    override suspend fun setContent(html: String, waitUntil: LoadState, timeoutMs: Long?) {
         checkPolicy(ActionType.SetContent, currentPageUrl())
-        val timeout = config.navigationTimeout(options.timeoutMs)
+        val timeout = config.navigationTimeout(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
         networkIdleSince.value = 0
         invalidateOnNavigation()
         val result = navigate(timeout, null, acceptSameUrl = true, description = "setting page content", localContent = true,
-            waitUntil = options.waitUntil) { controller.loadHtml(html, null) }
+            waitUntil = waitUntil) { controller.loadHtml(html, null) }
         if (!result.committed) throw KmpwrightException(result.error ?: "Failed to load HTML content")
-        if (options.waitUntil == LoadState.NetworkIdle) finishLoad(result, options.waitUntil, started, timeout)
-        else waitForLoadState(options.waitUntil, (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(1))
+        if (waitUntil == LoadState.NetworkIdle) finishLoad(result, waitUntil, started, timeout)
+        else waitForLoadState(waitUntil, (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(1))
     }
 
     internal fun invalidateOnNavigation() {
@@ -685,7 +691,17 @@ internal abstract class BasePage protected constructor(
         return evalString("document.documentElement.outerHTML") ?: ""
     }
 
-    override suspend fun screenshot(options: ScreenshotOptions): ScreenshotResult {
+    override suspend fun screenshot(
+        fullPage: Boolean,
+        clip: Rectangle?,
+        omitBackground: Boolean,
+        quality: Int,
+        format: ScreenshotFormat,
+        scale: Double,
+        annotate: Boolean,
+        timeoutMs: Long?
+    ): ScreenshotResult {
+        val options = ScreenshotOptions(fullPage, clip, omitBackground, quality, format, scale, annotate, timeoutMs)
         checkPolicy(ActionType.Screenshot, currentPageUrl())
         if (options.annotate) return annotatedScreenshot(options)
         return captureScreenshot(options)
@@ -785,32 +801,32 @@ internal abstract class BasePage protected constructor(
     override suspend fun waitForTimeout(ms: Long) = delay(ms)
 
     /** Returns null when no navigation happens within the timeout (unchanged contract). */
-    override suspend fun waitForNavigation(options: WaitForNavigationOptions): NavigationResult? = awaitPageOperation(closeSignal) {
-        val timeout = config.navigationTimeout(options.timeoutMs)
+    override suspend fun waitForNavigation(url: String?, waitUntil: LoadState?, timeoutMs: Long?): NavigationResult? = awaitPageOperation(closeSignal) {
+        val timeout = config.navigationTimeout(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
         val result = withTimeoutOrNull(timeout) {
             navigationResultFlow.first { navigation ->
-                options.url == null || waitUrlPatternMatches(options.url, navigation.url)
+                url == null || waitUrlPatternMatches(url, navigation.url)
             }
         } ?: return@awaitPageOperation null
-        options.waitUntil?.let { awaitLoadState(it, (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(1)) }
+        waitUntil?.let { awaitLoadState(it, (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(1)) }
         result
     }
 
-    override suspend fun waitForURL(url: String, options: WaitForURLOptions) {
+    override suspend fun waitForURL(url: String, waitUntil: LoadState, timeoutMs: Long?) {
         val pattern = urlPatternRegex(url)
-        awaitUrl("matching $url", options) { pattern.matches(it) }
+        awaitUrl("matching $url", waitUntil, timeoutMs) { pattern.matches(it) }
     }
 
-    override suspend fun waitForURL(url: Regex, options: WaitForURLOptions) =
-        awaitUrl("matching /${url.pattern}/", options) { url.containsMatchIn(it) }
+    override suspend fun waitForURL(url: Regex, waitUntil: LoadState, timeoutMs: Long?) =
+        awaitUrl("matching /${url.pattern}/", waitUntil, timeoutMs) { url.containsMatchIn(it) }
 
-    override suspend fun waitForURL(options: WaitForURLOptions, predicate: (String) -> Boolean) =
-        awaitUrl("accepted by the predicate", options, predicate)
+    override suspend fun waitForURL(waitUntil: LoadState, timeoutMs: Long?, predicate: (String) -> Boolean) =
+        awaitUrl("accepted by the predicate", waitUntil, timeoutMs, predicate)
 
-    /** Polls the live `location.href` (so same-document navigations count), then waits for [WaitForURLOptions.waitUntil]. */
-    private suspend fun awaitUrl(description: String, options: WaitForURLOptions, matches: (String) -> Boolean) {
-        val timeout = config.navigationTimeout(options.timeoutMs)
+    /** Polls the live `location.href` (so same-document navigations count), then waits for [waitUntil]. */
+    private suspend fun awaitUrl(description: String, waitUntil: LoadState, timeoutMs: Long?, matches: (String) -> Boolean) {
+        val timeout = config.navigationTimeout(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
         withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for a URL $description" }) {
             while (true) {
@@ -820,20 +836,20 @@ internal abstract class BasePage protected constructor(
                 withTimeoutOrNull(100) { url.first { it != href } }
             }
         }
-        awaitLoadState(options.waitUntil, (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(1))
+        awaitLoadState(waitUntil, (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(1))
     }
 
-    override suspend fun waitForEvent(event: String, options: WaitForEventOptions): Any? = awaitPageOperation(closeSignal) {
-        withTimeoutOrNull(config.defaultTimeout(options.timeoutMs)) {
+    override suspend fun waitForEvent(event: String, timeoutMs: Long?, predicate: ((Any?) -> Boolean)?): Any? = awaitPageOperation(closeSignal) {
+        withTimeoutOrNull(config.defaultTimeout(timeoutMs)) {
             when (event.lowercase()) {
-                "console" -> events.console.first { options.predicate == null || options.predicate(it) }
-                "navigation" -> events.navigation.first { options.predicate == null || options.predicate(it) }
-                "dialog" -> awaitingDialog { events.dialog.first { options.predicate == null || options.predicate(it) } }
-                "request" -> events.request.first { options.predicate == null || options.predicate(it) }
-                "response" -> events.response.first { options.predicate == null || options.predicate(it) }
-                "download" -> events.download.first { options.predicate == null || options.predicate(it) }
-                "filechooser" -> events.fileChooser.first { options.predicate == null || options.predicate(it) }
-                "pageerror" -> events.pageError.first { options.predicate == null || options.predicate(it) }
+                "console" -> events.console.first { predicate == null || predicate(it) }
+                "navigation" -> events.navigation.first { predicate == null || predicate(it) }
+                "dialog" -> awaitingDialog { events.dialog.first { predicate == null || predicate(it) } }
+                "request" -> events.request.first { predicate == null || predicate(it) }
+                "response" -> events.response.first { predicate == null || predicate(it) }
+                "download" -> events.download.first { predicate == null || predicate(it) }
+                "filechooser" -> events.fileChooser.first { predicate == null || predicate(it) }
+                "pageerror" -> events.pageError.first { predicate == null || predicate(it) }
                 "domcontentloaded" -> events.loadState.first { it == LoadState.DOMContentLoaded }
                 "load" -> events.loadState.first { it == LoadState.Load }
                 "networkidle" -> events.loadState.first { it == LoadState.NetworkIdle }
@@ -902,7 +918,7 @@ internal abstract class BasePage protected constructor(
             val before = routeHandlers.value
             replaced = before[key]
             // remove-then-put moves an existing key to the end (newest registration).
-            if (routeHandlers.compareAndSet(before, before.remove(key).put(key, regex to handler))) break
+            if (routeHandlers.compareAndSet(before, before.removing(key).putting(key, regex to handler))) break
         }
         replaced?.let { controller.removeRouteHandler(it.first.pattern) }
         controller.addRouteHandler(regex.pattern) { route -> handler(route) }
@@ -930,7 +946,7 @@ internal abstract class BasePage protected constructor(
         while (true) {
             val before = routeHandlers.value
             removed = before[urlPattern]
-            if (routeHandlers.compareAndSet(before, before.remove(urlPattern))) break
+            if (routeHandlers.compareAndSet(before, before.removing(urlPattern))) break
         }
         forgetSetup("route:$urlPattern")
         removed?.let { controller.removeRouteHandler(it.first.pattern) }
@@ -938,7 +954,23 @@ internal abstract class BasePage protected constructor(
 
     private val readAllowedDomains = atomic<Set<String>>(emptySet())
     private val httpReader by lazy { HttpReader(config) }
-    override suspend fun read(url: String?, options: ReadOptions): ReadResult {
+    override suspend fun read(
+        url: String?,
+        raw: Boolean,
+        requireMarkdown: Boolean,
+        llms: LlmsReadMode?,
+        outline: Boolean,
+        filter: String?,
+        headers: Map<String, String>,
+        allowedDomains: Set<String>,
+        maxBytes: Int,
+        caCertificatePath: String?,
+        useSystemCa: Boolean,
+        timeoutMs: Long?
+    ): ReadResult = read(url, ReadOptions(raw, requireMarkdown, llms, outline, filter, timeoutMs, headers, allowedDomains,
+        maxBytes, caCertificatePath, useSystemCa))
+
+    private suspend fun read(url: String?, options: ReadOptions): ReadResult {
         if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled")
         if (url == null) return httpReader.activeHtml(currentPageUrl().orEmpty(), content(), options)
         val domains = readAllowedDomains.value
@@ -994,10 +1026,10 @@ internal abstract class BasePage protected constructor(
         return NavigationResult(target, 200, true)
     }
 
-    override suspend fun webVitals(options: WebVitalsOptions): WebVitalsReport {
+    override suspend fun webVitals(url: String?, reload: Boolean, settleMs: Long, timeoutMs: Long?): WebVitalsReport {
         if (!config.allowEval) throw KmpwrightException("JavaScript evaluation is disabled")
         checkPolicy(ActionType.Evaluate, currentPageUrl())
-        return vitalsDelegate.capture(this, options.copy(timeoutMs = config.defaultTimeout(options.timeoutMs)))
+        return vitalsDelegate.capture(this, WebVitalsOptions(url, reload, settleMs, config.defaultTimeout(timeoutMs)))
     }
 
     override suspend fun metrics(): PageMetrics {
@@ -1025,7 +1057,7 @@ internal abstract class BasePage protected constructor(
         val registration = DialogRegistration(handler)
         while (true) {
             val before = dialogHandlers.value
-            if (dialogHandlers.compareAndSet(before, before.add(registration))) break
+            if (dialogHandlers.compareAndSet(before, before.adding(registration))) break
         }
         return object : DialogHandler {
             override fun close() {
@@ -1033,13 +1065,28 @@ internal abstract class BasePage protected constructor(
                     val before = dialogHandlers.value
                     val index = before.indexOfFirst { it === registration }
                     if (index < 0) return
-                    if (dialogHandlers.compareAndSet(before, before.removeAt(index))) return
+                    if (dialogHandlers.compareAndSet(before, before.removingAt(index))) return
                 }
             }
         }
     }
 
-    override suspend fun pdf(options: PdfOptions): PdfResult {
+    override suspend fun pdf(
+        format: PdfFormat?,
+        landscape: Boolean,
+        displayHeaderFooter: Boolean,
+        headerTemplate: String,
+        footerTemplate: String,
+        printBackground: Boolean,
+        scale: Double,
+        width: Double?,
+        height: Double?,
+        margin: PdfMargin,
+        pageRanges: String,
+        timeoutMs: Long?
+    ): PdfResult {
+        val options = PdfOptions(format, landscape, displayHeaderFooter, headerTemplate, footerTemplate, printBackground, scale,
+            width, height, margin, pageRanges, timeoutMs)
         checkPolicy(ActionType.Screenshot, currentPageUrl())
         controller.validatePdfOptions(options)
         val timeout = config.defaultTimeout(options.timeoutMs)
@@ -1062,21 +1109,21 @@ internal abstract class BasePage protected constructor(
         forgetSetup("init:$id")
     }
 
-    override suspend fun addScriptTag(options: ScriptTagOptions): String {
+    override suspend fun addScriptTag(url: String?, content: String?, type: String, id: String, async: Boolean, defer: Boolean): String {
         checkPolicy(ActionType.AddScriptTag, currentPageUrl())
         if (!config.allowEval) throw KmpwrightException("Script insertion is disabled by KmpwrightConfig.allowEval")
-        if (options.url == null && options.content == null) throw KmpwrightException("Either url or content must be provided for addScriptTag")
-        val scriptId = options.id.ifEmpty { "script-${currentTimeMillis()}" }
+        if (url == null && content == null) throw KmpwrightException("Either url or content must be provided for addScriptTag")
+        val scriptId = id.ifEmpty { "script-${currentTimeMillis()}" }
         val result = evalString("""
             (function() {
                 try {
                     var node = document.createElement('script');
-                    node.type = ${jsStringLiteral(options.type)};
+                    node.type = ${jsStringLiteral(type)};
                     node.id = ${jsStringLiteral(scriptId)};
-                    node.async = ${options.async};
-                    node.defer = ${options.defer};
-                    ${options.url?.let { "node.src = ${jsStringLiteral(it)};" } ?: ""}
-                    ${options.content?.let { "node.text = ${jsStringLiteral(it)};" } ?: ""}
+                    node.async = $async;
+                    node.defer = $defer;
+                    ${url?.let { "node.src = ${jsStringLiteral(it)};" } ?: ""}
+                    ${content?.let { "node.text = ${jsStringLiteral(it)};" } ?: ""}
                     (document.head || document.documentElement).appendChild(node);
                     return ${jsStringLiteral(scriptId)};
                 } catch (e) {
@@ -1088,21 +1135,21 @@ internal abstract class BasePage protected constructor(
         return result
     }
 
-    override suspend fun addStyleTag(options: StyleTagOptions): String {
+    override suspend fun addStyleTag(url: String?, content: String?, id: String): String {
         checkPolicy(ActionType.AddStyleTag, currentPageUrl())
-        if (options.url == null && options.content == null) throw KmpwrightException("Either url or content must be provided for addStyleTag")
-        val styleId = options.id.ifEmpty { "style-${currentTimeMillis()}" }
+        if (url == null && content == null) throw KmpwrightException("Either url or content must be provided for addStyleTag")
+        val styleId = id.ifEmpty { "style-${currentTimeMillis()}" }
         val result = evalString("""
             (function() {
                 try {
                     var node;
-                    if (${options.url != null}) {
+                    if (${url != null}) {
                         node = document.createElement('link');
                         node.rel = 'stylesheet';
-                        node.href = ${jsStringLiteral(options.url.orEmpty())};
+                        node.href = ${jsStringLiteral(url.orEmpty())};
                     } else {
                         node = document.createElement('style');
-                        node.textContent = ${jsStringLiteral(options.content.orEmpty())};
+                        node.textContent = ${jsStringLiteral(content.orEmpty())};
                     }
                     node.id = ${jsStringLiteral(styleId)};
                     (document.head || document.documentElement).appendChild(node);
@@ -1167,11 +1214,11 @@ internal abstract class BasePage protected constructor(
 
     private val auditDelegate by lazy { PageAccessibilityAudit(controller) }
 
-    override suspend fun accessibilityAudit(options: AccessibilityAuditOptions): AccessibilityAuditReport {
+    override suspend fun accessibilityAudit(tags: Set<String>, selector: String?, maxNodesPerRule: Int, timeoutMs: Long?): AccessibilityAuditReport {
         if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled")
         if (!config.allowEval) throw KmpwrightException("JavaScript evaluation is disabled")
         checkPolicy(ActionType.Evaluate, currentPageUrl())
-        return auditDelegate.run(options.copy(timeoutMs = config.defaultTimeout(options.timeoutMs)))
+        return auditDelegate.run(AccessibilityAuditOptions(tags, selector, config.defaultTimeout(timeoutMs), maxNodesPerRule))
     }
 
     /** Runs [body] with the page runtime bound to `H`, installing it on demand. */
@@ -1192,7 +1239,17 @@ internal abstract class BasePage protected constructor(
         throw KmpwrightException("Could not install the KMPwright page runtime")
     }
 
-    override suspend fun snapshot(options: SnapshotOptions): Snapshot {
+    override suspend fun snapshot(
+        interactive: Boolean,
+        compact: Boolean,
+        maxDepth: Int?,
+        selector: String?,
+        cursor: Boolean,
+        includeHidden: Boolean,
+        urls: Boolean
+    ): Snapshot = snapshot(SnapshotOptions(interactive, compact, maxDepth, selector, cursor, includeHidden, urls))
+
+    internal suspend fun snapshot(options: SnapshotOptions): Snapshot {
         checkPolicy(ActionType.ReadContent, currentPageUrl())
         if (!config.allowDomExtraction) throw KmpwrightException("DOM extraction is disabled by KmpwrightConfig.allowDomExtraction")
         withKmpwrightTimeout(config.timeouts.default, { "Timeout preparing the accessibility snapshot" }) { controller.prepareAccessibilitySnapshot() }
@@ -1464,8 +1521,8 @@ internal abstract class BasePage protected constructor(
         val timeout = config.defaultTimeout(timeoutMs)
         return try {
             withKmpwrightTimeout(timeout, { "Timeout diffing URLs: $url1 vs $url2" }) {
-                val html1 = read(url1, ReadOptions(raw = true, timeoutMs = timeout)).content
-                val html2 = read(url2, ReadOptions(raw = true, timeoutMs = timeout)).content
+                val html1 = read(url1, raw = true, timeoutMs = timeout).content
+                val html2 = read(url2, raw = true, timeoutMs = timeout).content
                 AccessibilitySnapshotEngine.diffSnapshots(htmlToSnapshotText(html1), htmlToSnapshotText(html2))
             }
         } catch (e: KmpwrightException) {
@@ -1555,7 +1612,7 @@ internal abstract class BasePage protected constructor(
         if (restoreUrl == null) return
 
         if (currentPageUrl() != restoreUrl) {
-            val navigation = gotoApproved(restoreUrl, GotoOptions())
+            val navigation = gotoApproved(restoreUrl)
             if (!navigation.committed) {
                 throw KmpwrightException(
                     "Failed to navigate to saved state URL $restoreUrl: ${navigation.error ?: "unknown error"}"
@@ -1567,15 +1624,17 @@ internal abstract class BasePage protected constructor(
         sessionStorageArea.replaceAll(sessionStorage)
     }
 
-    override suspend fun autosaveStorageState(options: StorageStateAutosaveOptions): StorageStateAutosave {
+    override suspend fun autosaveStorageState(path: String, password: String?, intervalMs: Long): StorageStateAutosave {
+        requireAutosaveArguments(path, password, intervalMs)
         checkPageOpen()
-        return StorageStateAutosave(pageScope, options.intervalMs) {
+        return StorageStateAutosave(pageScope, intervalMs) {
             checkPageOpen()
-            storageState().save(options.path, options.password)
+            storageState().save(path, password)
         }.start()
     }
 
-    override suspend fun login(profile: AuthProfile, options: AuthLoginOptions): AuthLoginResult = loginWithProfile(profile, options)
+    override suspend fun login(profile: AuthProfile, navigate: Boolean, submit: Boolean): AuthLoginResult =
+        loginWithProfile(profile, navigate, submit)
 
     private fun currentPageUrl(): String? = controller.getUrl() ?: url.value
 
@@ -1712,11 +1771,15 @@ internal abstract class BasePage protected constructor(
     protected open suspend fun stopProfiler(): String? = throw KmpwrightUnsupportedException("Profiling is unavailable on this backend")
     protected open suspend fun startRecording(options: RecordingOptions): Unit = throw KmpwrightUnsupportedException("Video recording is unavailable on this backend")
     protected open suspend fun stopRecording(): RecordingResult = throw KmpwrightUnsupportedException("Video recording is unavailable on this backend")
-    override fun screencast(options: ScreencastOptions): kotlinx.coroutines.flow.Flow<ScreencastFrame> =
+    override fun screencast(maxFps: Int, quality: Int, maxWidth: Int, maxHeight: Int): kotlinx.coroutines.flow.Flow<ScreencastFrame> =
+        screencast(ScreencastOptions(maxFps, quality, maxWidth, maxHeight))
+
+    protected open fun screencast(options: ScreencastOptions): kotlinx.coroutines.flow.Flow<ScreencastFrame> =
         throw KmpwrightUnsupportedException("Screencast is unavailable on this backend")
 
     override val tracing: Tracing = object : Tracing {
-        override suspend fun start(options: TracingOptions) = startTracing(options)
+        override suspend fun start(categories: String, screenshots: Boolean, path: String?) =
+            startTracing(TracingOptions(categories, screenshots, path))
         override suspend fun stop(): ByteArray? = stopTracing()
     }
 
@@ -1726,7 +1789,20 @@ internal abstract class BasePage protected constructor(
     }
 
     override val video: Video = object : Video {
-        override suspend fun start(options: RecordingOptions) = startRecording(options)
+        override suspend fun start(
+            path: String,
+            fps: Int,
+            quality: Int,
+            maxWidth: Int,
+            maxHeight: Int,
+            cursor: Boolean,
+            contactSheetPath: String?,
+            contactSheetThreshold: Double,
+            maxContactSheetFrames: Int,
+            overwrite: Boolean,
+            ffmpegExecutable: String
+        ) = startRecording(RecordingOptions(path, fps, quality, maxWidth, maxHeight, cursor, contactSheetPath,
+            contactSheetThreshold, maxContactSheetFrames, overwrite, ffmpegExecutable))
         override suspend fun stop(): RecordingResult = stopRecording()
     }
 
@@ -1762,9 +1838,18 @@ internal abstract class BasePage protected constructor(
         return b.wrap(content())
     }
 
-    override suspend fun boundedSnapshot(options: SnapshotOptions, boundary: ContentBoundary?): String {
+    override suspend fun boundedSnapshot(
+        interactive: Boolean,
+        compact: Boolean,
+        maxDepth: Int?,
+        selector: String?,
+        cursor: Boolean,
+        includeHidden: Boolean,
+        urls: Boolean,
+        boundary: ContentBoundary?
+    ): String {
         val b = boundary ?: createContentBoundary()
-        return b.wrap(snapshot(options).tree)
+        return b.wrap(snapshot(SnapshotOptions(interactive, compact, maxDepth, selector, cursor, includeHidden, urls)).tree)
     }
 
     /** The configuration this page was created with (used by top-level `expect`). */
@@ -1861,8 +1946,8 @@ private class PageMessageHistory<T>(private val capacity: Int) {
     fun add(value: T, generation: Long) {
         while (true) {
             val before = entries.value
-            val trimmed = if (before.size >= capacity) before.removeAt(0) else before
-            if (entries.compareAndSet(before, trimmed.add(Entry(value, generation)))) return
+            val trimmed = if (before.size >= capacity) before.removingAt(0) else before
+            if (entries.compareAndSet(before, trimmed.adding(Entry(value, generation)))) return
         }
     }
 

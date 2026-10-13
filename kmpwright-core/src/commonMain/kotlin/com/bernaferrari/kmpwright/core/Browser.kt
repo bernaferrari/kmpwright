@@ -109,7 +109,12 @@ public expect class BrowserContext {
     public fun dispose()
 }
 
-/** Viewport and device characteristics used by [DeviceDescriptor] and [KmpwrightConfig.viewport]. */
+/**
+ * Viewport and device characteristics used by [DeviceDescriptor] and [KmpwrightConfig.viewport].
+ *
+ * On Chromium, [isMobile], [hasTouch] and [isLandscape] are emulated as in Playwright (orientation
+ * only applies to mobile viewports). Android WebView and WKWebView use the real device for these.
+ */
 public data class Viewport(
     val width: Int,
     val height: Int,

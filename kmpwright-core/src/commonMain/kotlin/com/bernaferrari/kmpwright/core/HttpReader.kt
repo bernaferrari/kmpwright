@@ -9,18 +9,6 @@ import kotlin.coroutines.cancellation.CancellationException
 @Serializable
 public enum class LlmsReadMode { Index, Full }
 
-/**
- * Options for [Page.read] and [HttpReader.read]. [timeoutMs] null uses [TimeoutConfig.default] of
- * the page's (or reader's) [KmpwrightConfig]. [caCertificatePath] (a PEM file trusted in addition
- * to, or with [useSystemCa] = false instead of, the system roots) works on JVM, Android and iOS.
- */
-@Serializable
-public data class ReadOptions(val raw: Boolean = false, val requireMarkdown: Boolean = false,
-    val llms: LlmsReadMode? = null, val outline: Boolean = false, val filter: String? = null,
-    val timeoutMs: Long? = null, val headers: Map<String, String> = emptyMap(),
-    val allowedDomains: Set<String> = emptySet(), val maxBytes: Int = 2 * 1024 * 1024,
-    val caCertificatePath: String? = null, val useSystemCa: Boolean = true)
-
 /** Readable content fetched by [Page.read]. */
 @Serializable
 public data class ReadResult(val url: String, val finalUrl: String, val status: Int?, val contentType: String,
@@ -28,9 +16,38 @@ public data class ReadResult(val url: String, val finalUrl: String, val status: 
 
 /** HTTP reading works without launching a browser. It does not share browser cookies. */
 public class HttpReader(private val config: KmpwrightConfig = KmpwrightConfig()) {
-    /** Fetches [url] and returns readable text. */
+    /**
+     * Fetches [url] and returns readable text.
+     *
+     * - [raw] returns the body as fetched; otherwise readable text is extracted, preferring a Markdown
+     *   representation when the site offers one. [requireMarkdown] fails unless the result is `text/markdown`.
+     * - [llms] reads the site's `llms.txt` index or `llms-full.txt` instead of [url].
+     * - [outline] returns only the heading outline; [filter] keeps only the matching sections.
+     * - [headers] are sent with every request; [allowedDomains] restricts the hosts that may be
+     *   contacted (redirects included); at most [maxBytes] (1 byte..16 MiB) of body are read.
+     * - [caCertificatePath] is a PEM file trusted in addition to the system roots (or instead of them
+     *   with [useSystemCa] = false); it works on JVM, Android and iOS.
+     * - [timeoutMs] null uses [TimeoutConfig.default] of the reader's [KmpwrightConfig].
+     *
+     * @throws IllegalArgumentException when [timeoutMs] is not positive, [maxBytes] is out of range or
+     *   [headers] repeats a name.
+     */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun read(url: String, options: ReadOptions = ReadOptions()): ReadResult = readChecked(url, options) {}
+    public suspend fun read(
+        url: String,
+        raw: Boolean = false,
+        requireMarkdown: Boolean = false,
+        llms: LlmsReadMode? = null,
+        outline: Boolean = false,
+        filter: String? = null,
+        headers: Map<String, String> = emptyMap(),
+        allowedDomains: Set<String> = emptySet(),
+        maxBytes: Int = 2 * 1024 * 1024,
+        caCertificatePath: String? = null,
+        useSystemCa: Boolean = true,
+        timeoutMs: Long? = null
+    ): ReadResult = readChecked(url, ReadOptions(raw, requireMarkdown, llms, outline, filter, timeoutMs, headers,
+        allowedDomains, maxBytes, caCertificatePath, useSystemCa)) {}
 
     internal suspend fun readChecked(rawUrl: String, options: ReadOptions, inheritedCheck: suspend (String) -> Unit): ReadResult {
         if (!config.allowDomExtraction) throw KmpwrightException("HTTP content extraction is disabled by KmpwrightConfig.allowDomExtraction")

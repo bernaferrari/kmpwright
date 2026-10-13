@@ -73,7 +73,7 @@ class VisualDiffTest {
         val img1 = RgbaImage(1, 1, expected)
         val img2 = RgbaImage(1, 1, actual)
 
-        val result = VisualDiff.compareRgba(img1, img2, DiffOptions())
+        val result = VisualDiff.compareRgba(img1, img2)
         assertNotNull(result.diffImage)
         assertEquals(4, result.diffImage!!.size)
     }
@@ -85,7 +85,7 @@ class VisualDiffTest {
         val img1 = RgbaImage(1, 1, expected)
         val img2 = RgbaImage(1, 1, actual)
 
-        val result = VisualDiff.compareRgba(img1, img2, DiffOptions(generateDiffImage = false))
+        val result = VisualDiff.compareRgba(img1, img2, generateDiffImage = false)
         assertNull(result.diffImage)
     }
 
@@ -129,11 +129,11 @@ class VisualDiffTest {
         val img2 = RgbaImage(1, 1, actual)
 
         // With high threshold, small diff is tolerated
-        val result = VisualDiff.compareRgba(img1, img2, DiffOptions(threshold = 0.1))
+        val result = VisualDiff.compareRgba(img1, img2, threshold = 0.1)
         assertTrue(result.match)
 
         // With zero threshold, any diff is flagged
-        val strictResult = VisualDiff.compareRgba(img1, img2, DiffOptions(threshold = 0.0))
+        val strictResult = VisualDiff.compareRgba(img1, img2, threshold = 0.0)
         assertFalse(strictResult.match)
     }
 
@@ -164,13 +164,6 @@ class VisualDiffTest {
         } catch (e: IllegalArgumentException) {
             assertTrue(e.message!!.contains("non-negative"))
         }
-    }
-
-    @Test
-    fun `DiffOptions defaults`() {
-        val options = DiffOptions()
-        assertEquals(0.1, options.threshold, 0.001)
-        assertTrue(options.generateDiffImage)
     }
 
     @Test

@@ -267,7 +267,7 @@ Retention: at most 500 records and an estimated 4 MiB; the oldest records are dr
 |---|---|---|---|
 | `PageCapability.NetworkHistory` | `Partial` | `Partial` | `Partial` |
 | Records | Requests seen by `shouldInterceptRequest`; most have no `response` | Main-frame `fetch`/XHR and custom-scheme requests | Every request of the page and its frames |
-| `responseBody` | `UnsupportedOperationException` | `UnsupportedOperationException` | `Network.getResponseBody`; bodies larger than one protocol message are refused |
+| `responseBody` | `KmpwrightUnsupportedException` | `KmpwrightUnsupportedException` | `Network.getResponseBody`; bodies larger than one protocol message are refused |
 
 To read the body of a `Response` you waited for, look up its record by id:
 
@@ -355,7 +355,7 @@ println(download.suggestedFilename)
 download.saveAs("/tmp/report.csv")
 ```
 
-Downloads are reported on the JVM only (`PageCapability.Downloads`). On Android and iOS, `waitForDownload`, `setDownloadPath` and `setDownloadBehavior` throw `UnsupportedOperationException`.
+Downloads are reported on the JVM only (`PageCapability.Downloads`). On Android and iOS, `waitForDownload`, `setDownloadPath` and `setDownloadBehavior` throw `KmpwrightUnsupportedException`.
 
 - `waitForDownload(url: String? = null, timeoutMs: Long? = null): Download` waits for the next download, optionally one whose URL matches `url` (same string rules as `waitForRequest`). The action-scoped overload `waitForDownload(url, timeoutMs) { … }` runs the click after subscribing.
 - `Download.url` and `Download.suggestedFilename` are available immediately. `path()` waits for the download to finish and returns the saved file, or `null` when it was not saved to disk. `saveAs(path)` copies it and throws `KmpwrightException` when nothing was saved.

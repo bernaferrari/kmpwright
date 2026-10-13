@@ -1,9 +1,14 @@
 package com.bernaferrari.kmpwright.core
 
+/**
+ * Builds the page-world fetch/XHR shim that routes requests through the native bridge.
+ * [bridgeTimeoutMs] is how long the page waits for the native side before failing the request;
+ * it must outlast the route handler plus the request itself.
+ */
 internal fun buildWebKitNetworkInterceptionScript(
     messageHandlerName: String = "kmpwright",
     bridgeNonce: String? = null,
-    bridgeTimeoutMs: Long = 10_000
+    bridgeTimeoutMs: Long = 60_000
 ): String {
     val jsHandlerName = jsStringLiteral(messageHandlerName)
     val jsBridgeNonce = jsStringLiteral(bridgeNonce ?: "")

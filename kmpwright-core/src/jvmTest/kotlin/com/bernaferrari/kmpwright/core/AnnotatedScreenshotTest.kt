@@ -23,7 +23,7 @@ class AnnotatedScreenshotTest {
         runBlocking {
             controller.snapshotResult = "{\"flatNodes\":[],\"refMap\":{\"@e1\":{\"refId\":\"@e1\",\"role\":\"button\",\"name\":\"Submit\",\"cssSelector\":\"button.submit\"}},\"textTree\":\"[1] button \\\"Submit\\\"\\n\",\"timestamp\":0}"
             controller.bboxResult = "[{\"i\":0,\"x\":10.0,\"y\":20.0,\"w\":100.0,\"h\":40.0}]"
-            val result = page.screenshot(ScreenshotOptions(annotate = true))
+            val result = page.screenshot(annotate = true)
             assertNotNull(result.bytes)
             assertEquals(1, result.annotations.size)
             assertEquals("@e1", result.annotations[0].ref)
@@ -41,7 +41,7 @@ class AnnotatedScreenshotTest {
         runBlocking {
             controller.snapshotResult = "{\"flatNodes\":[],\"refMap\":{\"@e1\":{\"refId\":\"@e1\",\"role\":\"link\",\"name\":\"Home\",\"cssSelector\":\"a.home\"}},\"textTree\":\"[1] link \\\"Home\\\"\\n\",\"timestamp\":0}"
             controller.bboxResult = """[{"i":0,"x":0.0,"y":0.0,"w":50.0,"h":20.0}]"""
-            page.screenshot(ScreenshotOptions(annotate = true))
+            page.screenshot(annotate = true)
             val scripts = controller.executedScripts
             // Should have inject script, screenshot, and cleanup script
             assertTrue(scripts.any { it.contains("data-ww-anno") })
@@ -54,7 +54,7 @@ class AnnotatedScreenshotTest {
         runBlocking {
             controller.snapshotResult = """{"nodes":[],"refMap":{},"textTree":"","timestamp":0}"""
             controller.bboxResult = """[]"""
-            val result = page.screenshot(ScreenshotOptions(annotate = true))
+            val result = page.screenshot(annotate = true)
             assertTrue(result.annotations.isEmpty())
         }
     }
@@ -64,9 +64,9 @@ class AnnotatedScreenshotTest {
         runBlocking {
             controller.snapshotResult = """{"nodes":[],"refMap":{},"textTree":"","timestamp":0}"""
             controller.bboxResult = """[]"""
-            val result = page.screenshot(ScreenshotOptions(annotate = true, format = ScreenshotFormat.JPEG, quality = 85))
+            val result = page.screenshot(annotate = true, format = ScreenshotFormat.Jpeg, quality = 85)
             assertNotNull(result)
-            assertEquals(ScreenshotFormat.JPEG, page.capturedOptions!!.format)
+            assertEquals(ScreenshotFormat.Jpeg, page.capturedOptions!!.format)
             assertEquals(85, page.capturedOptions!!.quality)
         }
     }

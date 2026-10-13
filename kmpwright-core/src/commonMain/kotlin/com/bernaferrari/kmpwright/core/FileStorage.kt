@@ -15,3 +15,6 @@ internal expect fun mkdirs(path: String)
  * Returns the user home directory. Platform-specific.
  */
 internal expect fun platformHomeDir(): String
+
+/** Dispatcher for blocking file I/O (`Dispatchers.IO`; the browser has no blocking files). */
+internal expect val fileDispatcher: kotlinx.coroutines.CoroutineDispatcher

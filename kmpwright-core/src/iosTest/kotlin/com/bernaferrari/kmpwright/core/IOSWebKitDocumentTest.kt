@@ -101,6 +101,77 @@ class IOSWebKitDocumentTest {
     }
 
     @Test
+    fun document_capture_includes_a_tall_region_below_the_viewport_and_restores_scroll() = runWebKitTest {
+        requireWebKitDocuments()
+        val controller = IOSWebViewController(KmpwrightConfig(viewport = Viewport(320, 480)))
+        try {
+            controller.loadHtmlAsync("<meta name=viewport content='width=device-width'><body style='margin:0'><div style='height:6000px'></div><div style='width:100px;height:1600px;background:blue'></div><div style='width:100px;height:200px;background:lime'></div></body>", baseUrl, 10_000)
+            val web = controller.getWebView()
+            web.captureEvaluate("window.scrollTo({top:100,behavior:'instant'});0")
+            delay(32)
+            assertEquals(100.0, web.captureNumber("window.scrollY"), 1.0)
+            val shot = captureWebViewDocument(web, DocumentScreenshotOptions(Rectangle(0.0, 6000.0, 100.0, 1800.0), 2.0, 7_000_000, 10_000))
+            assertEquals(200, shot.width)
+            assertEquals(3600, shot.height)
+            assertFalse(shot.truncated)
+            assertEquals(Triple(0, 255, 0), assertNotNull(shot.toRgbaImage()).rgbAt(0.95))
+            assertEquals(100.0, web.captureNumber("window.scrollY"), 1.0)
+        } finally { controller.dispose() }
+    }
+
+    @Test
+    fun document_capture_converts_wide_css_layouts_to_native_snapshot_points() = runWebKitTest {
+        requireWebKitDocuments()
+        val controller = IOSWebViewController(KmpwrightConfig(viewport = Viewport(320, 480)))
+        try {
+            controller.loadHtmlAsync("<meta name=viewport content='width=1200'><body style='margin:0;width:1200px;height:1400px;background:red'><div style='position:absolute;left:700px;top:100px;width:160px;height:120px;background:lime'></div></body>", baseUrl, 10_000)
+            val web = controller.getWebView()
+            val shot = captureWebViewDocument(web, clip = Rectangle(700.0, 100.0, 160.0, 120.0), pixelsPerCssPixel = 2.0)
+            assertEquals(320, shot.width)
+            assertEquals(240, shot.height)
+            assertEquals(Triple(0, 255, 0), assertNotNull(shot.toRgbaImage()).rgbAt(0.5))
+            val viewportClip = IOSScreenshotController(web).capture(ScreenshotOptions(clip = Rectangle(700.0, 100.0, 160.0, 120.0)))
+            val pointsPerCss = web.bounds.useContents { size.width } / web.captureNumber("window.innerWidth")
+            assertEquals(160 * pointsPerCss * web.snapshotScreenScale(), viewportClip.width.toDouble(), 1.0)
+            assertEquals(Triple(0, 255, 0), assertNotNull(viewportClip.toRgbaImage()).rgbAt(0.5))
+        } finally { controller.dispose() }
+    }
+
+    @Test
+    fun document_capture_uses_the_visual_viewport_at_non_default_zoom() = runWebKitTest {
+        requireWebKitDocuments()
+        val controller = IOSWebViewController(KmpwrightConfig(viewport = Viewport(320, 480)))
+        try {
+            controller.loadHtmlAsync("<meta name=viewport content='width=device-width,initial-scale=2,maximum-scale=4'><body style='margin:0;width:320px;height:1400px;background:red'><div style='position:absolute;left:100px;top:100px;width:100px;height:120px;background:lime'></div></body>", baseUrl, 10_000)
+            val web = controller.getWebView()
+            web.scrollView.setZoomScale(2.0, animated = false)
+            web.layoutIfNeeded()
+            delay(100)
+            assertEquals(2.0, web.scrollView.zoomScale, 0.01)
+            val shot = captureWebViewDocument(web, clip = Rectangle(100.0, 100.0, 100.0, 120.0), pixelsPerCssPixel = 2.0)
+            assertEquals(200, shot.width)
+            assertEquals(240, shot.height)
+            assertEquals(Triple(0, 255, 0), assertNotNull(shot.toRgbaImage()).rgbAt(0.5))
+        } finally { controller.dispose() }
+    }
+
+    @Test
+    fun document_capture_rejects_oversized_selection_and_reports_bounded_full_page() = runWebKitTest {
+        requireWebKitDocuments()
+        val controller = IOSWebViewController(KmpwrightConfig(viewport = Viewport(320, 480)))
+        try {
+            controller.loadHtmlAsync("<meta name=viewport content='width=device-width'><body style='margin:0'><div style='height:18000px;background:blue'></div></body>", baseUrl, 10_000)
+            val web = controller.getWebView()
+            assertFailsWith<KmpwrightException> {
+                captureWebViewDocument(web, DocumentScreenshotOptions(Rectangle(0.0, 0.0, 100.0, 9000.0), 2.0, 7_000_000, 10_000, true))
+            }
+            val shot = captureWebViewDocument(web, DocumentScreenshotOptions(pixelsPerCssPixel = 2.0, maxPixels = 7_000_000, maxHeight = 10_000, truncateFullPage = true))
+            assertTrue(shot.truncated)
+            assertTrue(shot.width.toLong() * shot.height <= 7_000_000)
+        } finally { controller.dispose() }
+    }
+
+    @Test
     fun screenshots_report_png_pixel_dimensions_and_render_full_page_content() = runWebKitTest {
         requireWebKitDocuments()
         val controller = IOSWebViewController(KmpwrightConfig(viewport = Viewport(320, 480)))
@@ -157,7 +228,7 @@ class IOSWebKitDocumentTest {
                     "field.focus();</script>",
                 baseUrl, 10_000
             )
-            val keyboard = IOSKeyboard(controller)
+            val keyboard = SyntheticKeyboard(controller)
             keyboard.press("a")
             keyboard.press("b")
             keyboard.press("c")
@@ -177,7 +248,7 @@ class IOSWebKitDocumentTest {
                     "b.addEventListener(t, function() { window.events.push(t); }); });</script>",
                 baseUrl, 10_000
             )
-            IOSMouse(controller).click(50.0, 50.0, MouseClickOptions())
+            SyntheticMouse(controller).click(50.0, 50.0)
             assertEquals(
                 """["touchstart","touchend","mousedown","mouseup","click"]""",
                 controller.evaluateJavaScriptAsync("window.events")

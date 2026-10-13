@@ -35,7 +35,7 @@ import platform.Security.SecTrustSetAnchorCertificatesOnly
 import kotlin.io.encoding.Base64
 
 /**
- * [ReadOptions.caCertificatePath] is honored through URLSession server-trust evaluation: the PEM
+ * [caCertificatePath] is honored through URLSession server-trust evaluation: the PEM
  * certificates become trust anchors, in addition to the system roots, or instead of them when
  * [ReadOptions.useSystemCa] is false.
  */
@@ -43,7 +43,7 @@ import kotlin.io.encoding.Base64
 internal actual fun readerHttpClient(timeoutMs: Long, caCertificatePath: String?, useSystemCa: Boolean): HttpClient {
     val anchors = caCertificatePath?.let(::loadPemCertificates).orEmpty()
     if (caCertificatePath == null && !useSystemCa) {
-        throw KmpwrightException("useSystemCa = false needs ReadOptions.caCertificatePath: no certificate would be trusted")
+        throw KmpwrightException("useSystemCa = false needs caCertificatePath: no certificate would be trusted")
     }
     return HttpClient(Darwin) {
         configureReaderTransport(timeoutMs)

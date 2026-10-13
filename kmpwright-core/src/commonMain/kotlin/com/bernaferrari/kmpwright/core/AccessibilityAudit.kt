@@ -7,14 +7,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
-/**
- * Options for [Page.accessibilityAudit]. [tags] are axe rule tags such as wcag2a/wcag2aa (empty runs all
- * enabled rules); a null [timeoutMs] uses [TimeoutConfig.default].
- */
-@Serializable
-public data class AccessibilityAuditOptions(val tags: Set<String> = emptySet(), val selector: String? = null,
-    val timeoutMs: Long? = null, val maxNodesPerRule: Int = 10)
-
 /** An element that failed an audit rule. */
 @Serializable
 public data class AccessibilityAuditNode(val target: JsonArray, val html: String, val failureSummary: String)

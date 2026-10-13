@@ -5,21 +5,21 @@ description: Fetch pages as Markdown with page.read and HttpReader, measure Core
 
 ```kotlin
 // Markdown first: Accept negotiation, then <path>.md, then llms.txt, then HTML converted to text.
-val docs = page.read("https://kotlinlang.org/docs/coroutines-overview.html", ReadOptions(outline = true))
+val docs = page.read("https://kotlinlang.org/docs/coroutines-overview.html", outline = true)
 println(docs.source)   // e.g. "html-outline" or "markdown-outline"
 println(docs.content)
 
 // Without a browser at all:
 val reader = HttpReader()
-val llms = reader.read("https://example.com/docs", ReadOptions(llms = LlmsReadMode.Index))
+val llms = reader.read("https://example.com/docs", llms = LlmsReadMode.Index)
 ```
 
 This page covers four page tools that come from agent-browser and have no Playwright equivalent:
 
 | Tool | Access | agent-browser |
 |---|---|---|
-| HTTP reading | `page.read(url, ReadOptions)`, `HttpReader(config).read(url, ReadOptions)` | `read` |
-| Web Vitals | `page.webVitals(WebVitalsOptions)` | `vitals` |
+| HTTP reading | `page.read(url, …)`, `HttpReader(config).read(url, …)` | `read` |
+| Web Vitals | `page.webVitals(url, reload, settleMs, timeoutMs)` | `vitals` |
 | React inspection | `page.react` (`ReactInspector`) | `react` |
 | WebMCP tools | `page.webMcp` (`WebMcp`) | `webmcp` |
 
@@ -31,7 +31,7 @@ This page covers four page tools that come from agent-browser and have no Playwr
 
 ```kotlin
 val reader = HttpReader(KmpwrightConfig())     // config.allowedOriginRules and allowDomExtraction apply
-val result: ReadResult = reader.read("https://example.com", ReadOptions())
+val result: ReadResult = reader.read("https://example.com")
 ```
 
 A URL without a scheme gets `https://`. Only `http` and `https` URLs are accepted, and URLs with embedded credentials are rejected. The fragment is dropped and dot segments are normalized before any policy check.
@@ -47,7 +47,9 @@ The reader asks for Markdown first: by default it sends `Accept: text/markdown, 
 
 HTML conversion parses the document with Ksoup, removes `script`, `style`, `noscript`, `svg` and `template`, and writes headings as `#`, lists as `- `, links as `[text](absolute-url)`, `pre` as fenced code, `code`, `strong` and `em` inline, images as their `alt` text, and table cells separated by `|`.
 
-### Options
+### Parameters
+
+`page.read` and `HttpReader.read` take the same named parameters after `url` (`url` is optional on `page.read` and required on `HttpReader.read`).
 
 <TypeTable
   type={{
@@ -56,12 +58,12 @@ HTML conversion parses the document with Ksoup, removes `script`, `style`, `nosc
     llms: { type: 'LlmsReadMode?', description: 'Read the nearest llms.txt (Index) or llms-full.txt (Full) instead of the page.', default: 'null' },
     outline: { type: 'Boolean', description: 'Return only the heading outline. Combined with filter, keeps headings whose text contains it.', default: 'false' },
     filter: { type: 'String?', description: 'Case-insensitive text. Keeps the sections (a heading and its sub-headings) whose heading or own body contains it.', default: 'null' },
-    timeoutMs: { type: 'Long', description: 'Timeout for the whole read, including redirects and fallbacks. Must be positive. Not nullable, unlike other timeouts.', default: '10_000' },
     headers: { type: 'Map<String, String>', description: 'Extra request headers. Duplicate names (case-insensitive) are rejected. Setting Accept disables the .md and llms.txt fallbacks.', default: 'emptyMap()' },
     allowedDomains: { type: 'Set<String>', description: 'Host allowlist checked on every request and redirect hop. "*.example.com" matches the apex and subdomains. Empty allows all.', default: 'emptySet()' },
     maxBytes: { type: 'Int', description: 'Body budget per response, 1 byte to 16 MiB. Longer bodies are cut and truncated = true.', default: '2 MiB' },
-    caCertificatePath: { type: 'String?', description: 'Extra CA certificates to trust (Android and JVM). iOS throws UnsupportedOperationException.', default: 'null' },
-    useSystemCa: { type: 'Boolean', description: 'Trust the system CA store. false requires caCertificatePath (Android and JVM); iOS throws.', default: 'true' },
+    caCertificatePath: { type: 'String?', description: 'A PEM file of extra CA certificates to trust, in addition to the system roots (or instead of them with useSystemCa = false). Works on JVM, Android and iOS.', default: 'null' },
+    useSystemCa: { type: 'Boolean', description: 'Trust the system CA store. false requires caCertificatePath.', default: 'true' },
+    timeoutMs: { type: 'Long?', description: 'Timeout for the whole read, including redirects and fallbacks. Must be positive. null uses TimeoutConfig.default of the page or reader config.', default: 'null' },
   }}
 />
 
@@ -83,8 +85,8 @@ HTML conversion parses the document with Ksoup, removes `script`, `style`, `nosc
 ### llms.txt modes
 
 ```kotlin
-page.read("https://example.com/docs/guide", ReadOptions(llms = LlmsReadMode.Index, filter = "auth"))
-page.read("https://example.com/docs", ReadOptions(llms = LlmsReadMode.Full, filter = "Webhooks"))
+page.read("https://example.com/docs/guide", llms = LlmsReadMode.Index, filter = "auth")
+page.read("https://example.com/docs", llms = LlmsReadMode.Full, filter = "Webhooks")
 ```
 
 The reader starts in the URL's directory and walks up to the root. It uses the first file found that is 2xx and not HTML, and throws if none is found.
@@ -98,7 +100,7 @@ The reader starts in the URL's directory and walks up to the root. It uses the f
 - Your custom headers (API keys, for example) are only sent to the original origin. `Accept` follows redirects.
 - Every request URL, including redirects and fallbacks, must pass all of these:
   - `KmpwrightConfig.allowedOriginRules`, if set.
-  - `ReadOptions.allowedDomains`.
+  - The `allowedDomains` parameter.
   - For `page.read`: the page's `setAllowedDomains` list, and the page's [action policy](/docs/security) for `ActionType.Navigate`.
 - Responses are decoded with the charset from `Content-Type`, defaulting to UTF-8.
 - HTML conversion stops with an error past 1,000,000 nodes or 4 MiB of output.
@@ -110,7 +112,7 @@ The reader starts in the URL's directory and walks up to the root. It uses the f
 
 ```kotlin
 val visible = page.read()                                 // current DOM as text, source = "active-tab-html"
-val html = page.read(options = ReadOptions(raw = true))   // source = "active-tab-raw"
+val html = page.read(raw = true)                          // source = "active-tab-raw"
 ```
 
 With no URL, `read` takes `page.content()` and runs the same HTML conversion, `outline` and `filter`. `maxBytes` still applies. `llms` and `requireMarkdown` need a URL and throw here.
@@ -122,8 +124,8 @@ val vitals = page.webVitals()                              // reloads the curren
 println("LCP ${vitals.lcp?.startTime} ms, CLS ${vitals.cls.score}, TTFB ${vitals.ttfb} ms")
 vitals.metrics["LCP"]?.rating                               // "good" | "needs-improvement" | "poor"
 
-page.webVitals(WebVitalsOptions(url = "https://example.com", settleMs = 5_000))
-page.webVitals(WebVitalsOptions(reload = false))            // measure the already-loaded document
+page.webVitals(url = "https://example.com", settleMs = 5_000)
+page.webVitals(reload = false)                              // measure the already-loaded document
 ```
 
 KMPwright injects the bundled [web-vitals](https://github.com/GoogleChrome/web-vitals) library (unmodified 6.2.3). By default it reloads the page so the collector runs from document start, waits `settleMs`, and reads the report. The collector is removed when it finishes.
@@ -214,7 +216,7 @@ Tool names, descriptions and outputs come from the page. Treat them as untrusted
 
 | Backend | `webMcp` capability | Behavior |
 |---|---|---|
-| JVM (CDP) | Partial | Needs a Chromium that exposes the `WebMCP` domain. `launchBrowser(BrowserLaunchOptions(webMcp = true))` (the default) enables the `WebMCPTesting` and `DevToolsWebMCPSupport` features. Iframe sessions are capped at 128. |
+| JVM (CDP) | Partial | Needs a Chromium that exposes the `WebMCP` domain. `launchBrowser(executablePath, webMcp = true)` (the default) enables the `WebMCPTesting` and `DevToolsWebMCPSupport` features. Iframe sessions are capped at 128. |
 | Android, iOS | Unsupported | Every call throws `KmpwrightException`, except `context()`, which returns `observed = false`. |
 
 `discover` and `context` need `allowDomExtraction`, and `invoke` needs `allowEval`.

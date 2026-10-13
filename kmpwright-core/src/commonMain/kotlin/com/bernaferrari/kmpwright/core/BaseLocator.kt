@@ -254,40 +254,48 @@ internal abstract class BaseLocator(
 
     // ---------------------------------------------------------------- actions
 
-    override suspend fun click(options: ClickOptions) {
+    override suspend fun click(button: MouseButton, clickCount: Int, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?) {
         checkPolicy(ActionType.Click)
-        syntheticClick(options, options.clickCount.coerceAtLeast(1), "click")
+        syntheticClick(button, clickCount.coerceAtLeast(1), delayMs, position, force, timeoutMs, "click")
     }
 
-    override suspend fun dblclick(options: ClickOptions) {
+    override suspend fun dblclick(button: MouseButton, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?) {
         checkPolicy(ActionType.Click)
-        syntheticClick(options, 2, "double-click")
+        syntheticClick(button, 2, delayMs, position, force, timeoutMs, "double-click")
     }
 
     /**
-     * Playwright click semantics: [ClickOptions.delayMs] is the time between `mousedown` and `mouseup`
+     * Playwright click semantics: [delayMs] is the time between `mousedown` and `mouseup`
      * of every click (and between consecutive clicks of a multi-click).
      */
-    private suspend fun syntheticClick(options: ClickOptions, clickCount: Int, label: String) {
-        val timeout = timeoutOf(options.timeoutMs)
-        val button = mouseButtonCode(options.button)
-        if (options.delayMs <= 0) {
+    private suspend fun syntheticClick(
+        mouseButton: MouseButton,
+        clickCount: Int,
+        delayMs: Long,
+        position: Position?,
+        force: Boolean,
+        timeoutMs: Long?,
+        label: String
+    ) {
+        val timeout = timeoutOf(timeoutMs)
+        val button = mouseButtonCode(mouseButton)
+        if (delayMs <= 0) {
             performAction("click", buildJsonObject {
                 put("button", button)
                 put("clickCount", clickCount)
-            }, timeout, options.force, Checks(), position = options.position, actionLabel = label)
+            }, timeout, force, Checks(), position = position, actionLabel = label)
             return
         }
         val point = performAction("clickDown", buildJsonObject { put("button", button); put("i", 1) },
-            timeout, options.force, Checks(), position = options.position, actionLabel = label) as? JsonObject
+            timeout, force, Checks(), position = position, actionLabel = label) as? JsonObject
         val x = point?.get("x")?.jsonPrimitive?.doubleOrNull ?: return
         val y = point["y"]?.jsonPrimitive?.doubleOrNull ?: return
         for (i in 1..clickCount) {
             if (i > 1) {
-                delay(options.delayMs)
+                delay(delayMs)
                 performOnElement("clickDown", buildJsonObject { put("button", button); put("i", i) }, x, y, label)
             }
-            delay(options.delayMs)
+            delay(delayMs)
             performOnElement("clickUp", buildJsonObject { put("button", button); put("i", i) }, x, y, label)
         }
     }
@@ -306,27 +314,27 @@ internal abstract class BaseLocator(
             obj["v"] ?: JsonNull
         }
 
-    override suspend fun tap(options: TapOptions) {
+    override suspend fun tap(force: Boolean, modifiers: Int, timeoutMs: Long?) {
         checkPolicy(ActionType.Click)
-        performAction("tap", JsonObject(emptyMap()), timeoutOf(options.timeoutMs), options.force, Checks(), actionLabel = "tap")
+        performAction("tap", JsonObject(emptyMap()), timeoutOf(timeoutMs), force, Checks(), actionLabel = "tap")
     }
 
-    override suspend fun fill(value: String, options: FillOptions) {
+    override suspend fun fill(value: String, force: Boolean, timeoutMs: Long?) {
         checkPolicy(ActionType.Fill)
-        performAction("fill", buildJsonObject { put("value", value) }, timeoutOf(options.timeoutMs), options.force,
+        performAction("fill", buildJsonObject { put("value", value) }, timeoutOf(timeoutMs), force,
             Checks(editable = true, stable = false, hit = false), actionLabel = "fill")
     }
 
-    override suspend fun clear(options: FillOptions) = fill("", options)
+    override suspend fun clear(force: Boolean, timeoutMs: Long?) = fill("", force, timeoutMs)
 
-    override suspend fun pressSequentially(text: String, options: PressSequentiallyOptions) {
+    override suspend fun pressSequentially(text: String, delayMs: Long, timeoutMs: Long?) {
         checkPolicy(ActionType.Type)
         if (text.isEmpty()) return
-        val timeout = timeoutOf(options.timeoutMs)
+        val timeout = timeoutOf(timeoutMs)
         val units = text.toUnicodeTextUnits()
-        val batches = if (options.delayMs > 0) units.map { listOf(it) } else listOf(units)
+        val batches = if (delayMs > 0) units.map { listOf(it) } else listOf(units)
         for ((index, batch) in batches.withIndex()) {
-            if (index > 0) delay(options.delayMs)
+            if (index > 0) delay(delayMs)
             performAction("type", buildJsonObject {
                 put("chars", buildJsonArray {
                     batch.forEach { unit ->
@@ -340,33 +348,33 @@ internal abstract class BaseLocator(
         }
     }
 
-    override suspend fun press(key: String, options: PressOptions) {
+    override suspend fun press(key: String, delayMs: Long, timeoutMs: Long?) {
         checkPolicy(ActionType.Press)
         val args = pressArgsJson(key)
         val checks = Checks(visible = false, enabled = false, stable = false, hit = false, scroll = false)
-        if (options.delayMs <= 0) {
-            performAction("press", args, timeoutOf(options.timeoutMs), force = false, checks, actionLabel = "press $key on")
+        if (delayMs <= 0) {
+            performAction("press", args, timeoutOf(timeoutMs), force = false, checks, actionLabel = "press $key on")
             return
         }
         // Playwright: delayMs is the time between keydown and keyup.
-        performAction("pressDown", args, timeoutOf(options.timeoutMs), force = false, checks, actionLabel = "press $key on")
-        delay(options.delayMs)
+        performAction("pressDown", args, timeoutOf(timeoutMs), force = false, checks, actionLabel = "press $key on")
+        delay(delayMs)
         performOnElement("pressUp", args, 0.0, 0.0, "press $key on")
     }
 
-    override suspend fun hover(options: HoverOptions) {
+    override suspend fun hover(force: Boolean, timeoutMs: Long?) {
         checkPolicy(ActionType.Hover)
-        performAction("hover", JsonObject(emptyMap()), timeoutOf(options.timeoutMs), options.force, Checks(enabled = false), actionLabel = "hover")
+        performAction("hover", JsonObject(emptyMap()), timeoutOf(timeoutMs), force, Checks(enabled = false), actionLabel = "hover")
     }
 
-    override suspend fun scrollIntoViewIfNeeded(options: ScrollIntoViewOptions) {
+    override suspend fun scrollIntoViewIfNeeded(block: ScrollPosition, inline: ScrollPosition, timeoutMs: Long?) {
         checkPolicy(ActionType.Scroll)
         fun position(value: ScrollPosition) = when (value) {
             ScrollPosition.Start -> "start"; ScrollPosition.Center -> "center"; ScrollPosition.End -> "end"; ScrollPosition.Nearest -> "nearest"
         }
         performAction("scrollIfNeeded", buildJsonObject {
-            put("block", position(options.block)); put("inline", position(options.inline))
-        }, timeoutOf(options.timeoutMs), force = false, Checks(enabled = false, stable = true, hit = false, scroll = false),
+            put("block", position(block)); put("inline", position(inline))
+        }, timeoutOf(timeoutMs), force = false, Checks(enabled = false, stable = true, hit = false, scroll = false),
             actionLabel = "scroll into view")
     }
 
@@ -419,13 +427,13 @@ internal abstract class BaseLocator(
         return if (type == null || value == null) JsResult(raw, "unknown") else JsResult(value, type)
     }
 
-    override suspend fun check(options: CheckOptions) = setChecked(true, options)
+    override suspend fun check(force: Boolean, timeoutMs: Long?) = setChecked(true, force, timeoutMs)
 
-    override suspend fun uncheck(options: CheckOptions) = setChecked(false, options)
+    override suspend fun uncheck(force: Boolean, timeoutMs: Long?) = setChecked(false, force, timeoutMs)
 
-    override suspend fun setChecked(checked: Boolean, options: CheckOptions) {
+    override suspend fun setChecked(checked: Boolean, force: Boolean, timeoutMs: Long?) {
         checkPolicy(ActionType.Click)
-        val timeout = timeoutOf(options.timeoutMs)
+        val timeout = timeoutOf(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
         // Like every other action, wait for the element to be attached before inspecting it.
         waitFor(SelectorState.Attached, timeout)
@@ -434,7 +442,7 @@ internal abstract class BaseLocator(
         if (!checked && evalOnElement("return el.tagName === 'INPUT' && String(el.type).toLowerCase() === 'radio';", true) == "true") {
             throw KmpwrightException("Cannot uncheck radio button $displayName; check another option in its group instead")
         }
-        click(ClickOptions(timeoutMs = (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(1), force = options.force))
+        click(force = force, timeoutMs = (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(1))
         if (checkedState() != checked) {
             throw KmpwrightException("Clicking $displayName did not ${if (checked) "check" else "uncheck"} it")
         }
@@ -448,16 +456,16 @@ internal abstract class BaseLocator(
             else -> null
         }
 
-    override suspend fun selectOption(value: String, options: ActionOptions) = selectOption(listOf(value), options)
+    override suspend fun selectOption(value: String, force: Boolean, timeoutMs: Long?) = selectOption(listOf(value), force, timeoutMs)
 
-    override suspend fun selectOption(values: List<String>, options: ActionOptions) {
+    override suspend fun selectOption(values: List<String>, force: Boolean, timeoutMs: Long?) {
         checkPolicy(ActionType.Select)
-        val timeout = timeoutOf(options.timeoutMs)
+        val timeout = timeoutOf(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
         while (true) {
             val result = performAction("select", buildJsonObject {
                 put("values", JsonArray(values.map { JsonPrimitive(it) }))
-            }, (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(FINAL_PROBE_MARGIN_MS + 1), options.force,
+            }, (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(FINAL_PROBE_MARGIN_MS + 1), force,
                 Checks(stable = false, hit = false), actionLabel = "select an option in")
             val missing = (result as? JsonObject)?.get("missing")?.jsonPrimitive?.content ?: return
             val budget = timeout - started.elapsedNow().inWholeMilliseconds - FINAL_PROBE_MARGIN_MS
@@ -469,20 +477,20 @@ internal abstract class BaseLocator(
         }
     }
 
-    override suspend fun setInputFiles(files: List<String>, options: ActionOptions) {
+    override suspend fun setInputFiles(files: List<String>, force: Boolean, timeoutMs: Long?) {
         if (files.isNotEmpty()) throw KmpwrightException("setInputFiles is not supported in mobile WebView")
         checkPolicy(ActionType.Fill)
-        awaitFileInput(files.size, options)
+        awaitFileInput(files.size, force, timeoutMs)
         clearInputFiles()
     }
 
     /**
-     * Waits (within [ActionOptions.timeoutMs]) until the element is attached and, unless
-     * [ActionOptions.force], enabled; then requires an `<input type=file>` that accepts [fileCount] files.
+     * Waits (within [timeoutMs]) until the element is attached and, unless [force], enabled; then
+     * requires an `<input type=file>` that accepts [fileCount] files.
      * File inputs are usually hidden, so (as in Playwright) visibility is not required.
      */
-    protected suspend fun awaitFileInput(fileCount: Int, options: ActionOptions) {
-        val result = performAction("fileInput", buildJsonObject { put("count", fileCount) }, timeoutOf(options.timeoutMs), options.force,
+    protected suspend fun awaitFileInput(fileCount: Int, force: Boolean, timeoutMs: Long?) {
+        val result = performAction("fileInput", buildJsonObject { put("count", fileCount) }, timeoutOf(timeoutMs), force,
             Checks(visible = false, enabled = true, stable = false, hit = false, scroll = false), actionLabel = "set input files on")
         val error = (result as? JsonObject)?.get("error")?.jsonPrimitive?.content ?: return
         throw KmpwrightException("Cannot set input files on '$displayName': $error")
@@ -493,15 +501,15 @@ internal abstract class BaseLocator(
         evalOnElement("el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return true;", requireElement = true)
     }
 
-    override suspend fun dragTo(target: Locator, options: DragOptions) {
+    override suspend fun dragTo(target: Locator, sourcePosition: Position?, targetPosition: Position?, timeoutMs: Long?) {
         checkPolicy(ActionType.Drag)
         val targetBase = target as? BaseLocator
             ?: throw KmpwrightException("dragTo target must be a locator created by the same page (got ${target::class.simpleName})")
         if (targetBase.controller !== controller) throw KmpwrightException("dragTo target must belong to the same page")
-        val timeout = timeoutOf(options.timeoutMs)
+        val timeout = timeoutOf(timeoutMs)
         // The source must be actionable; the target only needs to be visible.
         performAction("noop", JsonObject(emptyMap()), timeout, force = false,
-            Checks(enabled = false, scroll = true), position = options.sourcePosition, actionLabel = "drag")
+            Checks(enabled = false, scroll = true), position = sourcePosition, actionLabel = "drag")
         targetBase.waitFor(SelectorState.Visible, timeout)
         val result = runWithRuntime("""
             ${resolveJs()}
@@ -509,8 +517,8 @@ internal abstract class BaseLocator(
             var targets = H.resolveAll(${targetBase.selectorPartsJs()});
             if (!targets.length) return {e: 'target missing'};
             var tgt = targets[0];
-            var sp = H.probe(el, ${pointJson(options.sourcePosition)});
-            var tp = H.probe(tgt, ${pointJson(options.targetPosition)});
+            var sp = H.probe(el, ${pointJson(sourcePosition)});
+            var tp = H.probe(tgt, ${pointJson(targetPosition)});
             return H.drag(el, tgt, {x: sp.x, y: sp.y}, {x: tp.x, y: tp.y}, 8);
         """.trimIndent())
         strictViolation(result)
@@ -650,21 +658,24 @@ internal abstract class BaseLocator(
         return Rectangle(parsed.x, parsed.y, parsed.width, parsed.height)
     }
 
-    override suspend fun screenshot(options: ScreenshotOptions): ScreenshotResult {
+    override suspend fun screenshot(omitBackground: Boolean, quality: Int, format: ScreenshotFormat, scale: Double, timeoutMs: Long?): ScreenshotResult =
+        screenshot(ScreenshotOptions(omitBackground = omitBackground, quality = quality, format = format, scale = scale, timeoutMs = timeoutMs))
+
+    /** Captures the element's bounding box with the page capture path ([ScreenshotOptions.clip] is replaced). */
+    protected open suspend fun screenshot(options: ScreenshotOptions): ScreenshotResult {
         checkPolicy(ActionType.Screenshot)
-        if (options.annotate) throw KmpwrightException("Annotated screenshots are page screenshots; use page.screenshot(ScreenshotOptions(annotate = true))")
         scrollIntoViewIfNeeded()
         val box = boundingBox() ?: throw KmpwrightException("No element found for screenshot: $displayName")
         val timeout = config.defaultTimeout(options.timeoutMs)
         return awaitPageOperation(lifetime) {
             withKmpwrightTimeout(timeout, { "Element screenshot of $displayName timed out after ${timeout}ms" }) {
                 // Same capture path as page screenshots: format, quality and omitBackground behave identically.
-                controller.captureScreenshot(options.copy(fullPage = false, clip = box))
+                controller.captureScreenshot(options.copy(fullPage = false, clip = box, captureBeyondViewport = true))
             }
         }
     }
 
-    override suspend fun highlight(options: HighlightOptions) {
+    override suspend fun highlight(color: String, borderColor: String, durationMs: Long) {
         evalOnElement("""
             var rect = el.getBoundingClientRect();
             var div = document.createElement('div');
@@ -674,13 +685,13 @@ internal abstract class BaseLocator(
             div.style.top = rect.y + 'px';
             div.style.width = rect.width + 'px';
             div.style.height = rect.height + 'px';
-            div.style.backgroundColor = ${jsStringLiteral(options.color)};
-            div.style.border = '2px solid ' + ${jsStringLiteral(options.borderColor)};
+            div.style.backgroundColor = ${jsStringLiteral(color)};
+            div.style.border = '2px solid ' + ${jsStringLiteral(borderColor)};
             div.style.borderRadius = '2px';
             div.style.pointerEvents = 'none';
             div.style.zIndex = '2147483647';
             document.body.appendChild(div);
-            if (${options.durationMs} > 0) setTimeout(function() { div.remove(); }, ${options.durationMs});
+            if ($durationMs > 0) setTimeout(function() { div.remove(); }, $durationMs);
             return true;
         """.trimIndent(), requireElement = true)
     }
@@ -767,7 +778,7 @@ internal abstract class BaseLocator(
         /** Installs the page runtime (idempotent); callers then reach it through [PageHelpers.runtimeExpression]. */
         internal suspend fun ensureHelpersInjected(
             controller: WebViewScriptController,
-            installMode: InstallMode = InstallMode.DocumentStartPreferred
+            installMode: InstallMode = InstallMode.Automatic
         ) {
             if (installMode == InstallMode.Disabled) {
                 throw KmpwrightException("Selector helpers are disabled by KmpwrightConfig.installMode")

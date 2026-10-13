@@ -385,27 +385,6 @@ class ConvenienceDslTest {
 
 
 
-    // --- SnapshotOptions: scopeSelector ---
-
-    @Test
-    fun `SnapshotOptions defaults are correct`() {
-        val opts = SnapshotOptions()
-        assertNull(opts.selector)
-        assertFalse(opts.cursor)
-    }
-
-    @Test
-    fun `SnapshotOptions with scopeSelector`() {
-        val opts = SnapshotOptions(selector = ".modal")
-        assertEquals(".modal", opts.selector)
-    }
-
-    @Test
-    fun `SnapshotOptions with cursorInteractive`() {
-        val opts = SnapshotOptions(cursor = true)
-        assertTrue(opts.cursor)
-    }
-
     // --- findByTitle ---
 
     @Test
@@ -522,11 +501,11 @@ class ConvenienceDslTest {
             "undefined"
         }
         val p = TestPage(ctrl)
-        p.highlight("#myButton", HighlightOptions(
+        p.highlight("#myButton", 
             color = "rgba(0, 255, 0, 0.5)",
             borderColor = "green",
             durationMs = 5000
-        ))
+        )
         assertNotNull(highlightJs)
         assertTrue(highlightJs!!.contains("rgba(0, 255, 0, 0.5)"))
         assertTrue(highlightJs!!.contains("green"))
@@ -573,15 +552,6 @@ class ConvenienceDslTest {
         kotlin.test.assertFailsWith<KmpwrightUnsupportedException> { p.tracing.stop() }
         kotlin.test.assertFailsWith<KmpwrightUnsupportedException> { p.profiler.start() }
         kotlin.test.assertFailsWith<KmpwrightUnsupportedException> { p.profiler.stop() }
-    }
-
-    @Test
-    fun `TracingOptions has sensible defaults`() {
-        val opts = TracingOptions()
-        assertTrue(opts.categories.contains("blink"))
-        assertTrue(opts.categories.contains("v8"))
-        assertEquals(false, opts.screenshots)
-        assertNull(opts.path)
     }
 
     // --- Device emulation presets ---
@@ -883,50 +853,36 @@ class ConvenienceDslTest {
         assertEquals(42.5, restored.entries[0].time, 0.001)
     }
 
-    // --- Proxy config helpers ---
+    // --- Proxy config ---
 
     @Test
-    fun `ProxyConfig parses host and port from HTTP URL`() {
-        val proxy = ProxyConfig(url = "http://proxy.example.com:8080")
-        assertEquals("proxy.example.com", proxy.host)
-        assertEquals(8080, proxy.port)
-        assertEquals("http", proxy.scheme)
+    fun `ProxyConfig parses host and port`() {
+        assertEquals("proxy.example.com", ProxyConfig("http://proxy.example.com:3128").host)
+        assertEquals(3128, ProxyConfig("http://proxy.example.com:3128").port)
+        assertEquals(1080, ProxyConfig("socks5://proxy").port)
+        assertEquals(8080, ProxyConfig("http://proxy").port)
     }
 
     @Test
-    fun `ProxyConfig parses SOCKS5 URL`() {
-        val proxy = ProxyConfig(url = "socks5://proxy:1080")
-        assertEquals("proxy", proxy.host)
-        assertEquals(1080, proxy.port)
-        assertEquals("socks5", proxy.scheme)
+    fun `ProxyConfig bypass matches exact hosts and wildcard subdomains`() {
+        val proxy = ProxyConfig("http://proxy:3128", bypass = listOf("localhost", "*.internal.test"))
+        assertTrue(proxy.bypasses("localhost"))
+        assertTrue(proxy.bypasses("api.internal.test"))
+        assertTrue(proxy.bypasses("internal.test"))
+        assertFalse(proxy.bypasses("example.com"))
     }
 
     @Test
-    fun `ProxyConfig defaults port to 8080 when missing`() {
-        val proxy = ProxyConfig(url = "http://proxy.example.com")
-        assertEquals("proxy.example.com", proxy.host)
-        assertEquals(8080, proxy.port)
+    fun `ProxyConfig rejects credentials it cannot apply`() {
+        assertThrows(IllegalArgumentException::class.java) { ProxyConfig("http://user:secret@proxy:3128") }
+        assertThrows(IllegalArgumentException::class.java) { ProxyConfig("") }
     }
 
     @Test
-    fun `ProxyConfig handles URL without scheme`() {
-        val proxy = ProxyConfig(url = "proxy.example.com:8080")
-        assertEquals("proxy.example.com", proxy.host)
-        assertEquals(8080, proxy.port)
-        assertEquals("http", proxy.scheme)
-    }
-
-    @Test
-    fun `ProxyConfig preserves bypass and auth`() {
-        val proxy = ProxyConfig(
-            url = "http://proxy:3128",
-            bypass = listOf("localhost", "127.0.0.1"),
-            username = "user",
-            password = "pass"
-        )
-        assertEquals(2, proxy.bypass.size)
-        assertEquals("user", proxy.username)
-        assertEquals("pass", proxy.password)
+    fun `launchBrowser rejects a proxy set twice`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { launchBrowser("/bin/chrome", proxy = ProxyConfig("http://proxy:3128"), arguments = listOf("--proxy-server=http://other:1")) }
+        }
     }
 
     // --- Auth profiles ---
@@ -1136,14 +1092,14 @@ class ConvenienceDslTest {
 
     @Test
     fun `addScriptTag with content injects script`() = testBlocking {
-        val id = page.addScriptTag(ScriptTagOptions(content = "window.__testVar = 1"))
+        val id = page.addScriptTag(content = "window.__testVar = 1")
         assertNotNull(id)
         assertTrue(controller.executedScripts.any { it.contains("createElement") && it.contains("script") })
     }
 
     @Test
     fun `addScriptTag with url sets src`() = testBlocking {
-        val id = page.addScriptTag(ScriptTagOptions(url = "https://example.com/lib.js"))
+        val id = page.addScriptTag(url = "https://example.com/lib.js")
         assertNotNull(id)
         assertTrue(controller.executedScripts.any { it.contains("src") })
     }
@@ -1152,14 +1108,14 @@ class ConvenienceDslTest {
 
     @Test
     fun `addStyleTag with content injects style`() = testBlocking {
-        val id = page.addStyleTag(StyleTagOptions(content = "body { color: red; }"))
+        val id = page.addStyleTag(content = "body { color: red; }")
         assertNotNull(id)
         assertTrue(controller.executedScripts.any { it.contains("style") })
     }
 
     @Test
     fun `addStyleTag with url creates link element`() = testBlocking {
-        val id = page.addStyleTag(StyleTagOptions(url = "https://example.com/style.css"))
+        val id = page.addStyleTag(url = "https://example.com/style.css")
         assertNotNull(id)
         assertTrue(controller.executedScripts.any { it.contains("stylesheet") })
     }
@@ -1334,7 +1290,7 @@ class ConvenienceDslTest {
     @Test
     fun `setContent loads HTML and sets URL to about blank`() = testBlocking {
         controller.evalHandler = { "\"interactive\"" }
-        page.setContent("<html><body>Hello</body></html>", SetContentOptions(waitUntil = LoadState.DOMContentLoaded, timeoutMs = 500))
+        page.setContent("<html><body>Hello</body></html>", waitUntil = LoadState.DOMContentLoaded, timeoutMs = 500)
         assertEquals("about:blank", page.url.value)
     }
 

@@ -15,7 +15,6 @@ import com.bernaferrari.kmpwright.core.NetworkRequestState
 import com.bernaferrari.kmpwright.core.Page
 import com.bernaferrari.kmpwright.core.Rectangle
 import com.bernaferrari.kmpwright.core.ScreenshotFormat
-import com.bernaferrari.kmpwright.core.ScreenshotOptions
 import com.bernaferrari.kmpwright.core.TimeoutConfig
 import com.bernaferrari.kmpwright.core.waitForDialog
 import kotlinx.coroutines.CoroutineScope
@@ -62,7 +61,7 @@ class KmpwrightConsistencyInstrumentedTest {
     @Test fun frameAmbiguityAndClosedBrowserAreRejected() = runPageTest {
         page.setContent("<div id=frames><iframe srcdoc='<button>First</button>'></iframe><iframe srcdoc='<button>Second</button>'></iframe></div>")
         for (frame in listOf(page.frameLocator("iframe"), page.locator("#frames").frameLocator("iframe"))) {
-            val failure = expect<KmpwrightException> { frame.locator("button").click(com.bernaferrari.kmpwright.core.ClickOptions(timeoutMs = 300)) }
+            val failure = expect<KmpwrightException> { frame.locator("button").click(timeoutMs = 300) }
             assertTrue(failure.message!!, failure.message!!.contains("Strict", ignoreCase = true))
         }
         browser.close()
@@ -88,7 +87,7 @@ class KmpwrightConsistencyInstrumentedTest {
         page.setContent("<input id=editor><script>window.keys=[]; ['keydown','keyup'].forEach(function(k){document.addEventListener(k,function(e){keys.push(k+':'+e.key);});});</script>")
         page.locator("#editor").focus()
         val press = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-            page.keyboard.press("Shift+A", com.bernaferrari.kmpwright.core.PressOptions(delayMs = 60_000))
+            page.keyboard.press("Shift+A", delayMs = 60_000)
         }
         page.waitForFunction("keys.includes('keydown:A')", timeoutMs = 2_000)
         press.cancel()
@@ -201,16 +200,16 @@ class KmpwrightConsistencyInstrumentedTest {
     @Test
     fun screenshotsHonorFormatsAndFailLoudlyOnUnsupportedOptions() = runPageTest {
         page.setContent("<body style='margin:0'><div id=box style='width:100px;height:50px;background:#ff0000'></div></body>")
-        val jpeg = page.screenshot(ScreenshotOptions(format = ScreenshotFormat.JPEG, quality = 60))
+        val jpeg = page.screenshot(format = ScreenshotFormat.Jpeg, quality = 60)
         assertEquals(0xFF, jpeg.bytes[0].toInt() and 0xFF)
         assertEquals(0xD8, jpeg.bytes[1].toInt() and 0xFF)
-        val webp = page.locator("#box").screenshot(ScreenshotOptions(format = ScreenshotFormat.WEBP))
+        val webp = page.locator("#box").screenshot(format = ScreenshotFormat.Webp)
         assertEquals("RIFF", webp.bytes.copyOfRange(0, 4).decodeToString())
         assertEquals("WEBP", webp.bytes.copyOfRange(8, 12).decodeToString())
-        expect<KmpwrightUnsupportedException> { page.screenshot(ScreenshotOptions(omitBackground = true)) }
-        expect<KmpwrightUnsupportedException> { page.locator("#box").screenshot(ScreenshotOptions(omitBackground = true)) }
-        expect<KmpwrightException> { page.screenshot(ScreenshotOptions(clip = Rectangle(50_000.0, 50_000.0, 10.0, 10.0))) }
-        expect<IllegalArgumentException> { ScreenshotOptions(fullPage = true, clip = Rectangle(0.0, 0.0, 1.0, 1.0)) }
+        expect<KmpwrightUnsupportedException> { page.screenshot(omitBackground = true) }
+        expect<KmpwrightUnsupportedException> { page.locator("#box").screenshot(omitBackground = true) }
+        expect<KmpwrightException> { page.screenshot(clip = Rectangle(50_000.0, 50_000.0, 10.0, 10.0)) }
+        expect<IllegalArgumentException> { page.screenshot(fullPage = true, clip = Rectangle(0.0, 0.0, 1.0, 1.0)) }
     }
 
     @Test

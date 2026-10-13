@@ -29,11 +29,13 @@ private suspend fun <T> Page.subscribeThen(wait: suspend () -> T, action: suspen
  */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
 public suspend fun Page.waitForNavigation(
-    options: WaitForNavigationOptions = WaitForNavigationOptions(),
+    url: String? = null,
+    waitUntil: LoadState? = null,
+    timeoutMs: Long? = null,
     action: suspend Page.() -> Unit
 ): NavigationResult = subscribeThen({
-    waitForNavigation(options) ?: throw KmpwrightTimeoutException(
-        "No navigation${options.url?.let { " matching $it" } ?: ""} happened within the timeout"
+    waitForNavigation(url, waitUntil, timeoutMs) ?: throw KmpwrightTimeoutException(
+        "No navigation${url?.let { " matching $it" } ?: ""} happened within the timeout"
     )
 }, action)
 
@@ -59,21 +61,30 @@ public suspend fun Page.waitForResponse(url: Regex, timeoutMs: Long? = null, act
 
 /** Runs [action] and waits until the page URL matches [url] (Playwright URL glob, see [Page.route]). */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.waitForURL(url: String, options: WaitForURLOptions = WaitForURLOptions(), action: suspend Page.() -> Unit): Unit =
-    subscribeThen({ waitForURL(url, options) }, action)
+public suspend fun Page.waitForURL(
+    url: String,
+    waitUntil: LoadState = LoadState.Load,
+    timeoutMs: Long? = null,
+    action: suspend Page.() -> Unit
+): Unit = subscribeThen({ waitForURL(url, waitUntil, timeoutMs) }, action)
 
 /** Runs [action] and waits until the page URL matches [url]. */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-public suspend fun Page.waitForURL(url: Regex, options: WaitForURLOptions = WaitForURLOptions(), action: suspend Page.() -> Unit): Unit =
-    subscribeThen({ waitForURL(url, options) }, action)
+public suspend fun Page.waitForURL(
+    url: Regex,
+    waitUntil: LoadState = LoadState.Load,
+    timeoutMs: Long? = null,
+    action: suspend Page.() -> Unit
+): Unit = subscribeThen({ waitForURL(url, waitUntil, timeoutMs) }, action)
 
 /** Runs [action] and waits until [predicate] accepts the page URL. */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
 public suspend fun Page.waitForURL(
     predicate: (String) -> Boolean,
-    options: WaitForURLOptions = WaitForURLOptions(),
+    waitUntil: LoadState = LoadState.Load,
+    timeoutMs: Long? = null,
     action: suspend Page.() -> Unit
-): Unit = subscribeThen({ waitForURL(options, predicate) }, action)
+): Unit = subscribeThen({ waitForURL(waitUntil, timeoutMs, predicate) }, action)
 
 /** Runs [action] and returns the download it starts. */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)

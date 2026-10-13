@@ -1,7 +1,5 @@
 package com.bernaferrari.kmpwright.core
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlin.coroutines.cancellation.CancellationException
@@ -54,7 +52,7 @@ public object AuthManager {
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
     public suspend fun save(profile: AuthProfile, password: String?) {
         require(password == null || password.isNotBlank()) { "Password must not be blank; pass null to write plaintext" }
-        withContext(Dispatchers.IO) {
+        withContext(fileDispatcher) {
             mkdirs(directory())
             val serialized = json.encodeToString(AuthProfile.serializer(), profile)
             fileWrite(profilePath(profile.name), if (password != null) SessionManager.encrypt(serialized, password) else serialized)
@@ -68,7 +66,7 @@ public object AuthManager {
      * @throws KmpwrightException when the profile is missing, cannot be decrypted (wrong password) or is malformed.
      */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun load(name: String, password: String?): AuthProfile = withContext(Dispatchers.IO) {
+    public suspend fun load(name: String, password: String?): AuthProfile = withContext(fileDispatcher) {
         val raw = fileRead(profilePath(name)) ?: throw KmpwrightException("Auth profile not found: $name")
         val content = if (password == null) raw else SessionManager.decryptOrThrow(raw, password, "Auth profile $name")
         try {
@@ -80,13 +78,13 @@ public object AuthManager {
 
     /** Names of the saved profiles. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun list(): List<String> = withContext(Dispatchers.IO) {
+    public suspend fun list(): List<String> = withContext(fileDispatcher) {
         fileList(directory()).filter { it.endsWith(".json") }.map { it.removeSuffix(".json") }
     }
 
     /** Deletes the profile [name]; true when it existed. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
-    public suspend fun delete(name: String): Boolean = withContext(Dispatchers.IO) { fileDelete(profilePath(name)) }
+    public suspend fun delete(name: String): Boolean = withContext(fileDispatcher) { fileDelete(profilePath(name)) }
 }
 
 /**

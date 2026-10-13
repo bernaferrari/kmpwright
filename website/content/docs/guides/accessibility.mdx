@@ -5,9 +5,7 @@ description: Run the bundled axe-core 4.14.0 against the current page with acces
 
 ```kotlin
 page.goto("https://example.com/signup")
-val report = page.accessibilityAudit(
-    AccessibilityAuditOptions(tags = setOf("wcag2a", "wcag2aa"), selector = "main")
-)
+val report = page.accessibilityAudit(tags = setOf("wcag2a", "wcag2aa"), selector = "main")
 
 println("axe ${report.axeVersion}: ${report.counts.violations} violations")
 for (issue in report.violations) {
@@ -17,20 +15,20 @@ for (issue in report.violations) {
 check(report.violations.none { it.impact == "critical" })
 ```
 
-`page.accessibilityAudit(options)` injects [axe-core](https://github.com/dequelabs/axe-core) into the page, runs it, and returns a typed report. The engine ships inside KMPwright (unmodified axe-core **4.14.0**, generated into `kmpwright-core/.../generated/AxeBundle.kt`), so nothing is downloaded at runtime and the page needs no network access.
+`page.accessibilityAudit(...)` injects [axe-core](https://github.com/dequelabs/axe-core) into the page, runs it, and returns a typed report. The engine ships inside KMPwright (unmodified axe-core **4.14.0**, generated into `kmpwright-core/.../generated/AxeBundle.kt`), so nothing is downloaded at runtime and the page needs no network access.
 
 This guide covers rule-based audits. For the accessibility tree that agents use to find elements (`@e3` refs), see [Snapshots](/docs/agents/snapshots).
 
 Playwright has no built-in audit. Its docs suggest the `@axe-core/playwright` package, and `accessibilityAudit` covers the same use. The engine is injected privately: `window.axe` is left as the page had it.
 
-## Options
+## Parameters
 
 <TypeTable
   type={{
     tags: { type: 'Set<String>', description: 'axe rule tags to run, such as "wcag2a", "wcag2aa", "wcag21aa" or "best-practice" (axe runOnly by tag). Empty runs every rule axe enables by default.', default: 'emptySet()' },
     selector: { type: 'String?', description: 'CSS selector that limits the audit to matching elements. It must match at least one element, or the audit throws. null audits the whole document.', default: 'null' },
-    timeoutMs: { type: 'Long?', description: 'Timeout for the whole audit. null uses TimeoutConfig.default (30 s unless configured). Must be positive.', default: 'null' },
     maxNodesPerRule: { type: 'Int', description: 'Maximum nodes listed per rule in the report (1..100). nodeCount always has the full count.', default: '10' },
+    timeoutMs: { type: 'Long?', description: 'Timeout for the whole audit. null uses TimeoutConfig.default (30 s unless configured). Must be positive.', default: 'null' },
   }}
 />
 

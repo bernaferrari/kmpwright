@@ -178,7 +178,7 @@ private fun LazyListScope.welcome(state: StudioState) {
     item(key = "starters") {
         val starters = listOf(
             Starter("Read the page", "List every interactive element with its ref.", "snapshot -i", Icons.Default.AutoAwesome, MaterialShapes.Cookie9Sided.toShape()),
-            Starter("Act on a ref", "Fill the search box, then press Enter.", "fill @e1 \"snapshot\"", Icons.Default.TouchApp, MaterialShapes.Clover4Leaf.toShape()),
+            Starter("Act on a ref", "Fill the search box, then press Enter.", "fill @e3 \"snapshot\"", Icons.Default.TouchApp, MaterialShapes.Clover4Leaf.toShape()),
             Starter("See the result", "Capture the page with ref labels.", "screenshot --annotate", Icons.Default.PhotoCamera, MaterialShapes.Sunny.toShape()),
             Starter("Go somewhere real", "Open Wikipedia and snapshot it.", "open en.wikipedia.org/wiki/Kotlin", Icons.Default.Public, MaterialShapes.SoftBurst.toShape()),
         )

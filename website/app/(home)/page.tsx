@@ -10,9 +10,9 @@ import {
   Smartphone,
 } from "lucide-react";
 import Link from "next/link";
+import { LiveDemo } from "@/components/live-demo";
 import { buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { WorkflowPreview } from "@/components/workflow-preview";
 import { cn } from "@/lib/utils";
 
 const examples = [
@@ -174,7 +174,7 @@ export default function HomePage() {
             ))}
           </div>
           <div className="mt-7">
-            <WorkflowPreview />
+            <LiveDemo />
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-muted-foreground">
             <p>

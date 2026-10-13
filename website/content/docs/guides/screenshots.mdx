@@ -7,37 +7,37 @@ description: Capture the viewport, the full page, a clip or one element with pag
 page.goto("https://example.com")
 
 val viewport = page.screenshot()
-val full = page.screenshot(ScreenshotOptions(fullPage = true))
+val full = page.screenshot(fullPage = true)
 val heading = page.locator("h1").screenshot()
 
 println("${full.width}x${full.height} px, ${full.bytes.size} bytes")
 // JVM: java.io.File("full.png").writeBytes(full.bytes)
 ```
 
-`page.screenshot(options)` and `locator.screenshot(options)` are `suspend` functions that return a `ScreenshotResult`. The library never writes files: you get the encoded image as `bytes` and store it with your platform's file API.
+`page.screenshot(...)` and `locator.screenshot(...)` are `suspend` functions that return a `ScreenshotResult`. The library never writes files: you get the encoded image as `bytes` and store it with your platform's file API.
 
-Playwright: same name. Differences: there is no `path` option, the result is a `ScreenshotResult` instead of a buffer, and `type` is called `format`. `mask`, `animations`, `caret` and `style` do not exist.
+Playwright: same name, and the options are named parameters (`page.screenshot({ fullPage: true })` is `page.screenshot(fullPage = true)`). Differences: there is no `path` parameter, the result is a `ScreenshotResult` instead of a buffer, and `type` is called `format`. `mask`, `animations`, `caret` and `style` do not exist.
 
-## Options
+## Parameters
 
-All fields of `ScreenshotOptions` are optional.
+Every parameter of `page.screenshot` has a default.
 
 <TypeTable
   type={{
     fullPage: { type: 'Boolean', description: 'Capture the whole scrollable document instead of the viewport. See "How full-page capture works" below.', default: 'false' },
-    clip: { type: 'Rectangle?', description: 'Capture only this rectangle, in CSS pixels. Coordinate space differs per backend, see "Clips".', default: 'null' },
-    omitBackground: { type: 'Boolean', description: 'Make the default white page background transparent. JVM (CDP) only; Android and iOS throw KmpwrightException.', default: 'false' },
-    quality: { type: 'Int', description: 'Encoder quality 0..100, used for JPEG and WEBP on the JVM. Validated on every backend, ignored for PNG.', default: '90' },
-    format: { type: 'ScreenshotFormat', description: 'PNG, JPEG or WEBP. Android and iOS only produce PNG and throw KmpwrightException for anything else.', default: 'ScreenshotFormat.PNG' },
+    clip: { type: 'Rectangle?', description: 'Capture only this rectangle, in CSS pixels relative to the top-left of the viewport. Cannot be combined with fullPage. See "Clips".', default: 'null' },
+    omitBackground: { type: 'Boolean', description: 'Make the default white page background transparent. JVM (CDP) only, with Png or Webp; Android and iOS throw KmpwrightUnsupportedException.', default: 'false' },
+    quality: { type: 'Int', description: 'Encoder quality 0..100, used for Jpeg and Webp. Ignored for Png.', default: '90' },
+    format: { type: 'ScreenshotFormat', description: 'ScreenshotFormat.Png, Jpeg or Webp. iOS cannot encode Webp and throws KmpwrightUnsupportedException.', default: 'ScreenshotFormat.Png' },
     scale: { type: 'Double', description: 'Multiplier for the output size. Must be finite and positive. Android clamps it to 0.1..5.0.', default: '1.0' },
-    annotate: { type: 'Boolean', description: 'Draw snapshot refs (e1, e2, ...) on the image and return them in ScreenshotResult.annotations. Page screenshots only.', default: 'false' },
+    annotate: { type: 'Boolean', description: 'Draw snapshot refs (e1, e2, ...) on the image and return them in ScreenshotResult.annotations. page.screenshot only.', default: 'false' },
     timeoutMs: { type: 'Long?', description: 'Time limit for the capture. null uses TimeoutConfig.default (30 000 ms unless configured).', default: 'null' },
   }}
 />
 
 `Rectangle(x, y, width, height)` uses `Double` CSS pixels.
 
-Errors: a capture that takes longer than the timeout throws `KmpwrightTimeoutException`. Every other failure of `page.screenshot`, including a `scale` that is not finite and positive or a `quality` outside `0..100`, throws `KmpwrightException` (non-KMPwright exceptions are wrapped as `"Screenshot failed: …"`).
+Errors: setting both `fullPage` and `clip` throws `IllegalArgumentException` ("fullPage and clip are mutually exclusive"). A capture that takes longer than the timeout throws `KmpwrightTimeoutException`. Every other failure of `page.screenshot`, including a `scale` that is not finite and positive or a `quality` outside `0..100`, throws `KmpwrightException` (non-KMPwright exceptions are wrapped as `"Screenshot failed: …"`).
 
 Screenshots go through the page's [action policy](/docs/security) as `ActionType.Screenshot`.
 
@@ -45,10 +45,11 @@ Screenshots go through the page's [action policy](/docs/security) as `ActionType
 
 ```kotlin
 data class ScreenshotResult(
-    val bytes: ByteArray,          // encoded image (PNG unless you asked for JPEG/WEBP on the JVM)
+    val bytes: ByteArray,          // encoded image in the requested format (PNG by default)
     val width: Int,                // pixel width of the encoded image
     val height: Int,               // pixel height of the encoded image
-    val annotations: List<Annotation> = emptyList()
+    val annotations: List<Annotation> = emptyList(),
+    val truncated: Boolean = false // explicitly bounded document capture only
 )
 ```
 
@@ -65,7 +66,7 @@ data class ScreenshotResult(
 ## Annotated screenshots
 
 ```kotlin
-val shot = page.screenshot(ScreenshotOptions(annotate = true))
+val shot = page.screenshot(annotate = true)
 for (a in shot.annotations) {
     println("${a.ref} ${a.role} \"${a.name}\" at ${a.box}")
 }
@@ -75,7 +76,7 @@ page.locator(shot.annotations.first().ref).click()
 
 `annotate = true` is agent-browser's `screenshot --annotate`. KMPwright takes an accessibility [snapshot](/docs/agents/snapshots), draws a red label with each ref (`e1`, `e2`, …) over the top-left corner of its element, captures the image, then removes the labels. Every visible ref is returned as an `Annotation(ref, role, name, box)`; `box` is the element's bounding box in viewport CSS pixels at capture time. Because a new snapshot is taken, the refs from the annotated screenshot replace refs from earlier snapshots.
 
-Annotation works on every backend and combines with `fullPage`. `locator.screenshot(ScreenshotOptions(annotate = true))` throws `KmpwrightException`.
+Annotation works on every backend and combines with `fullPage`. `locator.screenshot` has no `annotate` parameter.
 
 From an agent: `page.runCommand("screenshot --annotate")` returns the image in `result.screenshot` and a legend (`@e1 link: Learn more`) in `result.output`. `screenshot --full` (or `-f`) captures the full page.
 
@@ -85,23 +86,17 @@ From an agent: `page.runCommand("screenshot --annotate")` returns the image in `
 val card = page.getByTestId("pricing-card").screenshot()
 ```
 
-`locator.screenshot(options)` scrolls the element into view, reads its bounding box and captures that rectangle as a clip. `fullPage` and `clip` from the options are ignored. It throws `KmpwrightException` when no element matches.
-
-On Android and iOS, `locator.screenshot` always returns PNG: `format` and `omitBackground` are not checked there, unlike `page.screenshot`.
+`locator.screenshot(omitBackground = false, quality = 90, format = ScreenshotFormat.Png, scale = 1.0, timeoutMs = null)` scrolls the element into view, reads its bounding box and captures that rectangle as a clip through the same path as `page.screenshot`, so `format`, `quality` and `omitBackground` behave identically. It has no `fullPage`, `clip` or `annotate`. It throws `KmpwrightException` when no element matches.
 
 ## Clips
 
 ```kotlin
-val banner = page.screenshot(ScreenshotOptions(clip = Rectangle(0.0, 0.0, 800.0, 200.0)))
+val banner = page.screenshot(clip = Rectangle(0.0, 0.0, 800.0, 200.0))
 ```
 
-| Backend | Clip coordinates | Outside the viewport |
-|---|---|---|
-| Android | CSS pixels relative to the visible viewport; cropped from a viewport capture | Cropped to the viewport. A clip entirely outside it returns an empty result (`bytes` empty, `0x0`). |
-| iOS | Rectangle in the web view's coordinate space, passed to `WKSnapshotConfiguration.rect` | Rendered by WebKit |
-| JVM (CDP) | Passed to `Page.captureScreenshot` as `clip` (document coordinates in Chromium) | Rendered by Chromium |
+On every backend `clip` is in CSS pixels relative to the top-left of the viewport, as in Playwright. A clip that extends past the viewport is trimmed to it; a clip entirely outside the viewport throws `KmpwrightException` ("Clipped area is either empty or outside the viewport").
 
-When both `fullPage` and `clip` are set, Android and iOS capture the full page and ignore the clip; the JVM captures the clip.
+`fullPage` and `clip` cannot be combined: setting both throws `IllegalArgumentException` on every backend, as in Playwright.
 
 ## How full-page capture works
 
@@ -110,7 +105,7 @@ Each backend uses the native mechanism of its engine:
 | Backend | Mechanism | Size limit |
 |---|---|---|
 | Android | Scroll and stitch. KMPwright measures the document (`scrollWidth`/`scrollHeight`), hides the WebView's scrollbars, scrolls the window tile by tile with `window.scrollTo`, captures each tile and draws it into one bitmap, then restores the original scroll position. | 128 MiB of ARGB bitmap (width × height × 4 bytes) per capture; larger captures throw `KmpwrightException` suggesting a smaller `scale` or a clip. |
-| iOS | One `WKWebView.takeSnapshot` call for the rectangle of `scrollView.contentSize`. WebKit renders tiles outside the viewport for snapshots, so nothing is scrolled. | 32 megapixels (after screen scale); larger captures throw `KmpwrightException`. |
+| iOS | One `WKWebView.takeSnapshot` for the document CSS rectangle converted to native points. The original scroll position is restored. | 32 megapixels (after screen scale); larger captures throw `KmpwrightException`. |
 | JVM (CDP) | `Page.captureScreenshot` with `captureBeyondViewport: true`. With `scale` other than 1.0 the clip is the document size from `Page.getLayoutMetrics` (`cssContentSize`). | No KMPwright limit. |
 
 ### Android tile capture and stable frames
@@ -129,25 +124,48 @@ With `CdpConfig.hideScrollbars = true` (the default) KMPwright hides native scro
 
 | | Android | iOS | JVM (CDP) |
 |---|---|---|---|
-| Formats | PNG | PNG | PNG, JPEG, WEBP |
+| Formats | PNG, JPEG, WEBP | PNG, JPEG | PNG, JPEG, WEBP |
 | `omitBackground` | throws | throws | `Emulation.setDefaultBackgroundColorOverride`, reset after the capture |
-| `quality` | validated, unused | validated, unused | JPEG and WEBP |
+| `quality` | JPEG and WEBP | JPEG | JPEG and WEBP |
 | `scale` | clamped to 0.1..5.0 | any positive value | sent as the clip `scale` |
 | Full page | scroll and stitch | single snapshot | `captureBeyondViewport` |
 | Annotate | yes | yes | yes |
 
+## Capture an app-owned native WebView
+
+Android and iOS expose `captureWebViewDocument` for an existing `WebView` or `WKWebView`. It does not navigate, replace delegates, or take ownership of the view. Prepare the page and settle lazy content before calling it; the `Page` action policy is not applied by this low-level API.
+
+```kotlin
+val shot = captureWebViewDocument(
+    webView,
+    clip = Rectangle(0.0, 6000.0, 100.0, 1800.0),
+    pixelsPerCssPixel = 2.0,
+    maxPixels = 7_000_000,
+    maxHeight = 10_000,
+)
+// The complete selected region is 200 × 3600 output pixels.
+```
+
+The clip uses **document CSS coordinates**, including scroll offsets. This differs from a viewport clip passed to `page.screenshot`. Native element screenshots also capture the entire bounding box, including content taller than the viewport.
+
+Selected regions are complete or fail: an out-of-bounds or oversized selection never becomes a partial successful image. For a bounded whole-page preview, omit `clip` and set `truncateFullPage = true`; `ScreenshotResult.truncated` then reports whether the height or pixel budget shortened it. `viewportWidthOnly = true` limits an unselected document to the visible CSS width.
+
+`pixelsPerCssPixel` controls the output independently of device density. CSS bounds are converted using the actual WebView scale, including overview layouts. Android tiles the region; iOS snapshots the converted native rectangle. Both restore the original scroll position on success, failure, or cancellation. Android also restores its temporary root transform and scrollbar settings. A tile is rejected if the Android scroll position changes while its frame is being acquired.
+
+An optional `afterFirstTile` suspending callback runs after the first viewport row on Android, allowing an app to hide pinned headers before subsequent rows. iOS takes one native snapshot and invokes the callback afterward. This hook does not settle the page or prevent a page's own animations.
+
 ## PDFs
 
 ```kotlin
-val pdf = page.pdf(PdfOptions(format = PdfFormat.A4, margin = PdfMargin(top = "2cm", bottom = "2cm")))
+val pdf = page.pdf(format = PdfFormat.A4, margin = PdfMargin(top = "2cm", bottom = "2cm"))
 // JVM: java.io.File("page.pdf").writeBytes(pdf.bytes)
 ```
 
-`page.pdf(options): PdfResult` returns the document as `PdfResult.bytes`. It uses `TimeoutConfig.default` as its time limit (there is no per-call timeout) and is checked against the action policy as `ActionType.Screenshot`. `PageCapability.Pdf` is `Partial` on every backend, because each one supports a different subset of the options:
+`page.pdf(...): PdfResult` returns the document as `PdfResult.bytes`. Its `timeoutMs` parameter (null uses `TimeoutConfig.default`) limits the call, and it is checked against the action policy as `ActionType.Screenshot`. The defaults work on every backend. `PageCapability.Pdf` is `Partial` on every backend, because each one supports a different subset of the parameters:
 
 <TypeTable
   type={{
-    format: { type: 'PdfFormat', description: 'Paper size: Letter, Legal, Tabloid, Ledger, A0..A6, or Content (iOS only: the unpaginated page canvas).', default: 'PdfFormat.Letter' },
+    format: { type: 'PdfFormat?', description: 'Paper size: Letter, Legal, Tabloid, Ledger, A0..A6, or Content (iOS only: the unpaginated page canvas). null uses Letter on the JVM and Android and Content on iOS.', default: 'null' },
     landscape: { type: 'Boolean', description: 'Swap paper width and height.', default: 'false' },
     displayHeaderFooter: { type: 'Boolean', description: 'Print headerTemplate and footerTemplate. JVM only.', default: 'false' },
     headerTemplate: { type: 'String', description: 'HTML for the header, Chromium print template syntax. JVM only.', default: '""' },
@@ -156,8 +174,9 @@ val pdf = page.pdf(PdfOptions(format = PdfFormat.A4, margin = PdfMargin(top = "2
     scale: { type: 'Double', description: 'Rendering scale. JVM accepts 0.1..2.0; Android and iOS require 1.0.', default: '1.0' },
     width: { type: 'Double?', description: 'Paper width in inches; overrides the width of format.', default: 'null' },
     height: { type: 'Double?', description: 'Paper height in inches; overrides the height of format.', default: 'null' },
-    margin: { type: 'PdfMargin', description: 'Page margins as CSS lengths (top, bottom, left, right), each 1cm by default.', default: 'PdfMargin()' },
+    margin: { type: 'PdfMargin', description: 'Page margins as CSS lengths (top, bottom, left, right), each 0 by default, like Playwright.', default: 'PdfMargin()' },
     pageRanges: { type: 'String', description: 'Pages to print, for example "1-3, 5". JVM only.', default: '""' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.default.', default: 'null' },
   }}
 />
 
@@ -165,14 +184,14 @@ Margin values are a number followed by `in`, `cm`, `mm`, `pt` or `px`; a bare nu
 
 Playwright: `width`, `height` and margins are strings there; here `width`/`height` are `Double` inches. `path`, `preferCSSPageSize`, `outline` and `tagged` do not exist.
 
-| Backend | How | Supported options | Limits |
+| Backend | How | Supported parameters | Limits |
 |---|---|---|---|
-| Android | Scrolls through the document, captures viewport tiles and draws them into an `android.graphics.pdf.PdfDocument`, scaled to the printable width. Pages are images, so text is not selectable. | `format` (not `Content`), `width`, `height`, `landscape`, `margin`. Anything else throws `UnsupportedOperationException`. | Document up to 16 megapixels, at most 128 pages, output at most 32 MiB (each throws `KmpwrightException`). |
-| iOS | `WKWebView.createPDF` with the default configuration: one unpaginated page of the whole content. | Only `PdfFormat.Content` with zero margins and every other option at its default. Anything else throws `UnsupportedOperationException`. | None in KMPwright. |
-| JVM (CDP) | `Page.printToPDF`, streamed back in chunks. | All options. `scale` outside 0.1..2.0 throws `IllegalArgumentException`. | 512 MiB. |
+| Android | Scrolls through the document, captures viewport tiles and draws them into an `android.graphics.pdf.PdfDocument`, scaled to the printable width. Pages are images, so text is not selectable. | `format` (not `Content`), `width`, `height`, `landscape`, `margin`. Anything else throws `KmpwrightUnsupportedException`. | Document up to 16 megapixels, at most 128 pages, output at most 32 MiB (each throws `KmpwrightException`). |
+| iOS | `WKWebView.createPDF` with the default configuration: one unpaginated page of the whole content. | Only `format` null or `PdfFormat.Content` with zero margins and every other parameter at its default. Anything else throws `KmpwrightUnsupportedException`. | None in KMPwright. |
+| JVM (CDP) | `Page.printToPDF`, streamed back in chunks. | All parameters. `scale` outside 0.1..2.0 throws `IllegalArgumentException`. | 512 MiB. |
 
 <Callout type="warn">
-The defaults (`Letter`, 1 cm margins) are rejected on iOS. Use `PdfOptions(format = PdfFormat.Content, margin = PdfMargin("0", "0", "0", "0"))` there. `PdfFormat.Content` throws `UnsupportedOperationException` on Android and the JVM.
+iOS only renders the content canvas: leave `format` null (or pass `PdfFormat.Content`) and keep margins at zero. An explicit paper size such as `PdfFormat.A4` throws there. `PdfFormat.Content` throws `KmpwrightUnsupportedException` on Android and the JVM.
 </Callout>
 
 ## Visual diffs
@@ -182,13 +201,13 @@ val baseline = page.screenshot()
 page.getByRole("button", name = "Dark mode").click()
 val current = page.screenshot()
 
-val diff = page.visualDiff(baseline, current, DiffOptions(threshold = 0.1))
+val diff = page.visualDiff(baseline, current, threshold = 0.1)
 if (!diff.match) {
     println("${diff.differentPixels} of ${diff.totalPixels} pixels differ (${diff.mismatchPercentage}%)")
 }
 ```
 
-`Page.visualDiff(expected, actual, options)` decodes both screenshots with `toRgbaImage()` and compares them pixel by pixel. It does not take a new screenshot; the `Page` receiver is only a convenience. `VisualDiff.compareRgba(expected, actual, options)` does the same for two `RgbaImage`s you already have (for example a baseline loaded from disk).
+`Page.visualDiff(expected, actual, threshold = 0.1, generateDiffImage = true)` decodes both screenshots with `toRgbaImage()` and compares them pixel by pixel. It does not take a new screenshot; the `Page` receiver is only a convenience. `VisualDiff.compareRgba(expected, actual, threshold, generateDiffImage)` does the same for two `RgbaImage`s you already have (for example a baseline loaded from disk).
 
 <TypeTable
   type={{
@@ -207,7 +226,7 @@ if (!diff.match) {
 | `diffImage` | Raw RGBA bytes (not PNG) with the expected image's size: differing pixels are opaque red, the rest is the expected image in dimmed grayscale. `null` when disabled or when the images could not be compared. |
 | `dimensionMismatch` | Set when the sizes differ: `DimensionMismatch(expectedWidth, expectedHeight, actualWidth, actualHeight)`. |
 
-When the sizes differ, or either image cannot be decoded, the result is `match = false`, `mismatchPercentage = 100.0`, `totalPixels = 0` and no diff image. Compare screenshots taken with the same backend, viewport and `scale`: pixel sizes include the device pixel ratio.
+When the sizes differ, the result is `match = false`, `mismatchPercentage = 100.0`, `totalPixels = 0` and no diff image. `Page.visualDiff` throws `KmpwrightException` when either image cannot be decoded (for example WEBP on the JVM). Compare screenshots taken with the same backend, viewport and `scale`: pixel sizes include the device pixel ratio.
 
 ## Related
 

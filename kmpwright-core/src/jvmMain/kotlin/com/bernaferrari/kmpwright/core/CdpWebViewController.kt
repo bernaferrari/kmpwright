@@ -206,11 +206,11 @@ internal class CdpWebViewController(
     }
 
     override fun addDiagnosticsListener(listener: PageDiagnosticsListener) {
-        diagnosticsListeners = diagnosticsListeners.add(listener)
+        diagnosticsListeners = diagnosticsListeners.adding(listener)
     }
 
     override fun removeDiagnosticsListener(listener: PageDiagnosticsListener) {
-        diagnosticsListeners = diagnosticsListeners.remove(listener)
+        diagnosticsListeners = diagnosticsListeners.removing(listener)
     }
 
     /** Sends a CDP command, choosing session-based or direct. */
@@ -473,7 +473,7 @@ internal class CdpWebViewController(
         val params = mutableMapOf<String, Any?>(
             "format" to options.format.name.lowercase()
         )
-        if (options.format != ScreenshotFormat.PNG) params["quality"] = options.quality
+        if (options.format != ScreenshotFormat.Png) params["quality"] = options.quality
         var backgroundOverridden = false
         try {
             if (options.omitBackground) {
@@ -557,6 +557,7 @@ internal class CdpWebViewController(
     private var cachedDeviceScaleFactor: Double = 1.0
     @Volatile
     private var cachedMobile: Boolean = false
+    private var cachedLandscape: Boolean? = null
 
     /** True once the caller emulates a size; the browser window no longer dictates it. */
     @Volatile
@@ -600,12 +601,18 @@ internal class CdpWebViewController(
 
     private suspend fun applyDeviceMetrics() {
         val (width, height) = cachedViewportSize
-        val response = cdpSend(CdpMethods.EMULATION_SET_DEVICE_METRICS_OVERRIDE, mapOf(
+        val params = mutableMapOf<String, Any?>(
             "width" to width.coerceAtLeast(1),
             "height" to height.coerceAtLeast(1),
             "deviceScaleFactor" to cachedDeviceScaleFactor,
             "mobile" to cachedMobile
-        ))
+        )
+        // Like Playwright, only mobile emulation reports an orientation.
+        cachedLandscape?.takeIf { cachedMobile }?.let { landscape ->
+            params["screenOrientation"] = if (landscape) mapOf("angle" to 90, "type" to "landscapePrimary")
+            else mapOf("angle" to 0, "type" to "portraitPrimary")
+        }
+        val response = cdpSend(CdpMethods.EMULATION_SET_DEVICE_METRICS_OVERRIDE, params)
         response.error?.let { throw KmpwrightException("Viewport configuration failed: ${it.message}") }
     }
 
@@ -617,6 +624,7 @@ internal class CdpWebViewController(
         cachedViewportSize = viewport.width to viewport.height
         cachedDeviceScaleFactor = viewport.deviceScaleFactor
         cachedMobile = viewport.isMobile
+        cachedLandscape = viewport.isLandscape
         applyDeviceMetrics()
         val touchPoints = if (viewport.hasTouch) 5 else 0
         val touch = cdpSend(CdpMethods.EMULATION_SET_TOUCH_EMULATION_ENABLED,

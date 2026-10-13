@@ -12,7 +12,7 @@ class LocatorIdentityRegressionTest {
     @Test fun `query stages preserve identity for reads waits assertions and descendants`() = runBlocking {
         val chrome = System.getenv("KMPWRIGHT_TEST_CHROME")
         assumeTrue("Set KMPWRIGHT_TEST_CHROME to execute browser contracts", !chrome.isNullOrBlank())
-        val launched = launchBrowser(BrowserLaunchOptions(chrome!!))
+        val launched = launchBrowser(chrome!!)
         try {
             val page = launched.browser.newPage()
             page.setContent("""
@@ -51,7 +51,7 @@ class LocatorIdentityRegressionTest {
             try {
                 val base = "http://127.0.0.1:${server.address.port}"
                 assertTrue(page.goto(base).ok)
-                val navigation = async(start = CoroutineStart.UNDISPATCHED) { page.waitForNavigation(WaitForNavigationOptions(timeoutMs = 2_000)) }
+                val navigation = async(start = CoroutineStart.UNDISPATCHED) { page.waitForNavigation(timeoutMs = 2_000) }
                 page.locator("a").click()
                 assertEquals("$base/next", navigation.await()!!.url)
                 assertEquals("$base/next", page.url.value)
@@ -85,18 +85,18 @@ class LocatorIdentityRegressionTest {
                 val context = launched.browser.newContext()
                 try {
                     val isolated = context.newPage()
-                    assertTrue(isolated.goto(base, GotoOptions(timeoutMs = 2_000)).ok)
+                    assertTrue(isolated.goto(base, timeoutMs = 2_000).ok)
                     assertNull(isolated.cookie("persistent"))
                 } finally { context.close() }
                 page.setViewportSize(320, 240)
                 page.setUserAgent("KMPwright-contract")
                 assertEquals("KMPwright-contract", page.evaluate("navigator.userAgent").value)
-                val jpeg = page.screenshot(ScreenshotOptions(format = ScreenshotFormat.JPEG, quality = 70, scale = 0.5))
+                val jpeg = page.screenshot(format = ScreenshotFormat.Jpeg, quality = 70, scale = 0.5)
                 assertEquals(160, jpeg.width)
                 assertEquals(120, jpeg.height)
                 assertEquals(0xff, jpeg.bytes[0].toInt() and 0xff)
                 assertEquals(0xd8, jpeg.bytes[1].toInt() and 0xff)
-                val transparent = page.screenshot(ScreenshotOptions(omitBackground = true))
+                val transparent = page.screenshot(omitBackground = true)
                 val decoded = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(transparent.bytes))
                 assertEquals(0, decoded.getRGB(0, 0).ushr(24))
                 val oldLocator = page.locator("h1")
@@ -104,7 +104,7 @@ class LocatorIdentityRegressionTest {
                 val denied = runCatching { oldLocator.click() }.exceptionOrNull()
                 assertTrue("Existing locators must consult the current policy", denied is KmpwrightException)
                 val styleId = "style'id"
-                assertEquals(styleId, page.addStyleTag(StyleTagOptions(content = "body { color: black }", id = styleId)))
+                assertEquals(styleId, page.addStyleTag(content = "body { color: black }", id = styleId))
                 assertEquals(styleId, page.evaluate("document.querySelector('style').id").value)
                 verifyWebKitNetworkShim(page, base)
                 verifyIndependentLeases(launched.browser, base)

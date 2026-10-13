@@ -175,43 +175,30 @@ html > body[data-scroll-locked] {
   border-radius: 2px;
 }
 
-.workflow-preview {
+.live-demo {
   box-shadow:
     0 2px 4px color-mix(in oklch, var(--foreground) 3%, transparent),
     0 12px 32px color-mix(in oklch, var(--foreground) 4%, transparent);
 }
 
-.landing-agent-card,
-.preview-browser-canvas {
+.landing-agent-card {
   background: color-mix(in oklch, var(--primary) 5%, var(--background));
 }
 
-.preview-code-line {
-  display: block;
-  padding-right: 1.25rem;
-  padding-left: 1.25rem;
+.live-demo-ref {
+  outline: 1.5px solid color-mix(in oklch, var(--primary) 55%, transparent);
+  outline-offset: 1px;
+  background: color-mix(in oklch, var(--primary) 6%, transparent);
+  transition: background-color 120ms ease;
 }
 
-.preview-code-active {
-  background: color-mix(in oklch, var(--primary) 9%, transparent);
-  box-shadow: inset 2px 0 var(--primary);
+.live-demo-ref:has(.live-demo-badge:hover) {
+  background: color-mix(in oklch, var(--primary) 18%, transparent);
 }
 
-.preview-line-number {
-  display: inline-block;
-  width: 2rem;
-  color: var(--muted-foreground);
-  user-select: none;
-}
-
-.preview-method {
-  color: var(--primary);
-}
-
-.preview-string {
-  color: oklch(0.42 0.08 185);
-}
-
-.dark .preview-string {
-  color: oklch(0.8 0.08 185);
+.live-demo-badge {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 1px 3px color-mix(in oklch, black 25%, transparent);
+  cursor: pointer;
 }

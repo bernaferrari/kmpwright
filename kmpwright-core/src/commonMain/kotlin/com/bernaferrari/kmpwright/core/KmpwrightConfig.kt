@@ -15,7 +15,7 @@ package com.bernaferrari.kmpwright.core
  */
 public data class KmpwrightConfig(
     val allowedOriginRules: Set<String> = emptySet(),
-    val installMode: InstallMode = InstallMode.DocumentStartPreferred,
+    val installMode: InstallMode = InstallMode.Automatic,
     val inputMode: InputMode = InputMode.Hybrid,
     val timeouts: TimeoutConfig = TimeoutConfig(),
     val debug: DebugConfig = DebugConfig(),
@@ -27,8 +27,7 @@ public data class KmpwrightConfig(
     val viewport: Viewport? = null,
     val userAgent: String? = null,
     val iosSchemeInterception: IosSchemeInterceptionConfig? = null,
-    val cdp: CdpConfig? = null,
-    val proxy: ProxyConfig? = null
+    val cdp: CdpConfig? = null
 )
 
 /**
@@ -42,11 +41,15 @@ public data class CdpConfig(
     val provider: CloudProvider? = null,
     /** Connection timeout in milliseconds. */
     val connectionTimeoutMs: Long = 30_000,
-    /** Browser launch arguments (Chrome flags). */
-    val browserArgs: List<String> = emptyList(),
-    /** Headless mode. */
-    val headless: Boolean = true,
-    /** Hide native scrollbars in headless CDP screenshots for stable image output. */
+    /**
+     * Proxy for KMPwright's own DevTools WebSocket to a remote or cloud browser. It does not
+     * change how the browser loads pages; for that, launch with `launchBrowser(proxy = ...)`.
+     */
+    val connectionProxy: ProxyConfig? = null,
+    /**
+     * Hide native scrollbars in CDP screenshots for stable image output, like Playwright's
+     * headless screenshots. [launchBrowser] turns this off for headed launches.
+     */
     val hideScrollbars: Boolean = true,
     /** Remote CDP uploads use server-side paths. Opt in only when both machines share these paths. */
     val remoteBrowserSharesFileSystem: Boolean = false
@@ -69,35 +72,35 @@ public enum class CloudProvider {
 }
 
 /**
- * HTTP/HTTPS proxy configuration for CDP connections.
+ * An HTTP or SOCKS proxy, shaped like Playwright's `proxy` option.
+ *
+ * @property server proxy URL such as `http://proxy.example.com:8080` or `socks5://proxy:1080`.
+ * @property bypass hosts that skip the proxy, such as `localhost` or `*.internal.example.com`.
+ *
+ * Proxy authentication is not supported: Chromium does not accept credentials in its proxy flags.
+ * Use an unauthenticated proxy, or a local forwarding proxy that adds credentials.
  */
-public data class ProxyConfig(
-    /** Proxy URL, e.g. "http://proxy.example.com:8080" or "socks5://proxy:1080" */
-    val url: String,
-    /** Bypass list — domains that should not use the proxy. */
+public data class ProxyConfig @Throws(IllegalArgumentException::class) public constructor(
+    val server: String,
     val bypass: List<String> = emptyList(),
-    /** Optional username for proxy authentication. */
-    val username: String? = null,
-    /** Optional password for proxy authentication. */
-    val password: String? = null
 ) {
-    /** Extracts the host portion of the proxy URL. Returns the full URL if no scheme found. */
-    val host: String get() = if ("://" in url) url.substringAfter("://").substringBefore(":") else url.substringBefore(":")
-
-    /** Extracts the port portion of the proxy URL, defaulting to 8080. */
-    val port: Int get() {
-        val afterScheme = if ("://" in url) url.substringAfter("://") else url
-        val withPort = afterScheme.substringBefore("/")
-        return withPort.substringAfter(":").toIntOrNull() ?: 8080
+    init {
+        require(server.isNotBlank()) { "Proxy server must not be blank" }
+        require("@" !in server.substringAfter("://")) { "Proxy credentials in the server URL are not supported" }
+        require(bypass.none { it.isBlank() || ';' in it || ',' in it }) { "Proxy bypass entries must be non-blank hosts" }
     }
 
-    /** Extracts the scheme portion of the proxy URL (e.g. "http", "socks5"). Returns "http" if no scheme found. */
-    val scheme: String get() = if ("://" in url) url.substringBefore("://") else "http"
+    /** Host of [server]. */
+    internal val host: String get() = server.substringAfter("://").substringBefore("/").substringBeforeLast(":")
 
-    /** Never prints the password (or credentials embedded in the URL). */
-    override fun toString(): String {
-        val safeUrl = if ("@" in url.substringAfter("://")) url.substringBefore("://") + "://***@" + url.substringAfter("@") else url
-        return "ProxyConfig(url=$safeUrl, bypass=$bypass, username=$username, password=${if (password == null) "null" else "***"})"
+    /** Port of [server]; 1080 for SOCKS and 8080 otherwise when absent. */
+    internal val port: Int get() = server.substringAfter("://").substringBefore("/").substringAfterLast(":", "").toIntOrNull()
+        ?: if (server.startsWith("socks")) 1080 else 8080
+
+    /** Whether [host] skips this proxy, matching `*.example.com` against subdomains. */
+    internal fun bypasses(host: String): Boolean = bypass.any { entry ->
+        if (entry.startsWith("*.")) host == entry.removePrefix("*.") || host.endsWith(entry.removePrefix("*"))
+        else host.equals(entry, ignoreCase = true)
     }
 }
 
@@ -107,10 +110,11 @@ public data class IosSchemeInterceptionConfig(
     val fallbackScheme: String = "https"
 )
 
-/** When the in-page runtime is installed. */
+/** Whether KMPwright may install its sealed in-page runtime (selector engines, actionability, refs). */
 public enum class InstallMode {
-    DocumentStartPreferred,
-    AlwaysEvaluate,
+    /** Installed at document start where the platform allows it, and on demand otherwise. */
+    Automatic,
+    /** Never installed: locators, `getBy*`, snapshots and other runtime-backed APIs throw. */
     Disabled
 }
 

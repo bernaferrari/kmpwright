@@ -10,13 +10,10 @@ import com.bernaferrari.kmpwright.core.*
 import kotlinx.coroutines.runBlocking
 
 fun main() = runBlocking {
-    val launched = launchBrowser(BrowserLaunchOptions(executablePath = "/usr/bin/chromium"))
-    try {
+    launchBrowser("/usr/bin/chromium").use { launched ->
         val page = launched.browser.newPage()
         page.goto("https://example.com")
         expect(page.locator("h1")).toHaveText("Example Domain")
-    } finally {
-        launched.close()
     }
 }
 ```
@@ -29,9 +26,24 @@ There is no thread affinity on the JVM. CDP work runs on `Dispatchers.IO`.
 
 ```kotlin
 public suspend fun launchBrowser(
-    options: BrowserLaunchOptions,
+    executablePath: String,
+    headless: Boolean = true,
+    userDataDirectory: String? = null,
+    arguments: List<String> = emptyList(),
+    webGpu: Boolean = false,
+    webMcp: Boolean = true,
+    useSystemKeychain: Boolean = false,
+    ignoreHttpsErrors: Boolean = false,
+    extensionDirectories: List<String> = emptyList(),
+    startupTimeoutMs: Long = 30_000,
+    profileSnapshot: ChromeProfileSource? = null,
+    caCertificatePath: String? = null,
+    proxy: ProxyConfig? = null,
     config: KmpwrightConfig = KmpwrightConfig()
 ): LaunchedBrowser
+
+// Always closes the browser, the process and the temporary profile, even on failure.
+public suspend inline fun <T> LaunchedBrowser.use(block: (LaunchedBrowser) -> T): T
 
 public interface LaunchedBrowser {
     public val browser: Browser
@@ -43,7 +55,7 @@ public interface LaunchedBrowser {
 
 On Android and iOS, `launchBrowser` throws `KmpwrightUnsupportedException`: "Desktop browser process launch requires the JVM backend".
 
-### `BrowserLaunchOptions`
+### Parameters
 
 <TypeTable
   type={{
@@ -58,13 +70,15 @@ On Android and iOS, `launchBrowser` throws `KmpwrightUnsupportedException`: "Des
     extensionDirectories: { type: 'List<String>', description: 'Unpacked extensions to load (--load-extension). Each directory must contain manifest.json; paths must not contain commas. Branded Chrome may refuse; Chromium or Chrome for Testing usually works.', default: 'emptyList()' },
     startupTimeoutMs: { type: 'Long', description: 'How long to wait for the debugging endpoint and the first version() call. Must be 1000..120000.', default: '30_000' },
     profileSnapshot: { type: 'ChromeProfileSource?', description: 'Copy an existing Chrome profile into the temporary profile and launch with it. The source is never written. Mutually exclusive with userDataDirectory, and arguments must not contain --profile-directory.', default: 'null' },
+    proxy: { type: 'ProxyConfig?', description: 'Route the browser\'s traffic through an HTTP or SOCKS proxy (Playwright: launch({ proxy })). Adds --proxy-server and --proxy-bypass-list; do not also pass those flags in arguments. No proxy authentication.', default: 'null' },
     caCertificatePath: { type: 'String?', description: 'Trust a private CA (PEM bundle or one DER certificate) in an isolated NSS database. Linux only, needs certutil, and requires a temporary profile (no userDataDirectory or profileSnapshot) and ignoreHttpsErrors = false.', default: 'null' },
+    config: { type: 'KmpwrightConfig', description: 'Configuration for the returned Browser. cdp.websocketUrl is replaced by the launched endpoint.', default: 'KmpwrightConfig()' },
   }}
 />
 
 KMPwright always adds `--remote-debugging-port=0`, `--remote-debugging-address=127.0.0.1`, `--user-data-dir=<profile>`, `--no-first-run` and `--no-default-browser-check`, and opens `about:blank`. On Linux it adds `--disable-dev-shm-usage` when `/dev/shm` has less than 256 MiB, or cannot be measured inside a Docker or Podman container. Chromium's stdout and stderr are discarded.
 
-The options are validated in the constructor, which throws `IllegalArgumentException` with messages such as "Startup timeout must be between one and 120 seconds" or "A profile snapshot and a writable profile directory are mutually exclusive".
+`launchBrowser` validates its parameters before starting a process and throws `IllegalArgumentException` with messages such as "Startup timeout must be between one and 120 seconds" or "A profile snapshot and a writable profile directory are mutually exclusive".
 
 ### Cleanup and the shutdown hook
 
@@ -80,10 +94,10 @@ Launch failures throw `KmpwrightException`: "Could not launch Chromium: …" whe
 val dir = ChromeProfiles.discoverUserDataDirectory() ?: error("Chrome not found")
 ChromeProfiles.list(dir).forEach { println("${it.directory}: ${it.name}") }  // Default: Person 1
 
-val launched = launchBrowser(BrowserLaunchOptions(
-    executablePath = "/path/to/chromium",
+val launched = launchBrowser(
+    "/path/to/chromium",
     profileSnapshot = ChromeProfileSource(userDataDirectory = dir, profile = "Work"),
-))
+)
 ```
 
 | API | Behavior |
@@ -168,10 +182,10 @@ The JVM backend reports `Supported` for most capabilities (see [Capabilities](/d
 | Feature | API | Notes |
 |---|---|---|
 | Trusted input | `page.mouse`, `page.keyboard`, locator actions | With `InputMode.Hybrid` (default), locator clicks, hovers, typing, key presses and drags go through CDP `Input` events, so the page sees `isTrusted = true`. `TouchOnly` uses touch emulation; `JsOnly` falls back to DOM events. |
-| Tracing | `page.tracing.start(TracingOptions(...))` / `stop()` | Chrome trace JSON. Writing `TracingOptions.path` requires `KmpwrightConfig.enableTraceExport`. One page per browser can trace at a time. |
+| Tracing | `page.tracing.start(categories, screenshots, path)` / `stop()` | Chrome trace JSON. Writing to `path` requires `KmpwrightConfig.enableTraceExport`. One page per browser can trace at a time. |
 | Profiler | `page.profiler.start()` / `stop()` | V8 CPU profile JSON. |
-| Video | `page.video.start(RecordingOptions(path = "run.mp4"))` / `stop()` | Encoded with `ffmpeg`, which must be installed (`RecordingOptions.ffmpegExecutable`). Optional cursor overlay and contact sheet. See [Recording](/docs/guides/recording). |
-| Screencast | `page.screencast(ScreencastOptions())` | Experimental `Flow<ScreencastFrame>` of JPEG frames. |
+| Video | `page.video.start(path = "run.mp4")` / `stop()` | Encoded with `ffmpeg`, which must be installed (`ffmpegExecutable` parameter). Optional cursor overlay and contact sheet. See [Recording](/docs/guides/recording). |
+| Screencast | `page.screencast()` | Experimental `Flow<ScreencastFrame>` of JPEG frames. |
 | Cross-origin iframes | `page.frameLocator(...)` | Reaches out-of-process iframes through their CDP target sessions (`CrossOriginFrames` = Supported). WebViews only reach same-origin frames. |
 | Response bodies | `Response.body/text/json`, `page.network.responseBody(...)` | Readable while the browser retains them. WebViews have none. |
 | Native accessibility tree | `page.snapshot()` | Snapshots are enriched with Chromium's own accessibility tree (roles and names as computed by the browser), not only the DOM heuristics WebViews use. |
@@ -179,8 +193,8 @@ The JVM backend reports `Supported` for most capabilities (see [Capabilities](/d
 | Downloads, file chooser | `waitForDownload`, `setDownloadPath`, `setDownloadBehavior`, `setFileChooserInterception` + `waitForFileChooser` | |
 | Service workers | `page.serviceWorkers()` | |
 | Network emulation | `emulateNetworkConditions(NetworkConditions.Slow3G)` | Latency and throughput, not only offline. |
-| WebMCP | `page.webMcp` | Needs a Chromium with the experimental WebMCP DevTools domain (`BrowserLaunchOptions.webMcp`). |
-| Transparent screenshots | `ScreenshotOptions(omitBackground = true)` | PNG or WEBP with a transparent background. Scrollbars are hidden in headless screenshots unless `CdpConfig.hideScrollbars = false`. |
+| WebMCP | `page.webMcp` | Needs a Chromium with the experimental WebMCP DevTools domain (`launchBrowser(webMcp = true)`, the default). |
+| Transparent screenshots | `page.screenshot(omitBackground = true)` | PNG or WEBP with a transparent background. Scrollbars are hidden in headless screenshots unless `CdpConfig.hideScrollbars = false`. |
 
 The domain filter (`setAllowedDomains`) uses Fetch interception for navigations, iframes, redirects and every HTTP(S) subresource. WebSocket handshakes are not visible to it.
 
@@ -193,7 +207,7 @@ val farm = BrowserFarmScheduler(listOf(
     browserFarmSlot(
         id = "local-1",
         metadata = mapOf("platform" to "linux", "costUsdPerHour" to "0.00"),
-        connect = { launchBrowser(BrowserLaunchOptions("/usr/bin/chromium")).browser },
+        connect = { launchBrowser("/usr/bin/chromium").browser },
     ),
     browserFarmSlot(
         id = "remote-1",
@@ -236,10 +250,10 @@ Two separate mechanisms, neither of which changes JVM-wide SSL defaults:
 
 | For | Option | Behavior |
 |---|---|---|
-| The launched Chromium | `BrowserLaunchOptions.caCertificatePath` | Linux only. KMPwright creates a private NSS database with `certutil` (package `libnss3-tools` or `nss-tools`), imports the certificates as trusted CAs and points Chromium's `HOME` at it. Accepts a PEM bundle (up to 128 certificates) or one DER certificate, at most 4 MiB. Errors: "Isolated Chromium CA trust is supported only on Linux", "Isolated CA trust requires NSS certutil (libnss3-tools/nss-tools): …". |
-| `page.read(url)` and `HttpReader` | `ReadOptions(caCertificatePath = …, useSystemCa = true)` | A per-reader trust manager that accepts the system CAs (when `useSystemCa`) and your certificates. Hostname verification stays on. |
+| The launched Chromium | `launchBrowser(path, caCertificatePath = …)` | Linux only. KMPwright creates a private NSS database with `certutil` (package `libnss3-tools` or `nss-tools`), imports the certificates as trusted CAs and points Chromium's `HOME` at it. Accepts a PEM bundle (up to 128 certificates) or one DER certificate, at most 4 MiB. Errors: "Isolated Chromium CA trust is supported only on Linux", "Isolated CA trust requires NSS certutil (libnss3-tools/nss-tools): …". |
+| `page.read(url)` and `HttpReader` | `read(url, caCertificatePath = …, useSystemCa = true)` | A per-reader trust manager that accepts the system CAs (when `useSystemCa`) and your certificates. Hostname verification stays on. |
 
-`BrowserLaunchOptions.ignoreHttpsErrors = true` turns certificate verification off entirely; it cannot be combined with `caCertificatePath`.
+`launchBrowser(path, ignoreHttpsErrors = true)` turns certificate verification off entirely; it cannot be combined with `caCertificatePath`.
 
 ## Related
 

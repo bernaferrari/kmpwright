@@ -8,11 +8,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
-/** Options for [Page.webVitals]; a null [timeoutMs] uses [TimeoutConfig.default]. */
-@Serializable
-public data class WebVitalsOptions(val url: String? = null, val reload: Boolean = true,
-    val settleMs: Long = 3_000, val timeoutMs: Long? = null)
-
 /** One Core Web Vitals measurement. */
 @Serializable
 public data class WebVitalMetric(val value: Double, val rating: String, val id: String, val delta: Double)

@@ -50,7 +50,7 @@ class SnapshotFormatBrowserTest {
                 executor = java.util.concurrent.Executors.newCachedThreadPool()
                 start()
             }
-            runBlocking { launched = launchBrowser(BrowserLaunchOptions(executable), KmpwrightConfig(inputMode = InputMode.JsOnly)) }
+            runBlocking { launched = launchBrowser(executable, config = KmpwrightConfig(inputMode = InputMode.JsOnly)) }
         }
 
         @AfterClass @JvmStatic
@@ -114,9 +114,9 @@ class SnapshotFormatBrowserTest {
     fun `DOM walker used by WebView backends prints the same interactive lines`() = browserTest { page ->
         page.goto("$origin/")
         // includeHidden switches CDP to the DOM walker that iOS and Android always use.
-        val tree = page.snapshot(SnapshotOptions(interactive = true, urls = true, includeHidden = true)).tree
+        val tree = page.snapshot(interactive = true, urls = true, includeHidden = true).tree
         assertEquals(interactiveLines.joinToString("\n"), tree)
-        val full = page.snapshot(SnapshotOptions(includeHidden = true)).tree
+        val full = page.snapshot(includeHidden = true).tree
         assertTrue(full, full.lines().containsAll(listOf("[paragraph]", "  [StaticText] \"Some intro text.\"", "  @e3 [checkbox] \"Remember me\" [checked]")))
     }
 

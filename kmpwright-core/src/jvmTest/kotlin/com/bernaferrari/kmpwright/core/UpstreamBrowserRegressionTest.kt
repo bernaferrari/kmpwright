@@ -57,17 +57,17 @@ class UpstreamBrowserRegressionTest {
         val profile = AuthProfile("fixture", "http://127.0.0.1:$port/login", "user-fixture@example.test", "password-fixture")
         page.goto(profile.url)
         page.evaluate("document.body.innerHTML='<form><input type=text name=username style=display:none><input type=email name=email><input type=password disabled><input type=password name=password><button type=submit>Sign in</button></form>'; document.querySelector('form').onsubmit=function(event){event.preventDefault();window.submitted=true}")
-        val result = page.login(profile, AuthLoginOptions(navigate = false))
+        val result = page.login(profile, navigate = false)
         assertTrue(result.submitted)
         assertEquals("user-fixture@example.test", page.locator("input[type=email]").inputValue())
         assertEquals("password-fixture", page.locator("input[name=password]").inputValue())
         assertEquals("true", page.evaluate("window.submitted").value)
         page.evaluate("document.querySelector('input[type=email]').value='';document.querySelector('input[name=password]').value='';document.querySelector('input[type=email]').oninput=function(){document.querySelector('input[name=password]').name='changed'}")
-        try { page.login(profile, AuthLoginOptions(navigate = false)); fail("Changed credential target accepted") }
+        try { page.login(profile, navigate = false); fail("Changed credential target accepted") }
         catch (error: KmpwrightException) { assertTrue(error.message!!.contains("changed")) }
         assertEquals("", page.locator("input[name=changed]").inputValue())
         page.evaluate("document.querySelector('input[type=email]').oninput=null;document.querySelector('form').action='https://foreign.invalid/login'")
-        try { page.login(profile, AuthLoginOptions(navigate = false)); fail("Foreign form destination accepted") }
+        try { page.login(profile, navigate = false); fail("Foreign form destination accepted") }
         catch (error: KmpwrightException) { assertTrue(error.message!!.contains("foreign")) }
     }
 
@@ -105,7 +105,7 @@ class UpstreamBrowserRegressionTest {
 
     private suspend fun verifyScreencast(page: Page) {
         val frame = kotlinx.coroutines.withTimeout(15_000) {
-            page.screencast(ScreencastOptions(maxWidth = 320, maxHeight = 240)).first()
+            page.screencast(maxWidth = 320, maxHeight = 240).first()
         }
         val image = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(frame.bytes))
         assertTrue(image.width in 1..320 && image.height in 1..240)
@@ -120,9 +120,9 @@ class UpstreamBrowserRegressionTest {
             page.setContent("<style>html,body{margin:0;height:100%;background:blue}</style>")
             page.evaluate("requestAnimationFrame(()=>requestAnimationFrame(()=>window.recordingPaintReady=true))")
             page.waitForFunction("window.recordingPaintReady === true")
-            page.video.start(RecordingOptions(directory.resolve("capture.mp4").toString(), fps = 30,
+            page.video.start(directory.resolve("capture.mp4").toString(), fps = 30,
                 maxWidth = 320, maxHeight = 240, ffmpegExecutable = ffmpeg,
-                contactSheetPath = directory.resolve("contact.png").toString()))
+                contactSheetPath = directory.resolve("contact.png").toString())
             page.mouse.move(100.0, 80.0)
             delay(250)
             page.evaluate("document.body.style.background='orange'")
@@ -176,12 +176,12 @@ class UpstreamBrowserRegressionTest {
         val group = flatten(snapshot.nodes).single { it.role == "group" && it.name == "Owned group" }
         assertTrue(flatten(group.children).any { it.role == "button" && it.name == "Owned button" })
         assertEquals(1, snapshot.refs.values.count { it.name == "Owned button" })
-        val scoped = page.snapshot(SnapshotOptions(selector = "#owner"))
+        val scoped = page.snapshot(selector = "#owner")
         assertTrue(scoped.refs.values.any { it.name == "Owned button" })
         assertFalse(scoped.refs.values.any { it.name == "Other button" })
-        val interactive = page.snapshot(SnapshotOptions(interactive = true))
+        val interactive = page.snapshot(interactive = true)
         assertEquals(setOf("Owned button", "Other button"), flatten(interactive.nodes).filter { it.role == "button" }.map { it.name }.toSet())
-        val button = page.snapshot(SnapshotOptions(selector = "#owned"))
+        val button = page.snapshot(selector = "#owned")
         assertEquals(1, button.refs.size)
     }
 
@@ -230,9 +230,9 @@ class UpstreamBrowserRegressionTest {
         assertFalse(diff.changed)
         page.evaluate("document.querySelector('#one').textContent='Changed'")
         assertTrue(page.diffSnapshot("__baseline__").changed)
-        try { page.snapshot(SnapshotOptions(selector = "#absent")); fail("Scope must exist") }
+        try { page.snapshot(selector = "#absent"); fail("Scope must exist") }
         catch (e: KmpwrightException) { assertTrue(e.message!!.contains("#absent")) }
-        val annotated = page.screenshot(ScreenshotOptions(annotate = true))
+        val annotated = page.screenshot(annotate = true)
         assertTrue(annotated.annotations.isNotEmpty())
         assertTrue(annotated.bytes.isNotEmpty())
         page.evaluate("document.querySelector('#one').remove()")
@@ -330,7 +330,7 @@ class UpstreamBrowserRegressionTest {
             assertEquals("editable", page.locator("#rich").innerText())
             page.evaluate("var overlay=document.createElement('div'); overlay.id='overlay'; overlay.style='position:fixed;inset:0;z-index:999;background:white'; document.body.appendChild(overlay)")
             // Native (CDP) clicks retry the hit-target check like the WebView path and report a readable error.
-            try { page.locator("#trusted").click(ClickOptions(timeoutMs = 500)); fail("Overlay must intercept") }
+            try { page.locator("#trusted").click(timeoutMs = 500); fail("Overlay must intercept") }
             catch (e: KmpwrightTimeoutException) { assertTrue(e.message, e.message!!.contains("is covered by <div id=\"overlay\">")) }
             assertEquals("[true]", page.evaluate("JSON.stringify(clicks)").value)
             val init = page.addInitScript("window.early = 'ready';")
@@ -437,7 +437,7 @@ class UpstreamBrowserRegressionTest {
                     window.originalStamp = console.timeStamp;
                     window.webVitals = {pageOwned:true};
                 """.trimIndent())
-                val vitals = try { page.webVitals(WebVitalsOptions(settleMs = 300)) }
+                val vitals = try { page.webVitals(settleMs = 300) }
                     finally { page.removeInitScript(observerProbe) }
                 assertEquals("0", page.evaluate("window.liveObservers.size").value)
                 assertEquals("true", page.evaluate("console.timeStamp === window.originalStamp").value)
@@ -466,7 +466,7 @@ class UpstreamBrowserRegressionTest {
                 page.goto("http://127.0.0.1:${toolsServer.address.port}/audit")
                 page.waitForLoadState(LoadState.Load)
                 page.evaluate("Object.defineProperty(window,'axe',{value:{pageOwned:true},configurable:false});window.define=function(){throw new Error('Page AMD loader must not be called')};window.define.amd={}")
-                val audit = page.accessibilityAudit(AccessibilityAuditOptions(tags = setOf("wcag2a")))
+                val audit = page.accessibilityAudit(tags = setOf("wcag2a"))
                 assertEquals("4.14.0", audit.axeVersion)
                 assertEquals(audit.coverage.toString(), 4, audit.coverage.auditedFrames)
                 assertTrue(audit.coverage.skippedFrames.isEmpty())
@@ -484,7 +484,7 @@ class UpstreamBrowserRegressionTest {
                 crossFrame.locator("#field").fill("Cross process 雪😀")
                 assertEquals("Cross process 雪😀", crossFrame.locator("#field").inputValue())
                 page.evaluate("var ancestorOverlay=document.createElement('div');ancestorOverlay.id='ancestorOverlay';ancestorOverlay.style='position:fixed;inset:0;z-index:99999;background:white';document.body.appendChild(ancestorOverlay)")
-                try { crossFrame.locator("#trusted").click(ClickOptions(timeoutMs = 1_000)); fail("Ancestor overlay must intercept frame input") }
+                try { crossFrame.locator("#trusted").click(timeoutMs = 1_000); fail("Ancestor overlay must intercept frame input") }
                 catch (error: KmpwrightException) { assertTrue(error.message, error.message.orEmpty().contains("intercepted")) }
                 page.evaluate("document.querySelector('#ancestorOverlay').remove()")
                 crossFrame.locator("#trusted").click()
@@ -507,11 +507,11 @@ class UpstreamBrowserRegressionTest {
                 val frameToolResult = page.webMcp.invoke("child", frameId = selectedTool.frameId)
                 assertEquals(WebMcpInvocationStatus.Completed, frameToolResult.status)
                 assertTrue(frameToolResult.output.toString().contains("localhost"))
-                val scopedAudit = page.accessibilityAudit(AccessibilityAuditOptions(tags = setOf("wcag2a"), selector = "#scope"))
+                val scopedAudit = page.accessibilityAudit(tags = setOf("wcag2a"), selector = "#scope")
                 assertEquals(1, scopedAudit.coverage.auditedFrames)
                 assertEquals(1, scopedAudit.violations.single { it.id == "image-alt" }.nodeCount)
                 for (selector in listOf("[", "#does-not-exist")) {
-                    try { page.accessibilityAudit(AccessibilityAuditOptions(selector = selector)); fail("Invalid audit scope must fail") }
+                    try { page.accessibilityAudit(selector = selector); fail("Invalid audit scope must fail") }
                     catch (error: KmpwrightException) { assertTrue(error.message.orEmpty().contains(selector)) }
                 }
 
