@@ -1,8 +1,8 @@
 # Releasing Kmpwright
 
-This is the operator and consumer guide for the first public release. It
-describes the intended release contract; it does not mean that a release has
-already been published.
+Version `0.0.1` is published on Maven Central. This guide covers release
+operations and verification for Kotlin and Swift consumers. The standalone
+Swift/Xcode XCFramework release asset is not published yet.
 
 ## Release identity
 
@@ -15,7 +15,7 @@ already been published.
 - Apple binaries: device `arm64`; simulator `arm64`
 - CocoaPods: not supported for the first release
 
-The published Maven coordinates will therefore be
+The published Maven coordinates are
 `io.github.bernaferrari:kmpwright-core:0.0.1` and
 `io.github.bernaferrari:kmpwright-compose:0.0.1`. Confirm the generated module
 metadata and POMs before announcing a release.
@@ -68,7 +68,7 @@ metadata and POMs before announcing a release.
    to become discoverable. This makes retries safe for immutable versions.
    Record the immutable release
    commit, published coordinates, checksums, and signing-key fingerprint in
-   the release record. No external release is implied by this document.
+   the release record. Check public repository availability before announcing a release.
 
 ## Artifact verification
 

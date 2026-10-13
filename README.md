@@ -11,7 +11,7 @@ Kotlin API, or give an AI agent the same browser through compact commands.
 [Documentation](docs/README.md) · [Agent guide](website/content/docs/agents/index.mdx) · [Examples](kmpwright-example-shared)
 
 > [!NOTE]
-> **0.0.1 alpha.** Maven Central publication is pending. APIs and platform coverage may change.
+> **0.0.1 alpha.** Available on Maven Central. APIs and platform coverage may change.
 
 ## Installation
 

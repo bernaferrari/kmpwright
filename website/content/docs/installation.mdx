@@ -4,48 +4,27 @@ description: Add kmpwright-core (and optionally kmpwright-compose) to a Kotlin M
 ---
 
 <Callout type="warn">
-**Not published yet.** Version `0.0.1` is alpha. The Maven Central artifacts and the `KmpwrightCore` XCFramework release asset do not exist yet. Until they do, use the source-build steps below. The published coordinates are fixed and listed here so you can prepare your build.
+Version `0.0.1` is available on Maven Central. This is an alpha release; APIs and platform coverage may change.
 </Callout>
 
-## Build from source (today)
+## Add the library
 
-Clone the repository and run the Android demo on a connected device or emulator:
-
-```bash
-git clone https://github.com/bernaferrari/kmpwright.git
-cd kmpwright
-./gradlew :example-android:installDebug
-```
-
-For the iOS Simulator, follow the [sample app setup](/docs/sample-app). To use the library in a module inside this checkout, add Gradle project dependencies:
+Add one dependency to `commonMain.dependencies` in your module's `build.gradle.kts`:
 
 ```kotlin
-// build.gradle.kts of a module in the KMPwright checkout
-kotlin {
-    sourceSets {
-        commonMain.dependencies {
-            implementation(project(":kmpwright-core"))
-        }
-        androidMain.dependencies {
-            implementation(project(":kmpwright-compose"))
-        }
-    }
-}
+implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
 ```
 
-Build requirements: JDK 17, the Android SDK for Android targets, and macOS with Xcode for iOS targets.
-
-To try the published-coordinate setup without Maven Central, `./scripts/verify-publication.sh` stages both modules into `build/test-repository` and compiles independent consumer projects against them.
-
-## Planned release artifacts
+Gradle selects the matching platform variant. Your project must include `mavenCentral()` in its repositories. For a complete Gradle example, see [Kotlin Multiplatform](#kotlin-multiplatform) below.
 
 | Artifact | Coordinates | Targets |
 | --- | --- | --- |
-| Core | `io.github.bernaferrari:kmpwright-core:0.0.1` | Android, iOS (`iosArm64`, `iosSimulatorArm64`), JVM |
+| Core | `io.github.bernaferrari:kmpwright-core:0.0.1` | Android, iOS (arm64 device and simulator), JVM, JS |
 | Compose wrapper (optional) | `io.github.bernaferrari:kmpwright-compose:0.0.1` | Android only |
-| iOS XCFramework (Swift/Xcode) | `KmpwrightCore-0.0.1.xcframework.zip` release asset | arm64 device, arm64 simulator |
 
-Everything public lives in one package: `com.bernaferrari.kmpwright.core` (core) and `com.bernaferrari.kmpwright.compose` (Compose wrapper).
+The Kotlin/JS artifact supports the website demo's browser bridge. See the [capability matrix](/docs/platforms/capabilities) for backend differences.
+
+Public packages are `com.bernaferrari.kmpwright.core` and `com.bernaferrari.kmpwright.compose`.
 
 ## Minimum versions
 
@@ -58,7 +37,7 @@ Everything public lives in one package: `com.bernaferrari.kmpwright.core` (core)
 
 Video recording on the JVM also needs FFmpeg on `PATH`.
 
-## Kotlin Multiplatform (after the first release)
+## Kotlin Multiplatform
 
 Add the core to `commonMain`. Gradle picks the right Android, iOS or JVM variant per target.
 
@@ -81,7 +60,7 @@ kotlin {
 
 Your shared code then works with `Browser`, `Page` and `Locator`. Each platform source set creates the `PlatformContext` (`AndroidPlatformContext`, `IOSPlatformContext`, `JvmPlatformContext`) because those wrap platform objects.
 
-## Android-only app (after the first release)
+## Android-only app
 
 ```kotlin
 // app/build.gradle.kts
@@ -105,11 +84,11 @@ You have two options.
 
 **Kotlin Multiplatform.** Add the dependency to `commonMain` (above) and use KMPwright from `iosMain` or shared code. Your shared framework exports whatever you choose; the KMPwright API itself is Kotlin, so drive it from Kotlin code.
 
-**Swift/Xcode via XCFramework.** The release ships a static `KmpwrightCore.xcframework` (module name `KmpwrightCore`) as a versioned zip asset, not through CocoaPods:
+**Swift/Xcode via XCFramework.** You can build a static `KmpwrightCore.xcframework` (module name `KmpwrightCore`) from source. CocoaPods distribution is not supported:
 
 <Steps>
 <Step>
-Download `KmpwrightCore-0.0.1.xcframework.zip` and verify it against the adjacent `.sha256` file.
+The standalone Swift/Xcode XCFramework release asset is not published yet. Build it from source using the command below. KMP consumers can already use the Maven dependency.
 </Step>
 <Step>
 Add `KmpwrightCore.xcframework` to your Xcode target and set **Do Not Embed** (it is a static library).
