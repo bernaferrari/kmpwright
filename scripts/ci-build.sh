@@ -8,12 +8,9 @@ set -euo pipefail
   :kmpwright-example-shared:assembleAndroidMain \
   :example-android:assembleDebug
 
-# The docs site ships a committed build of the live demo (Kotlin/JS); fail when it is stale.
+# Rebuild the Kotlin demo and check the website's pinned release artifact.
 ./gradlew :kmpwright-web-demo:syncWebsiteDemo
-git diff --exit-code --stat -- website/lib/kmpwright-demo || {
-  echo "website/lib/kmpwright-demo is stale: run ./gradlew :kmpwright-web-demo:syncWebsiteDemo and commit it." >&2
-  exit 1
-}
+node website/scripts/prepare-demo.mjs --verify-local
 
 # Browser deadlines must be measured without concurrent Android compilation/lint.
 ./gradlew :kmpwright-core:jvmTest

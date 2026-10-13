@@ -78,7 +78,7 @@ fixture), 50 physical Android tests, Compose lint, both Android examples, and
 29 iOS simulator tests. The shared Compose iOS framework linked successfully.
 The core XCFramework contains arm64 device and simulator slices; archive,
 checksums, deployment targets, and an independent Swift consumer passed.
-Browser parity additions are verified separately in compatibility/parity-work.md.
+Browser parity additions are verified separately in [the upstream record](compatibility/parity-work.md).
 
 Independent Maven consumers also passed: Kotlin Multiplatform compilation and an Android APK build using only the local published artifacts.
 

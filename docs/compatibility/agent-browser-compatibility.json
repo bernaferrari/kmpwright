@@ -13,8 +13,8 @@
     "comparedVersion": "0.39.0",
     "comparedOn": "2026-10-11",
     "localCheckoutPath": ".upstream/agent-browser",
-    "review": "compatibility/upstream-review.md",
-    "changeInventory": "compatibility/upstream-changes.json"
+    "review": "docs/compatibility/upstream-review.md",
+    "changeInventory": "docs/compatibility/upstream-changes.json"
   },
   "kmpwright": {
     "package": "com.bernaferrari.kmpwright.core",

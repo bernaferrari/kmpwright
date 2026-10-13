@@ -14,7 +14,12 @@ export const metadata: Metadata = {
   },
   description:
     "Playwright-style automation and agent-browser commands for Android WebView, iOS WKWebView and Chromium, in one Kotlin API.",
-  metadataBase: new URL(process.env.SITE_URL ?? "https://kmpwright.dev"),
+  metadataBase: new URL(
+    process.env.SITE_URL ??
+      (process.env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+        : "https://kmpwright.vercel.app"),
+  ),
 };
 
 export default function Layout({ children }: LayoutProps<"/">) {

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-manifest="$project_dir/compatibility/agent-browser-compatibility.json"
+manifest="$project_dir/docs/compatibility/agent-browser-compatibility.json"
 
 if [[ ! -f "$manifest" ]]; then
   echo "missing compatibility manifest: $manifest" >&2
@@ -15,7 +15,7 @@ if [[ -n "$(git -C "$project_dir" ls-files -- agent-browser .upstream)" ]]; then
   exit 1
 fi
 
-python3 - "$manifest" <<'PY'
+python3 - "$manifest" "$project_dir" <<'PY'
 import json
 import re
 import sys
@@ -33,7 +33,7 @@ assert upstream.get("workingTreeIsIgnored") is True
 assert upstream.get("publicSources") == ["README.md", "agent-browser.schema.json"]
 
 from pathlib import Path
-project = Path(manifest_path).resolve().parent.parent
+project = Path(sys.argv[2]).resolve()
 inventory_path = project / upstream["changeInventory"]
 inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
 assert inventory["baselineCommit"] == upstream["baselineCommit"]

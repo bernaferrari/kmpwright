@@ -102,6 +102,8 @@ Explicit roles and common HTML elements give the same results on every backend. 
 
 `label=`, `placeholder=`, `alt=` and `title=` use the same text rules as `text=`: plain value for a substring, `"quoted"` for exact, `/regex/flags` for a regex.
 
+The command-compatible aliases `text:Sign in` and `exact_text=Sign in` are also supported. Prefer the `getBy*` finders in Kotlin workflows.
+
 ### Text matching details
 
 `text=` matches against the element's rendered text (`innerText`; for `<input type=button|submit|reset>`, its value). It returns the deepest elements that match: if a `<button>` and its parent `<div>` both contain "Save", only the button is returned. Text inside `script`, `style`, `noscript`, `head`, `template` and `title` is ignored.

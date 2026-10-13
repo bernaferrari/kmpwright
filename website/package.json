@@ -4,15 +4,18 @@
   "private": true,
   "packageManager": "pnpm@11.25.0",
   "engines": {
-    "node": ">=24"
+    "node": "24.x"
   },
   "scripts": {
-    "build": "next build",
-    "dev": "next dev",
+    "build": "pnpm demo:prepare && next build",
+    "dev": "pnpm demo:prepare && next dev",
     "start": "next start",
-    "types:check": "next typegen && tsc --noEmit",
+    "types:check": "pnpm demo:prepare && next typegen && tsc --noEmit",
     "lint": "biome check",
-    "format": "biome format --write"
+    "format": "biome format --write",
+    "demo:build": "cd .. && ./gradlew :kmpwright-web-demo:syncWebsiteDemo",
+    "demo:prepare": "node scripts/prepare-demo.mjs",
+    "demo:verify": "node scripts/prepare-demo.mjs --verify-local"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

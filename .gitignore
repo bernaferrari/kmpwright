@@ -14,9 +14,7 @@
 bin/
 gen/
 out/
-release/*
-!release/smoke/
-!release/smoke/**
+/release/
 
 # Gradle files
 .gradle/
@@ -275,3 +273,12 @@ temp/
 # Python helper caches
 __pycache__/
 *.py[cod]
+
+# Generated Kotlin/JS website demo (rebuilt from source)
+/website/lib/kmpwright-demo/
+
+# Local editor launch settings
+/.claude/
+
+# Generated demo license distribution
+/website/public/licenses/

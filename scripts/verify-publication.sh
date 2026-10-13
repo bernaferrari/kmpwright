@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOSITORY="$ROOT_DIR/build/test-repository"
-VERSION="${RELEASE_VERSION:-0.1.0}"
+VERSION="${RELEASE_VERSION:-0.0.1}"
 
 if [[ -z "${ANDROID_HOME:-}" && -f "$ROOT_DIR/local.properties" ]]; then
   ANDROID_HOME="$(sed -n 's/^sdk\.dir=//p' "$ROOT_DIR/local.properties" | head -n 1)"
@@ -52,10 +52,10 @@ done
 
 # These are independent builds: neither fixture includes the root project or
 # uses project(":kmpwright-...") dependencies.
-"$ROOT_DIR/gradlew" -p "$ROOT_DIR/release/smoke/kmp-consumer" compileKotlinJvm \
+"$ROOT_DIR/gradlew" -p "$ROOT_DIR/tests/consumers/kmp" compileKotlinJvm \
   -PkmpwrightVersion="$VERSION" \
   --no-daemon --no-configuration-cache
-"$ROOT_DIR/gradlew" -p "$ROOT_DIR/release/smoke/android-consumer" :app:assembleDebug \
+"$ROOT_DIR/gradlew" -p "$ROOT_DIR/tests/consumers/android" :app:assembleDebug \
   -PkmpwrightVersion="$VERSION" \
   --no-daemon --no-configuration-cache
 

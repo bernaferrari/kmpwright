@@ -23,7 +23,7 @@ if rg -n 'RELEASE_VERSION: \$\{\{ env\.RELEASE_VERSION \}\}' \
 fi
 
 rg -q 'kmpwrightVersion.*providers\.gradleProperty\("kmpwrightVersion"\)' \
-  "$ROOT_DIR/release/smoke/kmp-consumer/build.gradle.kts"
+  "$ROOT_DIR/tests/consumers/kmp/build.gradle.kts"
 rg -q -- '-PkmpwrightVersion="\$VERSION"' \
   "$ROOT_DIR/scripts/verify-publication.sh"
 echo "Release version propagation contract verified for future version 9.8.7"

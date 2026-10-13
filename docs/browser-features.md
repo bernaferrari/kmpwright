@@ -1,8 +1,8 @@
 # Browser feature APIs
 
 The implementation and remaining work are tracked in
-[parity-work.md](../compatibility/parity-work.md), against the pinned upstream
-revision in [upstream-review.md](../compatibility/upstream-review.md).
+[parity-work.md](compatibility/parity-work.md), against the pinned upstream
+revision in [upstream-review.md](compatibility/upstream-review.md).
 
 ## Document-start scripts
 

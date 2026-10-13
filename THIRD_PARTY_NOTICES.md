@@ -7,11 +7,11 @@ Kmpwright adapts behavior and implementations from
 Vercel Inc., licensed under the Apache License, Version 2.0. The upstream
 [license and copyright notice](docs/licenses/agent-browser-APACHE-2.0.txt) are
 retained here. Adaptations change the runtime, language, and interfaces for Kotlin
-Multiplatform; they are documented in the [upstream review](compatibility/upstream-review.md).
+Multiplatform; they are documented in the [upstream review](docs/compatibility/upstream-review.md).
 
 The agent-browser repository, executable, full dependency tree, and local reference
 checkouts are not bundled. The compared commit is recorded in the
-[compatibility manifest](compatibility/agent-browser-compatibility.json).
+[compatibility manifest](docs/compatibility/agent-browser-compatibility.json).
 
 The browser Web Vitals collector bundles Google's [web-vitals](https://github.com/GoogleChrome/web-vitals) version 6.2.3 (Apache License, Version 2.0). Its [license](docs/licenses/web-vitals-APACHE-2.0.txt) and [bundle provenance](docs/licenses/web-vitals-provenance.json) are retained. The distribution bundle is embedded unchanged as a Kotlin string; Kmpwright wraps it to collect results and clean up its observers and event listeners.
 

@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "io.github.bernaferrari"
-version = providers.gradleProperty("releaseVersion").orElse("0.1.0").get()
+version = providers.gradleProperty("releaseVersion").orElse("0.0.1").get()
 
 // Keep release coordinates and metadata in one place. Individual library
 // modules opt into maven-publish below, while examples remain private.

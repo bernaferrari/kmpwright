@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${RELEASE_VERSION:-0.1.0}"
+VERSION="${RELEASE_VERSION:-0.0.1}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "Skipping XCFramework and Swift consumer smoke build (requires Xcode on macOS)."
@@ -112,7 +112,7 @@ find "$PACKAGE_DIR/KmpwrightCore.xcframework" -exec touch -t 200001010000 {} +
 
 CONSUMER_DIR="$TMP_DIR/consumer"
 mkdir -p "$CONSUMER_DIR"
-cp -R "$ROOT_DIR/smoke/ios-swift/." "$CONSUMER_DIR/"
+cp -R "$ROOT_DIR/tests/consumers/swift/." "$CONSUMER_DIR/"
 unzip -q "$ZIP_PATH" -d "$CONSUMER_DIR"
 [[ -d "$CONSUMER_DIR/KmpwrightCore.xcframework" ]] || {
   echo "Packaged XCFramework did not extract into the consumer fixture" >&2

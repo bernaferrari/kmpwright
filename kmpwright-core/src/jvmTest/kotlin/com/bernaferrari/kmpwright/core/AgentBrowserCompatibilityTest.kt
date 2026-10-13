@@ -110,10 +110,10 @@ class AgentBrowserCompatibilityTest {
     private fun manifestPath(): Path {
         var directory = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize()
         repeat(6) {
-            val candidate = directory.resolve("compatibility/agent-browser-compatibility.json")
+            val candidate = directory.resolve("docs/compatibility/agent-browser-compatibility.json")
             if (Files.isRegularFile(candidate)) return candidate
             directory = directory.parent ?: return@repeat
         }
-        error("Could not locate compatibility/agent-browser-compatibility.json from ${System.getProperty("user.dir")}")
+        error("Could not locate docs/compatibility/agent-browser-compatibility.json from ${System.getProperty("user.dir")}")
     }
 }

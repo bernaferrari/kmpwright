@@ -122,7 +122,7 @@ export default function HomePage() {
             <span className="hidden h-px w-8 bg-primary sm:block" aria-hidden />
             KOTLIN MULTIPLATFORM
             <span className="shrink-0 rounded-md border bg-background/70 px-2 py-1 font-mono text-[11px] tracking-normal whitespace-nowrap">
-              0.1.0 alpha
+              0.0.1 alpha
             </span>
           </div>
           <div className="grid items-end gap-7 lg:grid-cols-[1.35fr_1fr] lg:gap-14">

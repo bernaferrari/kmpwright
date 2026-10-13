@@ -17,15 +17,15 @@ Every docs page is available as Markdown, built from the same source as the HTML
 | `/docs/<page>` with `Accept: text/markdown` | The same Markdown, chosen by content negotiation |
 
 ```bash
-curl https://kmpwright.dev/docs/agents/snapshots.md
-curl -H 'Accept: text/markdown' https://kmpwright.dev/docs/agents/snapshots
+curl https://kmpwright.vercel.app/docs/agents/snapshots.md
+curl -H 'Accept: text/markdown' https://kmpwright.vercel.app/docs/agents/snapshots
 ```
 
 On each page, **Copy Markdown** (under the title) copies the page for pasting into a chat. The menu next to it can view the Markdown or open the page in ChatGPT, Claude, Cursor or Scira.
 
 Ways to use them:
 
-- Paste `https://kmpwright.dev/llms-full.txt` into a chat, or ask the agent to fetch it, before a larger task.
+- Paste `https://kmpwright.vercel.app/llms-full.txt` into a chat, or ask the agent to fetch it, before a larger task.
 - Point the agent at the one page it needs (`…/docs/agents/commands.md`) to save context.
 - Reference `llms.txt` from your project instructions (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules`) so the agent knows where to look.
 
@@ -81,7 +81,7 @@ The file is plain Markdown, so any agent can use it.
 |---|---|
 | Agents with skill support | Copy the `kmpwright` folder into the directory your agent loads skills from |
 | Cursor | Save the body as a project rule under `.cursor/rules/`, or reference the file from an existing rule |
-| Codex and other `AGENTS.md` readers | Add a line to `AGENTS.md`: "For KMPwright code, read `skills/kmpwright/SKILL.md` and https://kmpwright.dev/llms.txt" |
+| Codex and other `AGENTS.md` readers | Add a line to `AGENTS.md`: "For KMPwright code, read `skills/kmpwright/SKILL.md` and https://kmpwright.vercel.app/llms.txt" |
 | Any chat | Paste the file, or its raw GitHub URL, at the start of the conversation |
 
 Keep the copy up to date with the KMPwright version you depend on; the API is pre-1.0 and names can change between releases.

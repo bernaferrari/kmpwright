@@ -8,7 +8,7 @@ already been published.
 
 - Repository: [canonical Kmpwright repository](https://github.com/bernaferrari/kmpwright)
 - License: MIT ([`LICENSE`](../LICENSE)), copyright 2026 Bernardo Ferrari
-- Versioning: Semantic Versioning; the first release is `0.1.0`
+- Versioning: Semantic Versioning; the first release is `0.0.1`
 - Maven group: `io.github.bernaferrari`
 - Maven artifacts: `kmpwright-core` and `kmpwright-compose`
 - iOS minimum: 15.0
@@ -16,8 +16,8 @@ already been published.
 - CocoaPods: not supported for the first release
 
 The published Maven coordinates will therefore be
-`io.github.bernaferrari:kmpwright-core:0.1.0` and
-`io.github.bernaferrari:kmpwright-compose:0.1.0`. Confirm the generated module
+`io.github.bernaferrari:kmpwright-core:0.0.1` and
+`io.github.bernaferrari:kmpwright-compose:0.0.1`. Confirm the generated module
 metadata and POMs before announcing a release.
 
 ## Operator checklist
@@ -30,8 +30,8 @@ metadata and POMs before announcing a release.
    after validating the tag:
 
    ```sh
-   ./scripts/validate-release-tag.sh v0.1.0
-   export RELEASE_VERSION=0.1.0
+   ./scripts/validate-release-tag.sh v0.0.1
+   export RELEASE_VERSION=0.0.1
    ./scripts/verify-publication.sh
    ./scripts/verify-ios-xcframework.sh
    ```
@@ -61,7 +61,7 @@ metadata and POMs before announcing a release.
    the release bundle, check that signatures verify with the expected public
    key, and inspect the POM/license/source attachments. Reject a staging set
    with missing signatures, unexpected coordinates, or a version other than
-   `0.1.0`.
+   `0.0.1`.
 6. Upload only after local verification passes. The tag workflow runs
    `scripts/publish-central-idempotent.sh`, which checks Maven Central first,
    publishes each artifact only when its POM is absent, and waits for the POM
@@ -90,7 +90,7 @@ then retain the resolved version and checksum in its build provenance.
 ## iOS XCFramework consumption
 
 The first release is consumed as the versioned static
-`KmpwrightCore-0.1.0.xcframework.zip` asset (replace `0.1.0` with the released
+`KmpwrightCore-0.0.1.xcframework.zip` asset (replace `0.0.1` with the released
 version), not through CocoaPods. Verify the adjacent `.sha256` file before
 extraction, add the framework to the Xcode target, and set **Do Not Embed** for
 this static library. The bundle must contain slices for
