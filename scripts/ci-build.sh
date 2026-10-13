@@ -3,11 +3,13 @@ set -euo pipefail
 
 ./gradlew \
   :kmpwright-core:checkKotlinAbi \
-  :kmpwright-core:jvmTest \
   :kmpwright-core:assembleAndroidMain \
   :kmpwright-compose:lint \
   :kmpwright-example-shared:assembleAndroidMain \
   :example-android:assembleDebug
+
+# Browser deadlines must be measured without concurrent Android compilation/lint.
+./gradlew :kmpwright-core:jvmTest
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   ./gradlew \

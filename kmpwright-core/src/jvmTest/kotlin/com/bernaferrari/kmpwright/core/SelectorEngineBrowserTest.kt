@@ -173,7 +173,12 @@ class SelectorEngineBrowserTest {
         repeat(3) { iteration ->
             val error = runCatching { page.goto("$origin/slow?attempt=$iteration", GotoOptions(timeoutMs = 500)) }.exceptionOrNull()
             assertTrue("$error", error is KmpwrightTimeoutException)
-            val ok = page.goto("$origin/a", GotoOptions(waitUntil = LoadState.NetworkIdle, timeoutMs = 5_000))
+            val ok = try {
+                page.goto("$origin/a", GotoOptions(waitUntil = LoadState.NetworkIdle, timeoutMs = 5_000))
+            } catch (error: KmpwrightTimeoutException) {
+                val requests = page.network.requests().map { "${it.request.id}: ${it.request.url} (${it.state})" }
+                throw AssertionError("Timeout recovery attempt $iteration at ${page.url.value}; request history: $requests", error)
+            }
             assertTrue(ok.ok)
             assertEquals("$origin/a", page.url.value)
         }

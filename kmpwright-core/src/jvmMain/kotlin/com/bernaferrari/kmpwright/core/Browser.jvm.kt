@@ -193,9 +193,20 @@ public actual class Browser public actual constructor(
         val conn = targetConnection()
         // Release library callbacks before closing a caller-owned target explicitly.
         val page = pagesMutex.withLock { _pages.filterIsInstance<CdpPage>().firstOrNull { it.targetId == targetId } }
-        if (page?.ownsTarget == true) { page.close(); return true }
-        page?.close()
-        return targetCommand(conn, "Target.closeTarget", mapOf("targetId" to targetId))["success"]?.jsonPrimitive?.booleanOrNull ?: false
+        val accepted = if (page?.ownsTarget == true) {
+            page.close()
+            true
+        } else {
+            page?.close()
+            targetCommand(conn, "Target.closeTarget", mapOf("targetId" to targetId))["success"]?.jsonPrimitive?.booleanOrNull ?: false
+        }
+        if (!accepted) return false
+        // Chromium acknowledges the command before destroying the target.
+        // Await the observable result so a subsequent targets() sees it closed.
+        withKmpwrightTimeout(config.timeouts.action, { "Timeout ${config.timeouts.action}ms exceeded closing browser target $targetId" }) {
+            while (targets().any { it.id == targetId }) delay(25)
+        }
+        return true
     }
 
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)

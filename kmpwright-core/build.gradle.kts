@@ -88,6 +88,7 @@ kotlin {
     jvm {
         testRuns["test"].executionTask.configure {
             useJUnit()
+            testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
         }
     }
 

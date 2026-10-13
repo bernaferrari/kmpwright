@@ -133,6 +133,8 @@ internal class CdpWebViewController(
     @Volatile private var pendingNavigationStatus: Int = 200
     @Volatile private var rejectedCommittedNavigation = false
     private val navigationVersion = java.util.concurrent.atomic.AtomicLong()
+    private val navigationCommandVersion = java.util.concurrent.atomic.AtomicLong()
+    private val navigationCommandLock = Any()
     @Volatile private var navigationGuard: ((String) -> Boolean)? = null
     /** Set while [loadHtml] waits for its base document; receives that navigation's result. */
     @Volatile private var htmlNavigation: CompletableDeferred<NavigationResult>? = null
@@ -256,12 +258,28 @@ internal class CdpWebViewController(
     // --- Navigation ---
 
     override fun loadUrl(url: String) {
-        scope.launch { navigateTo(url) }
+        launchNavigation(url)
     }
 
-    private suspend fun navigateTo(url: String) {
+    private fun advanceNavigationCommand(): Long = synchronized(navigationCommandLock) {
+        val version = navigationCommandVersion.incrementAndGet()
+        htmlNavigation?.complete(NavigationResult(_url.orEmpty(), 0, false, "Navigation superseded by a newer request"))
+        htmlNavigation = null
+        version
+    }
+
+    private fun isCurrentNavigationCommand(version: Long): Boolean =
+        version == navigationCommandVersion.get() && !disposed.get()
+
+    internal fun launchNavigation(url: String): Job {
+        val version = advanceNavigationCommand()
+        return scope.launch { navigateTo(url, version) }
+    }
+
+    private suspend fun navigateTo(url: String, commandVersion: Long) {
         try {
             fetchConfiguration?.join()
+            if (!isCurrentNavigationCommand(commandVersion)) return
             if (allowedOriginRules.isNotEmpty() && !allowedOriginRules.any { originRuleMatches(it, url) }) {
                 deliverNavigation(NavigationResult(url, 0, false, "Navigation origin is not allowed by KmpwrightConfig: $url"))
                 return
@@ -271,14 +289,17 @@ internal class CdpWebViewController(
                 return
             }
             webMcpRuntime.observeBeforeNavigation()
+            if (!isCurrentNavigationCommand(commandVersion)) return
             rejectedCommittedNavigation = false
             if (credentialOrigin == null) credentialOrigin = canonicalHttpOrigin(url)
             applyNetworkHeaders()
             if (mainFrameId == null) mainFrameId = cdpSend("Page.getFrameTree").result?.get("frameTree")?.jsonObject
                 ?.get("frame")?.jsonObject?.get("id")?.jsonPrimitive?.content
+            if (!isCurrentNavigationCommand(commandVersion)) return
             pendingNavigationUrl = url
             pendingNavigationStatus = 200
             val result = cdpSend(CdpMethods.PAGE_NAVIGATE, mapOf("url" to url))
+            if (!isCurrentNavigationCommand(commandVersion)) return
             result.error?.let {
                 deliverNavigation(NavigationResult(url, 0, false, "CDP error ${it.code}: ${it.message}"))
                 return
@@ -299,7 +320,7 @@ internal class CdpWebViewController(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
-            deliverNavigation(NavigationResult(url, 0, false, error = e.message))
+            if (isCurrentNavigationCommand(commandVersion)) deliverNavigation(NavigationResult(url, 0, false, error = e.message))
         }
     }
 
@@ -309,34 +330,43 @@ internal class CdpWebViewController(
      * relative URLs, cookies and storage resolve against the base URL.
      */
     override fun loadHtml(content: String, baseUrl: String?) {
+        val commandVersion = advanceNavigationCommand()
         scope.launch {
             val target = baseUrl?.takeIf { it.isNotBlank() } ?: "about:blank"
             val waiter = CompletableDeferred<NavigationResult>()
-            htmlNavigation = waiter
+            val registered = synchronized(navigationCommandLock) {
+                if (!isCurrentNavigationCommand(commandVersion)) false
+                else { htmlNavigation = waiter; true }
+            }
+            if (!registered) return@launch
             val loaded = try {
-                navigateTo(target)
+                navigateTo(target, commandVersion)
+                if (!isCurrentNavigationCommand(commandVersion)) return@launch
                 withTimeoutOrNull(HTML_BASE_NAVIGATION_TIMEOUT_MS) { waiter.await() }
                     ?: NavigationResult(target, 0, false, "Timed out loading base URL $target")
             } finally {
-                if (htmlNavigation === waiter) htmlNavigation = null
+                synchronized(navigationCommandLock) { if (htmlNavigation === waiter) htmlNavigation = null }
             }
+            if (!isCurrentNavigationCommand(commandVersion)) return@launch
             if (!loaded.ok) { deliverNavigation(loaded); return@launch }
             try {
                 val frameId = mainFrameId ?: cdpSend("Page.getFrameTree").result?.get("frameTree")?.jsonObject
                     ?.get("frame")?.jsonObject?.get("id")?.jsonPrimitive?.content
                     ?: throw KmpwrightException("Main frame is unavailable")
+                if (!isCurrentNavigationCommand(commandVersion)) return@launch
                 val response = cdpSend("Page.setDocumentContent", mapOf("frameId" to frameId, "html" to content))
                 response.error?.let { throw KmpwrightException("Could not set document content: ${it.message}") }
+                if (!isCurrentNavigationCommand(commandVersion)) return@launch
                 contentReplaced = true
                 _title = runCatching {
                     cdpSend(CdpMethods.RUNTIME_EVALUATE, mapOf("expression" to "document.title", "returnByValue" to true))
                         .result?.get("result")?.jsonObject?.get("value")?.jsonPrimitive?.contentOrNull
                 }.getOrNull()
-                deliverNavigation(NavigationResult(_url ?: target, loaded.status, true))
+                if (isCurrentNavigationCommand(commandVersion)) deliverNavigation(NavigationResult(_url ?: target, loaded.status, true))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                deliverNavigation(NavigationResult(target, 0, false, error.message))
+                if (isCurrentNavigationCommand(commandVersion)) deliverNavigation(NavigationResult(target, 0, false, error.message))
             }
         }
     }

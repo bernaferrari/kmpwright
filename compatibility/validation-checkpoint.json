@@ -1,11 +1,11 @@
 {
   "jvmTest": {
-    "tests": 947,
+    "tests": 948,
     "failures": 0,
     "errors": 0,
     "skipped": 0,
     "browser": "Real Chromium with React fixture",
-    "seconds": 131
+    "seconds": 239
   },
   "androidInstrumentation": {
     "tests": 67,
@@ -59,5 +59,14 @@
     "failures": 0,
     "errors": 0,
     "skipped": 0
+  },
+  "githubCi": {
+    "run": 38345184373,
+    "commit": "2668b30",
+    "website": "success",
+    "releaseValidation": "success",
+    "ios": "success",
+    "jvm": "failure (navigation recovery and target removal; follow-up fixes locally passed)",
+    "androidInstrumentation": "timed out (KVM unavailable; workflow now enables acceleration)"
   }
 }

@@ -49,6 +49,14 @@ jobs:
           ./scripts/build-react-fixture.sh
           export KMPWRIGHT_TEST_REACT_BUNDLE="$PWD/.upstream/react-fixture/app.bundle.js"
           ./scripts/ci-build.sh
+      - name: Upload JVM failure reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jvm-test-diagnostics
+          path: |
+            kmpwright-core/build/reports/tests/jvmTest/
+            kmpwright-core/build/test-results/jvmTest/
 
   ios:
     runs-on: macos-latest
@@ -90,12 +98,24 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v4.0.4
+      - name: Build instrumentation APKs before booting the emulator
+        run: ./gradlew :kmpwright-test:assembleDebug :kmpwright-test:assembleDebugAndroidTest --no-daemon
+      - name: Enable emulator hardware acceleration
+        run: |
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
       - uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 35
           arch: x86_64
+          disable-linux-hw-accel: false
           script: |
-            ./gradlew :kmpwright-test:connectedDebugAndroidTest --no-daemon || { adb logcat -d > android-instrumentation-logcat.txt; exit 1; }
+            timeout 12m ./scripts/run-android-tests.sh emulator-5554 || {
+              adb logcat -d > android-instrumentation-logcat.txt
+              adb shell screencap -p /sdcard/kmpwright-failure.png
+              adb pull /sdcard/kmpwright-failure.png android-instrumentation-failure.png
+              exit 1
+            }
       - name: Upload instrumentation diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -105,3 +125,4 @@ jobs:
             kmpwright-test/build/reports/androidTests/
             kmpwright-test/build/outputs/androidTest-results/
             android-instrumentation-logcat.txt
+            android-instrumentation-failure.png

@@ -133,3 +133,19 @@ XCFramework slices, the deterministic archive/checksum and the artifact-only
 Swift consumer passed. The final JVM rerun after the metadata fixes again passed
 947 tests. Live vendor sessions and Linux NSS browser trust remain separate
 runtime verification limits; these local results do not claim a GitHub CI run.
+
+## GitHub environment follow-up — 2026-10-13
+
+Run 38345184373 passed iOS, website and release-validation. Linux exposed an
+older navigation command issuing after newer preparation, and target-close
+acknowledgement preceding actual target removal. Command generations now
+supersede stale preparation and replies (including HTML replacement); explicit
+target closure awaits disappearance. The deterministic ordering regression
+failed before the fix. All 948 JVM tests and ABI validation then passed locally.
+
+The Android CI emulator had no permission to use `/dev/kvm`, so the runner
+disabled acceleration and eventually timed out. CI now enables KVM, compiles
+APKs before booting, uses the same direct instrumentation runner validated
+locally, and bounds execution so logcat/screenshots can be uploaded on failure.
+JVM exceptions and request-history failure context are retained in reports;
+browser tests run after compilation/lint to avoid CPU contention.
