@@ -64,6 +64,7 @@ internal class CdpWebViewController(
                 id.startsWith("frame:$child:") || synchronized(responseBodySources) { responseBodySources[id]?.first == child }
             }.forEach { id ->
                 pendingRequests.remove(id)?.let { request ->
+                    networkActivity.finished(id)
                     deliver { requestListeners.forEach { it.onRequestFailed(request, "Frame session detached") } }
                 }
             }
@@ -122,6 +123,7 @@ internal class CdpWebViewController(
     @Volatile private var httpCredentials: Pair<String, String>? = null
     @Volatile private var credentialOrigin: String? = null
     private val pendingRequests = java.util.concurrent.ConcurrentHashMap<String, Request>()
+    private val networkActivity = CdpNetworkActivity()
     private val fetchRefreshMutex = Mutex()
     @Volatile private var fetchPausedListenerInstalled = false
     @Volatile private var domainFilter: DomainFilter? = null
@@ -1375,6 +1377,14 @@ internal class CdpWebViewController(
     internal fun ensureNetworkEventListeners(observedSession: String? = sessionId): Unit = synchronized(childNetworkLock) {
         if (networkSessionSubscriptions.containsKey(observedSession)) return@synchronized
         val owned = mutableListOf<CdpEventSubscription>()
+        owned += connection.onEvent("Page.frameNavigated", observedSession) { params ->
+            val frame = params["frame"]?.jsonObject ?: return@onEvent
+            networkActivity.documentCommitted(frame["id"]?.jsonPrimitive?.content, frame["loaderId"]?.jsonPrimitive?.content)
+        }
+        owned += connection.onEvent("Page.frameDetached", observedSession) { params ->
+            // A process swap keeps the frame alive; its request may finish on the new renderer.
+            if (params["reason"]?.jsonPrimitive?.content != "swap") networkActivity.frameDetached(params["frameId"]?.jsonPrimitive?.content)
+        }
         fun requestKey(params: JsonObject): String? = params["requestId"]?.jsonPrimitive?.content?.let {
             logicalNetworkRequestKey(it, observedSession)
         }
@@ -1402,6 +1412,7 @@ internal class CdpWebViewController(
             var firstObservation = true
             if (pendingRequests.size < MAX_TRACKED_REQUESTS || pendingRequests.containsKey(requestId)) {
                 firstObservation = pendingRequests.put(requestId, request) == null
+                networkActivity.started(request, params["frameId"]?.jsonPrimitive?.content, params["loaderId"]?.jsonPrimitive?.content)
                 synchronized(responseBodySources) {
                     responseBodySources[requestId] = observedSession to params.getValue("requestId").jsonPrimitive.content
                 }
@@ -1437,11 +1448,13 @@ internal class CdpWebViewController(
         }
         owned += connection.onEvent("Network.loadingFinished", observedSession) { params ->
             val requestId = requestKey(params) ?: return@onEvent
+            networkActivity.finished(requestId)
             val request = pendingRequests.remove(requestId) ?: return@onEvent
             deliver { requestListeners.forEach { it.onRequestFinished(request) } }
         }
         owned += connection.onEvent("Network.loadingFailed", observedSession) { params ->
             val requestId = requestKey(params) ?: return@onEvent
+            networkActivity.finished(requestId)
             val error = params["errorText"]?.jsonPrimitive?.content ?: "failed"
             val request = pendingRequests.remove(requestId) ?: Request(url = "", id = requestId)
             deliver {
@@ -1455,9 +1468,10 @@ internal class CdpWebViewController(
     }
 
     // Not used in CDP mode — network events are handled via CDP events
-    override fun getPendingRequestCount(): Int = pendingRequests.size
+    override fun getPendingRequestCount(): Int = networkActivity.count()
     override fun resetRequestCount() {
         pendingRequests.clear()
+        networkActivity.clear()
     }
     override fun setRequestIdleTimeout(timeoutMs: Long) {}
 
@@ -1561,6 +1575,7 @@ internal class CdpWebViewController(
         domainFilter = null
         requestListeners = persistentListOf()
         pendingRequests.clear()
+        networkActivity.clear()
         synchronized(responseBodySizes) { responseBodySizes.clear() }
         callbackQueue.close()
         htmlNavigation?.cancel()

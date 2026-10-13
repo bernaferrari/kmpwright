@@ -32,7 +32,7 @@ Navigates the main frame and suspends until the backend reports that the new doc
   type={{
     waitUntil: {
       type: 'LoadState',
-      description: 'State to reach before returning. Load and DOMContentLoaded both return when the backend reports the load; NetworkIdle additionally waits for 500 ms without in-flight requests.',
+      description: 'State to reach before returning. DOMContentLoaded waits for the new document to be interactive; Load waits for its load completion. NetworkIdle additionally waits for 500 ms without relevant in-flight requests.',
       default: 'LoadState.Load',
     },
     timeoutMs: {
@@ -180,7 +180,7 @@ Playwright: same name and glob rules; Playwright's `waitUntil` also accepts `com
 suspend fun waitForLoadState(state: LoadState = LoadState.Load, timeoutMs: Long? = null)
 ```
 
-Returns immediately when the state has already been reached:
+Waits for the requested state; document readiness checks return immediately if already satisfied:
 
 | `LoadState` | Reached when |
 |---|---|
@@ -189,6 +189,11 @@ Returns immediately when the state has already been reached:
 | `NetworkIdle` | No request the backend tracks has been in flight for 500 ms. |
 
 On WebViews, `NetworkIdle` only sees requests KMPwright can observe; see the `networkHistory` [capability](/docs/platforms/capabilities) (`Partial` on Android and iOS).
+
+On JVM, browser favicon requests and long-lived EventSource streams do not block
+network idle. A new document also stops waiting for the replaced document's
+requests; those requests remain in network history until they complete. Prefer
+an element, text or predicate wait when checking that your application is ready.
 
 ### waitForNavigation
 

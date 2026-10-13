@@ -31,6 +31,9 @@ not deploy the site or publish the library's Maven artifacts.
 ## Edit content
 
 - `app/(home)/page.tsx`: landing page and runnable shared Kotlin example.
+- `components/workflow-preview.tsx`: interactive illustration of the Kotlin
+  workflow. It demonstrates the steps in React; the complete Kotlin example and
+  platform setup are linked alongside it.
 - `content/docs/`: MDX guides and API reference; `meta.json` controls navigation.
 - `lib/layout.shared.tsx`: shared header links and project identity.
 - `lib/shared.ts`: GitHub source links and Markdown/image route paths.

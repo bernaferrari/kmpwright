@@ -149,3 +149,30 @@ APKs before booting, uses the same direct instrumentation runner validated
 locally, and bounds execution so logcat/screenshots can be uploaded on failure.
 JVM exceptions and request-history failure context are retained in reports;
 browser tests run after compilation/lint to avoid CPU contention.
+
+
+The accelerated Android runner passed all 67 instrumentation tests in run
+38349442939. Its multiline diagnostic handler was moved into a standalone shell
+script because the emulator action executes each input line separately. Wrapper
+probes verify success, failure and timeout exit codes and device-scoped capture.
+
+Linux's remaining failure was an abandoned favicon request in the network-idle
+count after timeout recovery. Current-document activity is now tracked separately
+from complete request history. Document replacement and real frame detachment
+retire old activity; renderer swaps keep the live request. Browser favicon
+requests and EventSource streams do not block idle, while an explicit fetch of
+the favicon URL still does. This follows the lifecycle and idle exclusions in
+[Playwright's frame implementation](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/frames.ts).
+The regression failed before the repair; focused Chromium and protocol tests
+then passed. Request completion remains observable after document replacement.
+
+The landing page now pairs highlighted Kotlin calls with an interactive browser
+illustration and four-step progress, gives developers and agent builders distinct
+starting points, and links capabilities and native setup. The illustration is
+clearly labelled; the complete Kotlin example is separately runnable. Responsive
+layout, all example tabs, replay, type checking, lint and a production build were
+verified.
+
+The final local run passed all 950 JVM tests with zero failures, errors or skips,
+and Kotlin ABI validation passed. Documentation/upstream metadata checks and the
+final website type, lint and production build also passed.
