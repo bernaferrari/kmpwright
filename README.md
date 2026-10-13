@@ -47,21 +47,47 @@ implementation("io.github.bernaferrari:kmpwright-compose:0.0.1")
 
 </details>
 
-## Usage
+## DSL in action
+
+Fill a form, click its button and verify the rendered result. This demo uses a
+self-contained page, so it runs without a server or an account.
 
 ```kotlin
 import com.bernaferrari.kmpwright.core.*
 
-suspend fun signIn(page: Page) {
-    page.goto("https://example.com/login")
-    page.getByLabel("Email").fill("ada@example.com")
-    page.getByRole("button", name = "Sign in").click()
-    expect(page.locator(".greeting")).toHaveText("Welcome, Ada")
+suspend fun demo(page: Page) = with(page) {
+    setContent(demoHtml)
+    getByLabel("Name").fill("Ada")
+    getByRole("button", name = "Say hello").click()
+    expect(getByRole("status")).toHaveText("Hello, Ada!")
 }
 ```
 
+**Result:** the page displays **Hello, Ada!** and the assertion passes.
 Locators wait for actionable elements; assertions wait for the expected result.
-Use semantic finders, filters and frame scopes to select the element you mean.
+The same workflow runs on Android, iOS and JVM.
+
+<details>
+<summary>HTML for the runnable demo</summary>
+
+Define this alongside `demo()` in your shared Kotlin code:
+
+```kotlin
+val demoHtml = """
+    <!doctype html>
+    <html lang="en">
+    <meta charset="utf-8">
+    <title>KMPwright demo</title>
+    <label for="name">Name</label>
+    <input id="name">
+    <button onclick="document.getElementById('greeting').textContent =
+        'Hello, ' + document.getElementById('name').value + '!'">Say hello</button>
+    <p id="greeting" role="status"></p>
+    </html>
+""".trimIndent()
+```
+
+</details>
 
 Connect your platform's browser, then pass its `Page` to the shared workflow.
 Run suspending APIs in a coroutine, on the main thread for mobile WebViews.
@@ -73,7 +99,7 @@ Run suspending APIs in a coroutine, on the main thread for mobile WebViews.
 
 ```kotlin
 Browser(AndroidPlatformContext(activity, webView)).use { browser ->
-    signIn(browser.page())
+    demo(browser.page())
 }
 ```
 
@@ -81,7 +107,7 @@ Browser(AndroidPlatformContext(activity, webView)).use { browser ->
 
 ```kotlin
 Browser(IOSPlatformContext(webView = webView)).use { browser ->
-    signIn(browser.page())
+    demo(browser.page())
 }
 ```
 
@@ -89,7 +115,7 @@ Browser(IOSPlatformContext(webView = webView)).use { browser ->
 
 ```kotlin
 launchBrowser(executablePath).use { launched ->
-    signIn(launched.browser.newPage())
+    demo(launched.browser.newPage())
 }
 ```
 
