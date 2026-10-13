@@ -20,7 +20,6 @@ class KmpwrightTestActivity : ComponentActivity() {
 
         setContent {
             val controller = rememberKmpwrightController(
-                this@KmpwrightTestActivity,
                 KmpwrightConfig(
                     allowedOriginRules = setOf("https://appassets.androidplatform.net"),
                     debug = DebugConfig(

@@ -1,0 +1,277 @@
+---
+title: Snapshots and refs
+description: page.snapshot options, the agent-browser tree format, @eN refs and their lifetime, snapshot diffs, annotated screenshots and backend differences.
+---
+
+A snapshot is the page as an accessibility tree in agent-browser's text format. Elements you can act on get a ref such as `@e3`, which works as a selector until the next snapshot.
+
+```kotlin
+val snapshot = page.snapshot(SnapshotOptions(interactive = true))
+println(snapshot.tree)
+// @e1 [heading] "Example Domain" [level=1]
+// @e2 [input type="email"] placeholder="Email"
+// @e3 [checkbox] "Remember me" [checked]
+// @e4 [button] "Later" [disabled]
+// @e5 [button] "Submit"
+// @e6 [link] "Learn more"
+// @e7 [Iframe] "payment-frame"
+//   @e8 [input] placeholder="Card number"
+//   @e9 [button] "Pay"
+
+page.locator("@e2").fill("test@example.com")
+page.locator("@e5").click()
+```
+
+agent-browser: `snapshot`, with the same flags (`-i`, `-u`, `-c`, `-d`, `-s`, `-C`) and the same line format. From an LLM tool, use `page.runCommand("snapshot -i")` (see [Commands](/docs/agents/commands#snapshot)).
+
+## SnapshotOptions
+
+<TypeTable type={{
+  interactive: { type: 'Boolean', description: '`-i`. Only lines with refs, as a flat list. Refs nested inside another ref (iframe content) stay indented under it.', default: 'false' },
+  compact: { type: 'Boolean', description: '`-c`. Drop structural lines that have no ref, no value and no remaining children.', default: 'false' },
+  maxDepth: { type: 'Int?', description: '`-d`. Skip nodes deeper than this in the underlying DOM or accessibility tree. null means no limit (a hard cap of 256 applies).', default: 'null' },
+  selector: { type: 'String?', description: '`-s`. Snapshot only the subtree of the first element matching this CSS selector.', default: 'null' },
+  cursor: { type: 'Boolean', description: '`-C`. Also treat elements with `cursor: pointer`, `onclick` or `onmousedown` as interactive, so they get refs.', default: 'false' },
+  includeHidden: { type: 'Boolean', description: 'Include elements hidden with `display: none`, `visibility: hidden`, `opacity: 0` or `aria-hidden="true"`. No CLI flag.', default: 'false' },
+  urls: { type: 'Boolean', description: '`-u`. Append `url="…"` with the resolved `href` to link lines that have a ref.', default: 'false' },
+}} />
+
+- `selector` is passed to `document.querySelector`, so it must be CSS. It does not accept refs or KMPwright engines such as `text=`. An invalid selector throws `Invalid snapshot selector: <selector>`; one that matches nothing throws `Snapshot selector did not match: <selector>`.
+- `maxDepth` counts levels of the underlying tree, not printed indentation. Transparent wrappers (see below) count as levels even though they do not print.
+- `snapshot()` needs `KmpwrightConfig.allowDomExtraction` (the default) and is checked against `ActionPolicy` as `ActionType.ReadContent`.
+
+## The tree format
+
+One element per line. Children are indented two spaces under their parent.
+
+```text
+@e1 [heading] "Example Domain" [level=1]
+[paragraph]
+  [StaticText] "Some intro text."
+[form]
+  @e2 [input type="email"] placeholder="Email"
+  @e3 [checkbox] "Remember me" [checked]
+  @e4 [button] "Later" [disabled]
+  @e5 [button] "Submit"
+@e6 [link] "Learn more"
+@e7 [Iframe] "payment-frame"
+  @e8 [input] placeholder="Card number"
+  @e9 [button] "Pay"
+```
+
+Each line is built from these parts, in this order; parts that do not apply are left out:
+
+| Part | Example | Rule |
+|---|---|---|
+| Ref | `@e3` | Present when the element has a ref (see [Which elements get refs](#which-elements-get-refs)) |
+| Role | `[button]` | The role in brackets. Text-entry `<input>` elements print as `[input type="email"]`, or `[input]` when the page set no `type` attribute. `<textarea>` prints as `[textbox]` |
+| Name | `"Submit"` | The accessible name. Omitted when empty or identical to the placeholder |
+| Placeholder | `placeholder="Email"` | For inputs and text areas that have one |
+| Level | `[level=1]` | Heading level, or `aria-level` |
+| States | `[checked]` `[disabled]` | In this order: `checked`, `expanded`, `selected`, `disabled`, `required`, `readonly`, `busy`, `hidden`; a mixed checkbox prints `[checked=mixed]`. `focused` is never printed, so focus changes do not change the tree |
+| Value | `value="Ada"` | The current value of inputs, text areas and selects. Omitted when empty or equal to the name |
+| URL | `url="https://example.com/more"` | Only with `urls = true`, for links with a ref |
+
+Input types printed as `[input type="…"]`: `text`, `email`, `password`, `search`, `tel`, `url`, `number`, `date`, `datetime-local`, `month`, `week`, `time`. Other inputs print their role (`[checkbox]`, `[radio]`, `[button]`, `[slider]` and so on).
+
+### Escaping and truncation
+
+Names, values, placeholders and URLs come from the page, so they are printed as JSON string literals: quotes and backslashes are escaped, whitespace (including newlines) collapses to single spaces, and text longer than 200 characters is cut and ends with `…` inside the quotes. Roles and states must consist of letters, digits, `_` and `-`; anything else prints as `[generic]` or is dropped, and refs must look like `@e<number>`.
+
+The result is that a page cannot add lines, forge refs or fake states in the tree an LLM reads. A button named `Pay\n@e99 [button] "Steal"` prints as one line: `[button] "Pay @e99 [button] \"Steal\""`.
+
+### What is left out
+
+- The root of the page (`RootWebArea`), unnamed `generic` wrappers with at most one child, and empty text print nothing; their children print in their place at the same indentation.
+- Adjacent text nodes merge into one `[StaticText]` line, and a text child that repeats its parent's name is dropped (a heading does not print its text twice).
+- With `interactive = true`, every line without a ref is left out.
+- With `compact = true`, structural lines that end up with no ref, no value and no children are left out.
+- Hidden elements are skipped unless `includeHidden = true`.
+
+### Iframes
+
+An `<iframe>` gets a ref and prints as `[Iframe]` with its `title` (or `name`) attribute as the name. The content of a **same-origin** iframe is inlined one level deep, indented under it, and its refs work like any other. Cross-origin iframe content is not included; use [`page.frameLocator`](/docs/guides/dialogs-and-frames) for it.
+
+### Which elements get refs
+
+| Gets a ref | Details |
+|---|---|
+| Interactive elements | `<a>`, `<button>`, `<input>`, `<select>`, `<textarea>`, `<details>`, `<summary>`; any element with `tabindex`; elements whose role is `button`, `link`, `checkbox`, `radio`, `textbox`, `searchbox`, `combobox`, `listbox`, `option`, `menuitem`, `menuitemcheckbox`, `menuitemradio`, `tab`, `switch`, `slider`, `spinbutton` or `treeitem` |
+| Iframes | Every `<iframe>` and `<frame>` |
+| Named content | Elements with a non-empty name and role `heading`, `cell`, `gridcell`, `columnheader`, `rowheader`, `listitem`, `article`, `region`, `main` or `navigation` |
+| Clickable by style (with `cursor = true`) | `cursor: pointer`, an `onclick` or an `onmousedown` attribute |
+
+That is why `snapshot -i` lists headings as well as controls: they give the model landmarks to read and scope by.
+
+## Snapshot
+
+<TypeTable type={{
+  tree: { type: 'String', description: 'The text tree described above. Empty for an empty page.' },
+  refs: { type: 'Map<String, RefEntry>', description: 'Every ref in this snapshot, keyed by "@eN".' },
+  nodes: { type: 'List<SnapshotNode>', description: 'The structured tree (the root node and its children), before text formatting.' },
+}} />
+
+`RefEntry` describes the element a ref named when the snapshot was taken:
+
+<TypeTable type={{
+  ref: { type: 'String', description: 'The ref, such as "@e3".' },
+  role: { type: 'String', description: 'The role. For text inputs this is the accessibility role (for example "textbox"), not the `[input …]` label of the tree.' },
+  name: { type: 'String', description: 'The accessible name, unescaped and untruncated.' },
+  cssSelector: { type: 'String?', description: 'A generated CSS path (`#id`, or a `tag:nth-of-type(n)` chain from the body). null for elements inside iframes. Informational: prefer the ref, which survives DOM changes the path does not.' },
+}} />
+
+`SnapshotNode` is one node of `nodes`:
+
+<TypeTable type={{
+  role: { type: 'String', description: 'The role.' },
+  name: { type: 'String', description: 'The accessible name.' },
+  value: { type: 'String?', description: 'The current value, for inputs, text areas and selects.' },
+  states: { type: 'Set<String>', description: 'States such as "checked", "disabled", "expanded". May include "focused" and "mixed", which the text tree renders differently.' },
+  children: { type: 'List<SnapshotNode>', description: 'Child nodes, including ones the text tree hides as transparent.' },
+  ref: { type: 'String?', description: 'The ref, or null.' },
+  depth: { type: 'Int', description: 'Depth in the walked tree.' },
+  level: { type: 'Int?', description: 'Heading or aria-level.' },
+  inputType: { type: 'String?', description: 'For text-entry inputs: the type, or "" when the page set no type attribute.' },
+  placeholder: { type: 'String?', description: 'The placeholder, when present.' },
+  url: { type: 'String?', description: 'The link href, only when SnapshotOptions.urls is true.' },
+}} />
+
+```kotlin
+val snapshot = page.snapshot()
+val submit = snapshot.refs.values.first { it.role == "button" && it.name == "Submit" }
+page.locator(submit.ref).click()
+```
+
+## Using refs
+
+A ref is a selector. Every API that takes a selector accepts it, in any of these forms:
+
+```kotlin
+page.locator("@e3").click()
+page.locator("e3").click()
+page.locator("ref=e3").click()      // also "ref=@e3"
+page.click("@e3")                   // selector conveniences
+expect(page.locator("@e5")).toBeEnabled()
+page.runCommand("click @e3")        // runCommand targets
+```
+
+agent-browser: `click @e3` — same. Playwright has no refs; `page.locator("@e3")` is a KMPwright addition.
+
+A ref matches exactly one element, so it never causes a strict-mode violation.
+
+## Ref lifetime
+
+<Callout type="warn">
+
+Refs belong to the latest snapshot. KMPwright never re-snapshots implicitly: `page.locator("@e3")` resolves against whatever the last `snapshot()` registered.
+
+</Callout>
+
+How refs behave:
+
+- **Stable per element.** The ref registry lives in KMPwright's page runtime and maps each element to its ref. The same element keeps the same ref in every snapshot of the same document, even when its text or position changes. New elements get new, higher numbers; numbers are not reused within a document.
+- **The latest snapshot wins.** Each `snapshot()` replaces the set of resolvable refs with the refs it contains. A ref from an earlier snapshot keeps working only if the element appears again. A snapshot scoped with `selector` registers only the refs inside that subtree, and `screenshot(ScreenshotOptions(annotate = true))` takes a full snapshot of its own.
+- **Removed elements fail.** A ref resolves only while its element is attached to the document. If the page removes it, or a framework replaces it with a new node (for example a list re-rendered with new keys), the ref stops matching. Mutating an element in place keeps its ref.
+- **Navigation resets everything.** A new document (`goto`, a link click, `reload`, `setContent`) has a new runtime: no ref resolves until you snapshot again, and numbering starts over at `@e1`.
+- **Refs cannot be read or remapped by the page.** The registry is held in a sealed runtime, not in page-visible globals, so a hostile page cannot point `@e3` at a different element.
+
+When a ref no longer resolves:
+
+| Call | Result |
+|---|---|
+| Actions (`click`, `fill`, `check`, …) | Retry until the action timeout, then throw `KmpwrightTimeoutException`: `Element @e3 was not found after 30000ms while trying to click` |
+| `isEnabled`, `isChecked`, `isEditable` | Throw `No element found for '@e3'. Refresh the snapshot if this is a stale reference.` |
+| `innerText`, `innerHTML`, `inputValue`, `textContent`, `getAttribute`, `boundingBox` | Return an empty string or `null` |
+| `isVisible`, `isFocused`, `count` | Return `false` or `0` |
+
+The rule for agents: re-snapshot after any action that changes the page, and lower `TimeoutConfig.action` so stale-ref errors come back quickly (see [Build an agent](/docs/agents#errors-are-written-for-the-model)).
+
+## Diffing
+
+Compare two snapshots line by line to see what an action changed:
+
+```kotlin
+val before = page.snapshot(SnapshotOptions(interactive = true))
+page.locator("@e5").click()
+val after = page.snapshot(SnapshotOptions(interactive = true))
+
+val diff = page.diffSnapshot(before, after)
+if (diff.changed) println(diff.unifiedDiff)
+//  @e1 [heading] "Example Domain" [level=1]
+// -@e5 [button] "Submit"
+// +@e5 [button] "Submit" [disabled]
+// +@e10 [heading] "Thanks!" [level=2]
+```
+
+<TypeTable type={{
+  unifiedDiff: { type: 'String', description: 'Every line of both trees, prefixed with "-" (removed), "+" (added) or " " (unchanged). Empty when nothing changed. There are no hunk headers.' },
+  additions: { type: 'Int', description: 'Number of "+" lines.' },
+  removals: { type: 'Int', description: 'Number of "-" lines.' },
+  unchanged: { type: 'Int', description: 'Number of unchanged lines.' },
+  changed: { type: 'Boolean', description: 'true when anything was added or removed.' },
+}} />
+
+### Named baselines
+
+`page.diffSnapshot(name)` takes a new full snapshot (default `SnapshotOptions()`), diffs it against the one saved under `name`, and saves the new one under `name`:
+
+```kotlin
+page.diffSnapshot("cart")            // first call: records the baseline, changed = false
+page.locator("@e7").click()
+val diff = page.diffSnapshot("cart") // changes since the previous "cart" snapshot
+```
+
+- Every `page.snapshot(...)` call, with any options, also saves its tree under the reserved name `"__baseline__"`. `page.diffSnapshot("__baseline__")` therefore diffs a fresh full snapshot against the most recent snapshot of any kind.
+- Baselines are kept in memory for the life of the page, across navigations.
+- `diffSnapshot(name)` takes a snapshot, so it replaces the current refs like any other snapshot.
+
+agent-browser: `diff snapshot`.
+
+### Diffing URLs
+
+```kotlin
+val diff = page.diffUrls("https://example.com/v1", "https://example.com/v2")
+```
+
+`diffUrls` fetches both URLs over HTTP (the same client as [`page.read`](/docs/guides/reading), without the browser's cookies), reduces each HTML document to its text lines, and diffs those. It does not load the pages in the browser and does not produce accessibility trees. `timeoutMs` defaults to `TimeoutConfig.default`. It requires `allowDomExtraction`; `KmpwrightConfig.allowedOriginRules`, `setAllowedDomains` and the `ActionPolicy` (checked as `Navigate`) apply to both URLs, as they do for `read`. `HttpRead` is `Supported` on every backend.
+
+agent-browser: `diff url`.
+
+## Annotated screenshots
+
+```kotlin
+val shot = page.screenshot(ScreenshotOptions(annotate = true))
+shot.bytes                 // the image, with a numbered label on each ref
+shot.annotations.forEach { println("${it.ref} ${it.role} ${it.name} ${it.box}") }
+```
+
+With `annotate = true`, KMPwright takes a full snapshot, draws a red label with the number `N` over each element that has ref `@eN` and a non-zero size, captures the screenshot, and removes the labels again. Labels are drawn into the page, so they appear in the image on every backend.
+
+`ScreenshotResult.annotations` lists the labelled elements in snapshot order:
+
+<TypeTable type={{
+  ref: { type: 'String', description: 'The ref, such as "@e3".' },
+  role: { type: 'String', description: 'The ref\'s role (RefEntry.role).' },
+  name: { type: 'String', description: 'The ref\'s accessible name.' },
+  box: { type: 'Rectangle', description: 'x, y, width, height in CSS pixels, relative to the viewport when the labels were drawn. Elements in same-origin iframes are offset by the iframe position.' },
+}} />
+
+`annotate` applies to page screenshots; combine it with `fullPage`, `clip` and the other `ScreenshotOptions` as usual. From `runCommand`, `screenshot --annotate` also prints a legend (see [Commands](/docs/agents/commands#screenshot)).
+
+agent-browser: `screenshot --annotate`.
+
+## Backend differences
+
+| | JVM (Chromium over CDP) | Android WebView, iOS WKWebView |
+|---|---|---|
+| Source | Chromium's accessibility tree (`Accessibility.getFullAXTree`), mapped to DOM elements for refs | A walk of the DOM in the page, with roles and names computed by KMPwright |
+| Roles | Chromium's computed roles, including `paragraph`, `StaticText`, `form` and `aria-owns` structure | Explicit `role` attribute, else a tag mapping (`h1`–`h6` → `heading`, `a[href]` → `link`, `nav` → `navigation`, `ul`/`ol` → `list`, `li` → `listitem`, `select` → `combobox`, `img` → `img`, other elements → `generic`, …) |
+| Names | Chromium's accessible name computation | `aria-label`, `aria-labelledby`, associated `<label>`, `placeholder` (inputs), `alt` (images), `title`, then the text of links, buttons, headings, list items, cells, labels, options and interactive elements |
+| Text content | `[StaticText]` lines for page text | Plain text in paragraphs and `div`s is not listed; read it with `get text` / `innerText()` |
+| States | From the accessibility tree: checked (including mixed), expanded, selected, disabled, required, readonly, busy | From ARIA attributes (`aria-checked`, `aria-expanded`, `aria-selected`, `aria-disabled`, `aria-required`, `aria-readonly`, `aria-busy`) plus the `disabled`, `required` and `readOnly` properties |
+| `includeHidden = true` | Switches to the DOM walk, still using Chromium's roles and names where available | Includes hidden elements in the DOM walk |
+| Size limit | Fails with `Accessibility tree exceeds its node or metadata budget` above 50 000 nodes | None beyond the 256-level depth cap |
+
+Both backends print the same line format, assign refs with the same rules, and inline same-origin iframes one level deep. Expect the exact trees to differ: the same page can show `[paragraph]` and `[StaticText]` lines on the JVM that are absent on a WebView, and a native checkbox that is checked without `aria-checked` shows `[checked]` only on the JVM.
+
+To check which engine a page uses at runtime, read `page.capabilities().backend` (`BackendKind.JvmCdp`, `AndroidWebView` or `IOSWebView`).

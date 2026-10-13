@@ -18,7 +18,7 @@ class CdpInputDevicesTest {
         tap.cancel(); tap.join()
         assertEquals("touchEnd", bridge.commands.last().params["type"])
         val keyboard = CdpKeyboard(bridge)
-        val key = launch { keyboard.downAndUp("Control", TypeOptions(delayMs = 60_000)) }
+        val key = launch { keyboard.press("Control", PressOptions(delayMs = 60_000)) }
         runCurrent()
         key.cancel(); key.join()
         assertEquals("keyUp", bridge.commands.last().params["type"])
@@ -39,7 +39,7 @@ class CdpInputDevicesTest {
             override fun createPlatformLocator(selector: String): BaseLocator =
                 TestLocator(selector, controller)
 
-            override fun createTouch(): Touch = object : Touch {
+            override fun createTouch(): Touchscreen = object : Touchscreen {
                 override suspend fun tap(x: Double, y: Double, options: TapOptions) {}
                 override suspend fun longTap(x: Double, y: Double, options: LongTapOptions) {}
                 override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, options: ScrollOptions) {}
@@ -51,7 +51,6 @@ class CdpInputDevicesTest {
                 override suspend fun move(x: Double, y: Double, options: MoveOptions) {}
                 override suspend fun click(x: Double, y: Double, options: MouseClickOptions) {}
                 override suspend fun dblclick(x: Double, y: Double, options: MouseClickOptions) {}
-                override suspend fun tripleclick(x: Double, y: Double, options: MouseClickOptions) {}
                 override suspend fun down(options: MouseDownOptions) {}
                 override suspend fun up(options: MouseUpOptions) {}
                 override suspend fun wheel(deltaX: Double, deltaY: Double, options: WheelOptions) {}
@@ -64,15 +63,12 @@ class CdpInputDevicesTest {
                 override suspend fun down(key: String) {}
                 override suspend fun up(key: String) {}
                 override suspend fun press(key: String, options: PressOptions) {}
-                override suspend fun downAndUp(key: String, options: TypeOptions) {}
-                override fun isModifierPressed(key: String): Boolean = false
-                override fun modifiers(): Set<String> = emptySet()
             }
         }
 
         assertSame(page.mouse, page.mouse)
         assertSame(page.keyboard, page.keyboard)
-        assertSame(page.touch, page.touch)
+        assertSame(page.touchscreen, page.touchscreen)
     }
 
     @Test
@@ -94,6 +90,17 @@ class CdpInputDevicesTest {
         assertEquals("mousePressed", bridge.commands[1].params["type"])
         assertEquals("mouseReleased", bridge.commands[2].params["type"])
         assertEquals("left", bridge.commands[1].params["button"])
+    }
+
+    @Test
+    fun `dblclick dispatches two press release pairs with increasing click count`() = runBlocking {
+        val bridge = RecordingCdpInputBridge()
+        CdpMouse(bridge).dblclick(5.0, 6.0)
+        val buttons = bridge.commands.drop(1).map { it.params["type"] to it.params["clickCount"] }
+        assertEquals(
+            listOf("mousePressed" to 1, "mouseReleased" to 1, "mousePressed" to 2, "mouseReleased" to 2),
+            buttons
+        )
     }
 
     @Test

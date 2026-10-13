@@ -1,6 +1,13 @@
 package com.bernaferrari.kmpwright.core
 
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -21,33 +28,33 @@ class ConsoleErrorTest {
 
     @Test
     fun `errors returns empty list initially`() {
-        assertTrue(page.errors().isEmpty())
+        assertTrue(page.pageErrors().isEmpty())
     }
 
     @Test
     fun `consoleMessages accumulates emitted messages`() {
         page.reportConsoleMessage(ConsoleMessage("log", "hello world", SourceLocation("app.js", 10, 5)))
-        page.reportConsoleMessage(ConsoleMessage("warn", "something happened", null))
+        page.reportConsoleMessage(ConsoleMessage("warning", "something happened", null))
 
         val messages = page.consoleMessages()
         assertEquals(2, messages.size)
         assertEquals("log", messages[0].type)
         assertEquals("hello world", messages[0].text)
-        assertEquals("warn", messages[1].type)
+        assertEquals("warning", messages[1].type)
         assertEquals("something happened", messages[1].text)
     }
 
     @Test
-    fun `errors filters only error and assertion types`() {
-        page.reportConsoleMessage(ConsoleMessage("log", "normal log", null))
-        page.reportConsoleMessage(ConsoleMessage("error", "something broke", SourceLocation("app.js", 42, 1)))
-        page.reportConsoleMessage(ConsoleMessage("warn", "warning", null))
-        page.reportConsoleMessage(ConsoleMessage("assertion", "assert failed", null))
+    fun `pageErrors are uncaught exceptions, not console errors`() = runBlocking {
+        val events = async(start = CoroutineStart.UNDISPATCHED) { page.events.pageError.first() }
+        page.reportConsoleMessage(ConsoleMessage("error", "logged, not thrown", null))
+        page.reportConsoleMessage(ConsoleMessage("assert", "console.assert", null))
+        assertTrue(page.pageErrors().isEmpty())
 
-        val errs = page.errors()
-        assertEquals(2, errs.size)
-        assertEquals("something broke", errs[0])
-        assertEquals("assert failed", errs[1])
+        page.reportPageError(PageError("TypeError", "x is undefined", "TypeError: x is undefined\n    at f (app.js:1:2)"))
+        page.reportPageError(PageError("", "plain rejection"))
+        assertEquals(listOf("TypeError: x is undefined", "plain rejection"), page.pageErrors())
+        assertEquals("x is undefined", events.await().message)
     }
 
     @Test
@@ -63,25 +70,76 @@ class ConsoleErrorTest {
     }
 
     @Test
-    fun `invalidateOnNavigation clears accumulated messages`() {
-        page.reportConsoleMessage(ConsoleMessage("log", "before nav", null))
+    fun `history survives navigation and the default filter starts at the last commit`() {
+        page.reportConsoleMessage(ConsoleMessage("log", "old message", null))
+        page.reportPageError(PageError("Error", "old error"))
+        // Snapshot invalidation alone (navigation start) does not drop messages.
+        page.testInvalidateNavigation()
         assertEquals(1, page.consoleMessages().size)
 
-        page.testInvalidateNavigation()
-        assertTrue(page.consoleMessages().isEmpty())
-        assertTrue(page.errors().isEmpty())
+        page.markDocumentCommitted()
+        page.reportConsoleMessage(ConsoleMessage("log", "new message", null))
+        assertEquals(listOf("new message"), page.consoleMessages().map { it.text })
+        assertEquals(listOf("old message", "new message"), page.consoleMessages(PageMessageFilter.All).map { it.text })
+        assertTrue(page.pageErrors().isEmpty())
+        assertEquals(listOf("Error: old error"), page.pageErrors(PageMessageFilter.All))
     }
 
     @Test
-    fun `navigation invalidates console messages`() {
-        page.reportConsoleMessage(ConsoleMessage("log", "old message", null))
-        assertEquals(1, page.consoleMessages().size)
+    fun `clear forgets stored messages and errors independently`() {
+        page.reportConsoleMessage(ConsoleMessage("log", "a", null))
+        page.reportPageError(PageError("Error", "b"))
+        page.clearConsoleMessages()
+        assertTrue(page.consoleMessages(PageMessageFilter.All).isEmpty())
+        assertEquals(1, page.pageErrors().size)
+        page.clearPageErrors()
+        assertTrue(page.pageErrors(PageMessageFilter.All).isEmpty())
+    }
 
-        // invalidateOnNavigation is called by goto/reload/back/forward
-        page.testInvalidateNavigation()
+    @Test
+    fun `histories keep the last 200 entries like Playwright`() {
+        repeat(250) { page.reportPageError(PageError("Error", "e$it")) }
+        val errors = page.pageErrors()
+        assertEquals(200, errors.size)
+        assertEquals("Error: e50", errors.first())
+    }
 
-        // After navigation, messages should be cleared
-        assertTrue(page.consoleMessages().isEmpty())
+    @Test
+    fun `bridged payloads require the nonce and Playwright console types`() {
+        val nonce = "abc123"
+        val console = parsePageDiagnosticPayload("""{"nonce":"abc123","kind":"console","type":"warning","text":"w","url":"https://a/x.js","line":3,"column":4}""", nonce)
+        assertEquals(PageDiagnostic.Console(ConsoleMessage("warning", "w", SourceLocation("https://a/x.js", 3, 4))), console)
+        val error = parsePageDiagnosticPayload("""{"nonce":"abc123","kind":"pageerror","name":"Error","message":"boom","stack":"Error: boom"}""", nonce)
+        assertEquals(PageError("Error", "boom", "Error: boom", null), (error as PageDiagnostic.Error).error)
+        assertEquals(PageDiagnostic.DocumentStarted, parsePageDiagnosticPayload("""{"nonce":"abc123","kind":"document"}""", nonce))
+        assertNull(parsePageDiagnosticPayload("""{"nonce":"wrong","kind":"console","type":"log","text":"x"}""", nonce))
+        assertNull(parsePageDiagnosticPayload("""{"kind":"console","type":"log","text":"x"}""", nonce))
+        assertNull(parsePageDiagnosticPayload("""{"nonce":"abc123","kind":"console","type":"warn","text":"x"}""", nonce))
+        assertNull(parsePageDiagnosticPayload("not json", nonce))
+    }
+
+    @Test
+    fun `cdp console arguments render like Playwright previews`() {
+        val params = Json.parseToJsonElement("""{"type":"warning","args":[
+            {"type":"string","value":"hi"},{"type":"number","value":2},{"type":"undefined"},
+            {"type":"number","unserializableValue":"NaN"},
+            {"type":"object","className":"Object","description":"Object","preview":{"properties":[{"name":"a","type":"number","value":"1"}]}},
+            {"type":"object","subtype":"array","description":"Array(2)","preview":{"properties":[{"name":"0","type":"number","value":"1"},{"name":"1","type":"string","value":"x"}]}},
+            {"type":"object","subtype":"null","value":null}],
+            "stackTrace":{"callFrames":[{"url":"https://a/app.js","lineNumber":4,"columnNumber":2,"functionName":""}]}}""").jsonObject
+        assertEquals(ConsoleMessage("warning", "hi 2 undefined NaN {a: 1} [1, x] null", SourceLocation("https://a/app.js", 4, 2)), cdpConsoleMessage(params))
+    }
+
+    @Test
+    fun `cdp exceptions split name, message and stack like Playwright`() {
+        val thrown = Json.parseToJsonElement("""{"exceptionDetails":{"text":"Uncaught","lineNumber":1,"columnNumber":7,"url":"https://a/",
+            "exception":{"type":"object","subtype":"error","description":"TypeError: bad thing\n    at f (https://a/:2:8)"}}}""").jsonObject
+        val error = cdpPageError(thrown)!!
+        assertEquals("TypeError", error.name)
+        assertEquals("bad thing", error.message)
+        assertEquals("TypeError: bad thing\n    at f (https://a/:2:8)", error.stack)
+        val rejected = Json.parseToJsonElement("""{"exceptionDetails":{"text":"Uncaught (in promise)","exception":{"type":"string","value":"nope"}}}""").jsonObject
+        assertEquals(PageError("", "nope", null, null), cdpPageError(rejected))
     }
 
     // Test helper
@@ -100,7 +158,7 @@ class ConsoleErrorTest {
                 override suspend fun evaluateJavaScriptAsync(script: String): String? = null
             }
 
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
     }
@@ -132,17 +190,13 @@ class ConsoleErrorTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
         override fun removeRouteHandler(urlPattern: String) {}
         override fun removeAllRouteHandlers() {}
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
         override fun setCookie(cookie: Cookie) {}
         override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
         override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
         override fun deleteCookie(name: String, domain: String) {}
         override fun deleteAllCookies() {}
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
     }
 }

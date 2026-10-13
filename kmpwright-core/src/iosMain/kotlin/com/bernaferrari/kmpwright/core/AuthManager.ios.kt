@@ -1,7 +1,6 @@
 package com.bernaferrari.kmpwright.core
 
-import platform.Foundation.NSHomeDirectory
-
+/** Auth profiles live with session state under Application Support (see [platformHomeDir]). */
 internal actual fun authProfileDir(): String {
-    return "${NSHomeDirectory()}/.kmpwright/auth"
+    return "${platformHomeDir()}/.kmpwright/auth"
 }

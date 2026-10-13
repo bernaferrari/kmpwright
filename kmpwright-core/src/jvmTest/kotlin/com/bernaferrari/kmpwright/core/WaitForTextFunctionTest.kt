@@ -3,6 +3,7 @@ package com.bernaferrari.kmpwright.core
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -19,11 +20,10 @@ class WaitForTextFunctionTest {
     }
 
     @Test
-    fun `waitForText returns true when text is found`() {
+    fun `waitForText returns when text is found`() {
         runBlocking {
             controller.forceResult = "\"true\""
-            val result = page.waitForText("Welcome")
-            assertTrue(result)
+            page.waitForText("Welcome")
             val script = controller.executedScripts.last()
             assertTrue(script.contains("innerText.indexOf"))
             assertTrue(script.contains("Welcome"))
@@ -31,11 +31,10 @@ class WaitForTextFunctionTest {
     }
 
     @Test
-    fun `waitForText returns false when text is not found`() {
+    fun `waitForText throws a timeout when text is not found`() {
         runBlocking {
             controller.forceResult = "\"false\""
-            val result = page.waitForText("NotFound")
-            assertFalse(result)
+            assertThrows(KmpwrightTimeoutException::class.java) { runBlocking { page.waitForText("NotFound", timeoutMs = 100) } }
         }
     }
 
@@ -55,7 +54,6 @@ class WaitForTextFunctionTest {
             controller.forceResult = "\"42\""
             val result = page.waitForFunction("document.querySelectorAll('.item').length")
             assertEquals("42", result.value)
-            assertEquals("function", result.type)
         }
     }
 
@@ -79,7 +77,7 @@ class WaitForTextFunctionTest {
                 override suspend fun evaluateJavaScriptAsync(script: String): String? = null
             }
 
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
     }
@@ -117,17 +115,13 @@ class WaitForTextFunctionTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
         override fun removeRouteHandler(urlPattern: String) {}
         override fun removeAllRouteHandlers() {}
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
         override fun setCookie(cookie: Cookie) {}
         override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
         override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
         override fun deleteCookie(name: String, domain: String) {}
         override fun deleteAllCookies() {}
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
     }
 }

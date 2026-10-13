@@ -1,0 +1,227 @@
+---
+title: Reading, vitals, React and WebMCP
+description: Fetch pages as Markdown with page.read and HttpReader, measure Core Web Vitals, inspect React component trees, and call WebMCP tools exposed by a page.
+---
+
+```kotlin
+// Markdown first: Accept negotiation, then <path>.md, then llms.txt, then HTML converted to text.
+val docs = page.read("https://kotlinlang.org/docs/coroutines-overview.html", ReadOptions(outline = true))
+println(docs.source)   // e.g. "html-outline" or "markdown-outline"
+println(docs.content)
+
+// Without a browser at all:
+val reader = HttpReader()
+val llms = reader.read("https://example.com/docs", ReadOptions(llms = LlmsReadMode.Index))
+```
+
+This page covers four page tools that come from agent-browser and have no Playwright equivalent:
+
+| Tool | Access | agent-browser |
+|---|---|---|
+| HTTP reading | `page.read(url, ReadOptions)`, `HttpReader(config).read(url, ReadOptions)` | `read` |
+| Web Vitals | `page.webVitals(WebVitalsOptions)` | `vitals` |
+| React inspection | `page.react` (`ReactInspector`) | `react` |
+| WebMCP tools | `page.webMcp` (`WebMcp`) | `webmcp` |
+
+## Reading pages over HTTP
+
+`page.read(url)` fetches `url` with its own HTTP client (Ktor: OkHttp on Android and JVM, Darwin on iOS), not the browser. It doesn't render JavaScript and doesn't send the browser's cookies. `page.read()` with no URL converts the page's current HTML instead (see [Reading the current page](#reading-the-current-page)).
+
+`HttpReader` does the same thing without a page:
+
+```kotlin
+val reader = HttpReader(KmpwrightConfig())     // config.allowedOriginRules and allowDomExtraction apply
+val result: ReadResult = reader.read("https://example.com", ReadOptions())
+```
+
+A URL without a scheme gets `https://`. Only `http` and `https` URLs are accepted, and URLs with embedded credentials are rejected. The fragment is dropped and dot segments are normalized before any policy check.
+
+### How content is chosen
+
+The reader asks for Markdown first: by default it sends `Accept: text/markdown, text/plain;q=0.9, text/html;q=0.7, */*;q=0.1` and `User-Agent: Kmpwright read`.
+
+1. **Primary response.** If it's a 2xx response with a Markdown media type (`text/markdown`, `text/x-markdown`, `application/markdown`), or `raw = true`, return it.
+2. **Markdown URL.** Otherwise, unless `raw` is set or you passed your own `Accept` header, try `<path>.md` (`/index.md` for the root). Use it if it's 2xx Markdown, or `text/plain` when `requireMarkdown` is false.
+3. **llms.txt link.** Look for `llms.txt` in the URL's directory and each parent up to the root. If a list item there links to this page (same origin and path ignoring `.md`, `.html` and `/index`, or a unique last-segment or slugified-title match), fetch and return that link.
+4. **Fallback.** Return the primary response. If it is HTML, it is converted to Markdown-like text. A non-2xx primary response throws `KmpwrightException("HTTP read failed with status …")`.
+
+HTML conversion parses the document with Ksoup, removes `script`, `style`, `noscript`, `svg` and `template`, and writes headings as `#`, lists as `- `, links as `[text](absolute-url)`, `pre` as fenced code, `code`, `strong` and `em` inline, images as their `alt` text, and table cells separated by `|`.
+
+### Options
+
+<TypeTable
+  type={{
+    raw: { type: 'Boolean', description: 'Return the primary body unchanged: no fallbacks and no HTML conversion.', default: 'false' },
+    requireMarkdown: { type: 'Boolean', description: 'Throw unless the selected response is text/markdown.', default: 'false' },
+    llms: { type: 'LlmsReadMode?', description: 'Read the nearest llms.txt (Index) or llms-full.txt (Full) instead of the page.', default: 'null' },
+    outline: { type: 'Boolean', description: 'Return only the heading outline. Combined with filter, keeps headings whose text contains it.', default: 'false' },
+    filter: { type: 'String?', description: 'Case-insensitive text. Keeps the sections (a heading and its sub-headings) whose heading or own body contains it.', default: 'null' },
+    timeoutMs: { type: 'Long', description: 'Timeout for the whole read, including redirects and fallbacks. Must be positive. Not nullable, unlike other timeouts.', default: '10_000' },
+    headers: { type: 'Map<String, String>', description: 'Extra request headers. Duplicate names (case-insensitive) are rejected. Setting Accept disables the .md and llms.txt fallbacks.', default: 'emptyMap()' },
+    allowedDomains: { type: 'Set<String>', description: 'Host allowlist checked on every request and redirect hop. "*.example.com" matches the apex and subdomains. Empty allows all.', default: 'emptySet()' },
+    maxBytes: { type: 'Int', description: 'Body budget per response, 1 byte to 16 MiB. Longer bodies are cut and truncated = true.', default: '2 MiB' },
+    caCertificatePath: { type: 'String?', description: 'Extra CA certificates to trust (Android and JVM). iOS throws UnsupportedOperationException.', default: 'null' },
+    useSystemCa: { type: 'Boolean', description: 'Trust the system CA store. false requires caCertificatePath (Android and JVM); iOS throws.', default: 'true' },
+  }}
+/>
+
+### Result
+
+| Field | Type | Meaning |
+|---|---|---|
+| `url` | `String` | Normalized request URL. |
+| `finalUrl` | `String` | URL of the response that was used, after redirects and fallbacks. |
+| `status` | `Int?` | HTTP status; null for the current-page read. |
+| `contentType` | `String` | Response `Content-Type`. |
+| `source` | `String` | How the content was produced (see below). |
+| `truncated` | `Boolean` | The body exceeded `maxBytes`. |
+| `content` | `String` | The text. |
+| `headers` | `Map<String, String>` | Response headers, lower-case names. |
+
+`source` is one of `markdown`, `html`, `text`, `raw`, `markdown-url`, `llms-link`, `llms-index`, `llms-full`, `active-tab-html` or `active-tab-raw`. With `outline` it gets an `-outline` suffix, and with `filter` (without outline) a `-filtered` suffix. llms modes take no suffix.
+
+### llms.txt modes
+
+```kotlin
+page.read("https://example.com/docs/guide", ReadOptions(llms = LlmsReadMode.Index, filter = "auth"))
+page.read("https://example.com/docs", ReadOptions(llms = LlmsReadMode.Full, filter = "Webhooks"))
+```
+
+The reader starts in the URL's directory and walks up to the root. It uses the first file found that is 2xx and not HTML, and throws if none is found.
+
+- `Index` reads `llms.txt` and returns its list links as `- [title](absolute-url)` under a `Source:` line. With `filter`, only links whose title or URL contains it are kept. If nothing matches, the content is `No matching llms.txt links`. A file with no list links and no `filter` is returned as is.
+- `Full` reads `llms-full.txt`. `filter` keeps the matching sections. `outline` is ignored in both modes.
+
+### Redirects, domains and limits
+
+- Redirects (301, 302, 303, 307, 308) are followed by KMPwright, up to 10. Each hop is checked before the request is made. A loop throws.
+- Your custom headers (API keys, for example) are only sent to the original origin. `Accept` follows redirects.
+- Every request URL, including redirects and fallbacks, must pass all of these:
+  - `KmpwrightConfig.allowedOriginRules`, if set.
+  - `ReadOptions.allowedDomains`.
+  - For `page.read`: the page's `setAllowedDomains` list, and the page's [action policy](/docs/security) for `ActionType.Navigate`.
+- Responses are decoded with the charset from `Content-Type`, defaulting to UTF-8.
+- HTML conversion stops with an error past 1,000,000 nodes or 4 MiB of output.
+- Errors: `KmpwrightTimeoutException` on timeout; `KmpwrightException` for disallowed hosts, bad URLs, bad charsets, too many redirects, or when `KmpwrightConfig.allowDomExtraction` is false.
+
+`PageCapability.HttpRead` is `Supported` on every backend.
+
+### Reading the current page
+
+```kotlin
+val visible = page.read()                                 // current DOM as text, source = "active-tab-html"
+val html = page.read(options = ReadOptions(raw = true))   // source = "active-tab-raw"
+```
+
+With no URL, `read` takes `page.content()` and runs the same HTML conversion, `outline` and `filter`. `maxBytes` still applies. `llms` and `requireMarkdown` need a URL and throw here.
+
+## Web Vitals
+
+```kotlin
+val vitals = page.webVitals()                              // reloads the current page, waits 3 s
+println("LCP ${vitals.lcp?.startTime} ms, CLS ${vitals.cls.score}, TTFB ${vitals.ttfb} ms")
+vitals.metrics["LCP"]?.rating                               // "good" | "needs-improvement" | "poor"
+
+page.webVitals(WebVitalsOptions(url = "https://example.com", settleMs = 5_000))
+page.webVitals(WebVitalsOptions(reload = false))            // measure the already-loaded document
+```
+
+KMPwright injects the bundled [web-vitals](https://github.com/GoogleChrome/web-vitals) library (unmodified 6.2.3). By default it reloads the page so the collector runs from document start, waits `settleMs`, and reads the report. The collector is removed when it finishes.
+
+<TypeTable
+  type={{
+    url: { type: 'String?', description: 'Navigate here instead of reloading. A failed navigation throws.', default: 'null' },
+    reload: { type: 'Boolean', description: 'Reload the current page before measuring (ignored when url is set). false measures the current document; load metrics may then be missing.', default: 'true' },
+    settleMs: { type: 'Long', description: 'Time to wait after load before reading the report. Must be >= 0.', default: '3_000' },
+    timeoutMs: { type: 'Long?', description: 'Timeout for navigation, settle time and read combined. null uses TimeoutConfig.default.', default: 'null' },
+  }}
+/>
+
+`WebVitalsReport`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `url` | `String` | Measured document. |
+| `metrics` | `Map<String, WebVitalMetric>` | Keys `LCP`, `CLS`, `INP`, `FCP`, `TTFB` when reported; each has `value`, `rating`, `id` and `delta`. |
+| `ttfb`, `fcp`, `inp` | `Double?` | Milliseconds. INP needs an interaction during the settle time. |
+| `lcp` | `LargestContentfulPaint?` | `startTime`, `size`, `element` (tag name) and `url` (image URL). |
+| `cls` | `LayoutShiftReport` | `score` and up to 100 `entries` (`value`, `startTime`). |
+| `hydration` | `PerformancePhase?` | Span of React's "Hydrated" scheduler phases, when the page's React reports performance tracks. |
+| `phases`, `hydratedComponents` | `List<PerformancePhase>` | React scheduler phases and hydrated component spans (`label`, `startTime`, `endTime`, `duration`). Components are sorted longest first. |
+| `supportedEntryTypes` | `Set<String>` | `PerformanceObserver.supportedEntryTypes` of the engine. Use it to tell "not supported" from "not reported". |
+| `droppedTimingEntries` | `Int` | Timing entries dropped past the 3,000-entry cap. |
+
+`PageCapability.WebVitals` is `Supported` on JVM and `Partial` on Android and iOS. WebKit doesn't report every entry type, so check `supportedEntryTypes`. Reload and `url` measurements need document-start scripts (`PageCapability.InitScripts`), which are `Partial` on Android. Throws `KmpwrightTimeoutException` on timeout and `KmpwrightException` when `allowEval` is false.
+
+## React inspection
+
+`page.react` embeds React DevTools (react-devtools-inline 8.0.0 with a private React 19.3.0 runtime) and reads the component tree of the page's own React app.
+
+```kotlin
+page.react.enable(reload = true)            // install the DevTools hook, then reload so React finds it
+val tree: List<ReactComponent> = page.react.tree()
+val app = tree.first { it.name == "CheckoutForm" }
+println(page.react.inspect(app.id).text)    // props, state and hooks as text
+
+page.react.suspense().filter { it.isSuspended }.forEach { println("${it.name} waits on ${it.suspendedBy}") }
+
+page.react.startRenderProfile()
+page.getByRole("button", name = "Add to cart").click()
+val profile = page.react.stopRenderProfile()
+profile.components.take(5).forEach { println("${it.name}: ${it.count} renders, ${it.selfTime} ms") }
+page.react.disable()
+```
+
+| Method | Returns | Notes |
+|---|---|---|
+| `enable(reload: Boolean = false)` | `Unit` | Registers the hook as a document-start script and installs it in the current document. React only finds a hook that exists before it starts, so use `reload = true` for an app that's already mounted. |
+| `disable()` | `Unit` | Removes the hook and stops a running profile. |
+| `tree(timeoutMs: Long? = null)` | `List<ReactComponent>` | `id`, `type` (DevTools element type code), `name`, `key` and `parent` id. |
+| `inspect(id: Long, timeoutMs: Long? = null)` | `ReactInspection` | `text` (props, state, hooks) and `source` when available. `id` must be positive. |
+| `suspense(timeoutMs: Long? = null)` | `List<ReactSuspenseBoundary>` | Boundaries with `isSuspended`, `suspendedBy`, `owners`, `environments` and `jsxSource`. |
+| `startRenderProfile()` | `Unit` | Throws unless `enable()` ran first, or if a profile is already running. |
+| `stopRenderProfile()` | `ReactRenderProfile` | `elapsed`, `fps` (`avg`, `min`, `max`, `drops`), totals, and per-component `count`, `mounts`, `reRenders`, `totalTime`, `selfTime`, `domMutations` and `changes` (why it re-rendered). |
+
+A null `timeoutMs` uses `TimeoutConfig.default`. `PageCapability.ReactInspection` is `Supported` on every backend, but `enable` relies on document-start scripts, which are `Partial` on Android. Reads need `allowEval` and `allowDomExtraction`, and every call is checked against `ActionType.Evaluate`.
+
+## WebMCP
+
+[WebMCP](https://github.com/webmachinelearning/webmcp) lets a page register tools for agents. `page.webMcp` lists them and calls them through Chromium's experimental `WebMCP` DevTools domain.
+
+```kotlin
+val tools = page.webMcp.discover()
+tools.forEach { println("${it.name}: ${it.description}") }
+
+val call = page.webMcp.invoke(
+    name = "searchFlights",
+    input = buildJsonObject { put("from", "SFO"); put("to", "JFK") }
+)
+if (call.status == WebMcpInvocationStatus.Completed) println(call.output)
+```
+
+| Method | Notes |
+|---|---|
+| `discover(): List<WebMcpTool>` | Tools registered by the page and its frames: `name`, `description`, `inputSchema`, `annotations`, `origin`, `frameId`, `backendNodeId`. |
+| `context(): WebMcpContext` | Not `suspend`. Bounded summary: `observed`, `toolCount`, `tools`, `truncated`, and `experimental = true`, `untrusted = true` flags. |
+| `invoke(name, input = JsonObject(emptyMap()), frameId = null, timeoutMs = null, waitForResult = true)` | Returns a `WebMcpInvocation`. With `waitForResult = false` it returns while the call is `Pending`. |
+| `invocation(id)` | Not `suspend`. Current state of an invocation. |
+| `awaitInvocation(id, timeoutMs = null)` | Waits for a pending invocation. |
+| `cancelInvocation(id)` | Cancels it. |
+
+`WebMcpInvocation` has `id`, `toolName`, `frameId`, `origin`, `status` (`Pending`, `Completed`, `Canceled`, `Failed`, `TimedOut`), `output`, `error`, `outputTruncated`, `originalOutputBytes`, `durationMs` and `rawStatus`.
+
+Tool names, descriptions and outputs come from the page. Treat them as untrusted input.
+
+| Backend | `webMcp` capability | Behavior |
+|---|---|---|
+| JVM (CDP) | Partial | Needs a Chromium that exposes the `WebMCP` domain. `launchBrowser(BrowserLaunchOptions(webMcp = true))` (the default) enables the `WebMCPTesting` and `DevToolsWebMCPSupport` features. Iframe sessions are capped at 128. |
+| Android, iOS | Unsupported | Every call throws `KmpwrightException`, except `context()`, which returns `observed = false`. |
+
+`discover` and `context` need `allowDomExtraction`, and `invoke` needs `allowEval`.
+
+## Related
+
+- [Security](/docs/security): allowed domains, origin rules, action policies
+- [Capabilities](/docs/platforms/capabilities)
+- [JVM platform](/docs/platforms/jvm): `launchBrowser`
+- [Page reference](/docs/reference/page)

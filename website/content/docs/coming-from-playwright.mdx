@@ -1,0 +1,320 @@
+---
+title: Coming from Playwright
+description: A Playwright (JavaScript) to KMPwright mapping for lifecycle, navigation, locators, assertions, network, storage, emulation, input, dialogs, frames, downloads, screenshots and tracing, plus the differences that matter.
+---
+
+KMPwright uses Playwright's JavaScript names and shapes wherever Kotlin allows. If you know Playwright, most code translates line by line:
+
+```kotlin
+// await page.goto('https://example.com');
+page.goto("https://example.com")
+// await page.getByRole('button', { name: 'Save' }).click();
+page.getByRole("button", name = "Save").click()
+// await expect(page.getByText('Saved')).toBeVisible();
+expect(page.getByText("Saved")).toBeVisible()
+// await page.route('**/api/**', r => r.fulfill({ json: { ok: true } }));
+page.route("**/api/**") { route -> route.fulfill(json = """{"ok":true}""") }
+```
+
+The naming rules, in order:
+
+1. **Playwright JS** names and shapes.
+2. **Playwright Java** names where the JS name is a Kotlin keyword: `route.resume()` for `route.continue()`.
+3. **agent-browser** names for agent features: `snapshot()`, `@e3` refs, `setAllowedDomains`, `runCommand`.
+4. **Kotlin idioms** only where needed: `suspend` instead of Promises, data classes for options, flows instead of `page.on(...)`, `timeoutMs: Long?`.
+
+The tables below list every Playwright API with a KMPwright counterpart. "—" means there is none. Snippets assume `page: Page`.
+
+## Browser, context and page lifecycle
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `chromium.launch({ executablePath, headless, args })` | `launchBrowser(BrowserLaunchOptions(executablePath, headless, arguments = …))` | JVM only. Returns `LaunchedBrowser`; use `launched.browser`. `executablePath` is required. |
+| `chromium.connectOverCDP(wsEndpoint)` | `Browser(JvmPlatformContext(), KmpwrightConfig(cdp = CdpConfig(websocketUrl = …)))` | JVM only. Also `CdpConfig(provider = CloudProvider.…)`. |
+| — | `Browser(AndroidPlatformContext(context, webView))`, `Browser(IOSPlatformContext(webView = …))` | Attach to an app's WebView. |
+| `browser.newContext()` | `browser.newContext()` | Android: throws `UnsupportedOperationException`. iOS: `WKWebsiteDataStore` isolation (Partial). |
+| `browser.newPage()` / `context.newPage()` | `browser.newPage()` / `context.newPage()` | `suspend`. |
+| `context.pages()` | `browser.pages()`, `context.pages()` | |
+| — | `browser.page()` | The attached or default page; synchronous. |
+| `browser.version()` | `browser.version()` | Returns `BrowserVersion(product, version, userAgent)`. |
+| `browser.isConnected()` | `browser.isConnected.value` | `StateFlow<Boolean>`; also `connectionError`. |
+| `browser.close()` | `browser.close()` / `browser.dispose()` | `close()` suspends until teardown; `dispose()` is non-suspending, best effort. |
+| `context.close()` | `context.close()` / `context.dispose()` | |
+| `page.close()` | `page.close()` / `page.dispose()` | |
+| `context.clearCookies()` | `context.clearCookies()` or `page.clearCookies()` | |
+| — | `context.clearData()` | Cookies, storage and caches of the context. |
+| `context.on('page')`, `page.waitForEvent('popup')` | — | Use `page.openNewTab(url)` and `browser.pages()`. |
+| — | `browser.targets()`, `attachTarget(id)`, `activateTarget(id)`, `closeTarget(id)`, `newWindow()` | CDP only: tabs not created by KMPwright, and windows. |
+| `page.bringToFront()` | `browser.activateTarget(id)` | CDP only. |
+| `page.setDefaultTimeout(ms)`, `setDefaultNavigationTimeout(ms)` | `KmpwrightConfig(timeouts = TimeoutConfig(default, navigation, action, waitForSelector))` | Per browser, not per page. |
+
+## Navigation and waits
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `page.goto(url, { waitUntil, timeout })` | `page.goto(url, GotoOptions(waitUntil, timeoutMs))` | Returns `NavigationResult(url, status, ok, error)`, not a `Response`. A failed or refused navigation returns `ok = false` instead of throwing; a timeout throws `KmpwrightTimeoutException`. |
+| `page.reload()` | `page.reload(ReloadOptions(...))` | |
+| `page.goBack()` / `page.goForward()` | `page.goBack()` / `page.goForward()` | `null` when there is no history entry, like Playwright. |
+| `waitUntil: 'load' \| 'domcontentloaded' \| 'networkidle'` | `LoadState.Load`, `DOMContentLoaded`, `NetworkIdle` | No `'commit'`. |
+| `page.url()` | `page.url.value` | `StateFlow<String?>`, updated on every committed navigation. |
+| `page.title()` | `page.title.value` | `StateFlow<String?>` as of the last navigation. For the live title use `expect(page).toHaveTitle(...)` or `page.evaluate("document.title")`. |
+| `page.waitForURL(url)` | `page.waitForURL(url)` | `String` glob (exact URL without wildcards), `Regex`, or predicate `{ url -> … }`. Options: `WaitForURLOptions(waitUntil, timeoutMs)`. |
+| `Promise.all([page.waitForURL(u), click()])` | `page.waitForURL(u) { click("…") }` | Action-scoped overload subscribes before the action runs. `String` URL only. |
+| `page.waitForLoadState(state)` | `page.waitForLoadState(state, timeoutMs)` | Default `Load`. |
+| `page.waitForTimeout(ms)` | `page.waitForTimeout(ms)` | |
+| `page.waitForNavigation()` | `page.waitForNavigation(WaitForNavigationOptions(url, waitUntil, timeoutMs))` | Returns `null` on timeout. Prefer `page.waitForNavigation { … }`, which throws on timeout and cannot miss a fast navigation. |
+| `page.waitForFunction(fn, arg, { polling })` | `page.waitForFunction(expression, timeoutMs)` | A JavaScript expression string; no `arg`, no polling option. Returns `JsResult`. |
+| `page.waitForSelector(sel, { state })` | `page.waitForSelector(sel, SelectorState.Visible, timeoutMs)` | States: `Attached`, `Detached`, `Visible`, `Hidden`. |
+| `page.waitForEvent(name)` | `page.waitForEvent(name, WaitForEventOptions(predicate, timeoutMs))` | Names: `console`, `navigation`, `dialog`, `request`, `response`, `download`, `filechooser`, `domcontentloaded`, `load`, `networkidle`. Returns `null` on timeout. |
+| — | `page.waitForText(text, timeoutMs)` | agent-browser `wait --text`. Throws `KmpwrightTimeoutException`. |
+| — | `page.pushState(url)` | Client-side navigation through the Next.js router or `history.pushState`. |
+| `page.setContent(html)` / `page.content()` | `page.setContent(html, SetContentOptions(waitUntil, timeoutMs))` / `page.content()` | |
+| `page.evaluate(fn, arg)` | `page.evaluate(expression)` | Takes an expression string, not a function, and no `arg`. Promises are awaited. Returns `JsResult(value, type)`: strings verbatim, other values as JSON. |
+| `page.addInitScript(script)` | `page.addInitScript(script)` → id; `page.removeInitScript(id)` | Runs in later documents and child frames, not the current one. |
+| `page.addScriptTag(...)` / `addStyleTag(...)` | `page.addScriptTag(ScriptTagOptions(url, content, type, id, async, defer))` / `page.addStyleTag(StyleTagOptions(url, content, id))` | Return the element id. |
+| `page.on('console')`, `page.on('pageerror')` | `page.events.console` (flow), `page.consoleMessages()`, `page.pageErrors()` | Lists cover messages since the last navigation. |
+
+## Locators and getBy*
+
+`locator`, `frameLocator` and the `getBy*` finders are available on `Page`, `Locator` and `FrameLocator` (the shared `ElementFinder` interface). Text arguments match case-insensitively as substrings unless `exact = true`.
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `page.locator(selector)` | `page.locator(selector)` | CSS (pierces open shadow roots), `text=`, `role=`, `label=`, `placeholder=`, `alt=`, `title=`, `testid=`, `xpath=`, `>>` chaining, and snapshot refs `@e3` / `e3` / `ref=e3`. |
+| `page.locator(sel, { hasText, has })` | `page.locator(sel).filter(hasText = …, has = …)` | `locator()` takes no options. |
+| `getByRole(role, { name, exact, checked, disabled, expanded, selected, pressed, level, includeHidden })` | `getByRole(role, name, exact, checked, disabled, expanded, selected, pressed, level, includeHidden)` | `name` may be a `Regex` (no `exact` then). |
+| `getByText(text, { exact })` | `getByText(text, exact)` / `getByText(Regex)` | |
+| `getByLabel` | `getByLabel(text, exact)` / `getByLabel(Regex)` | `<label>`, `aria-label`, `aria-labelledby`. |
+| `getByPlaceholder` | `getByPlaceholder(text, exact)` / `getByPlaceholder(Regex)` | |
+| `getByAltText` | `getByAltText(text, exact)` / `getByAltText(Regex)` | |
+| `getByTitle` | `getByTitle(text, exact)` / `getByTitle(Regex)` | |
+| `getByTestId` | `getByTestId(String)` / `getByTestId(Regex)` | `data-testid`; not configurable. |
+| `locator.locator(sel)` | `locator.locator(sel)` | |
+| `locator.filter({ hasText, hasNotText, has, hasNot })` | `filter(hasText, hasNotText, has, hasNot)` | `String` or `Regex` text variants; `has`/`hasNot` take a `Locator`. |
+| `locator.and(other)` / `locator.or(other)` | `and(other)` / `or(other)` | |
+| `first()` / `last()` / `nth(i)` | `first()` / `last()` / `nth(i)` | `nth` accepts negative indices from the end. |
+| `locator.all()` | `locator.all()` | |
+| `page.frameLocator(sel)` / `locator.frameLocator(sel)` | same | |
+| `locator.contentFrame()`, `frameLocator.owner()` | — | |
+
+## Locator actions and queries
+
+Actions wait for the element to be attached, visible, enabled, stable and hit-testable (`fill`: editable) and retry until `timeoutMs` (default `TimeoutConfig.action`). `force = true` skips the checks.
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `click({ button, clickCount, delay, position, force, timeout })` | `click(ClickOptions(button, clickCount, delayMs, position, force, timeoutMs))` | No `modifiers`, `trial` or `noWaitAfter`. `MouseButton.LEFT/MIDDLE/RIGHT`. |
+| `dblclick()` | `dblclick(ClickOptions(...))` | |
+| `tap()` | `tap(TapOptions(force, modifiers, timeoutMs))` | |
+| `fill(value)` | `fill(value, FillOptions(force, timeoutMs))` | input, textarea, select, `[contenteditable]`. |
+| `clear()` | `clear()` | Like `fill("")`. |
+| `press(key, { delay })` | `press(key, PressOptions(delayMs, timeoutMs))` | `"Enter"`, `"Control+A"`. |
+| `pressSequentially(text, { delay })` | `pressSequentially(text, PressSequentiallyOptions(delayMs, timeoutMs))` | |
+| `type(text)` (deprecated) | `page.type(selector, text, TypeOptions(delayMs))` | Page-level convenience only. |
+| `hover({ force })` | `hover(HoverOptions(force, timeoutMs))` | |
+| `focus()` / `blur()` | `focus(timeoutMs)` / `blur(timeoutMs)` | |
+| `check()` / `uncheck()` / `setChecked(b)` | same, with `CheckOptions(force, timeoutMs)` | |
+| `selectOption(values)` | `selectOption(value)` / `selectOption(values: List<String>)` | Matches option value, then label. No `{ index }` or `{ label }` objects. Empty list deselects. |
+| `setInputFiles(files)` | `setInputFiles(paths: List<String>)` | File paths only (no in-memory buffers). Empty list clears. Unsupported on mobile WebViews. |
+| `dragTo(target, { sourcePosition, targetPosition })` | `dragTo(target, DragOptions(sourcePosition, targetPosition, timeoutMs))` | |
+| `scrollIntoViewIfNeeded()` | `scrollIntoViewIfNeeded(ScrollIntoViewOptions(block, inline, timeoutMs))` | |
+| `dispatchEvent(type, eventInit)` | `dispatchEvent(type, timeoutMs)` | No `eventInit`. |
+| `evaluate(fn)` | `evaluate("el => …")` | A JavaScript function string that receives the element. Runs synchronously; a returned Promise is not awaited. |
+| `evaluateAll(fn)`, `evaluateHandle`, `elementHandle()` | — | No handles. |
+| `highlight()` | `highlight(HighlightOptions(color, borderColor, durationMs))` | |
+| `screenshot()` | `screenshot(ScreenshotOptions(...))` | |
+| `boundingBox()` | `boundingBox()` | `Rectangle?` in CSS pixels. |
+| `waitFor({ state })` | `waitFor(SelectorState.Visible, timeoutMs)` | |
+| `textContent()` / `innerText()` / `innerHTML()` | same | |
+| `getAttribute(name)` / `inputValue()` | same | |
+| `count()` | `count()` | No waiting. |
+| `allTextContents()` / `allInnerTexts()` | same | |
+| `isVisible()` / `isHidden()` / `isEnabled()` / `isDisabled()` / `isChecked()` / `isEditable()` | same | No waiting. |
+| — | `isFocused()` | |
+| `selectText()`, `ariaSnapshot()` | — | For an accessibility tree use `page.snapshot()`. |
+| `page.click(sel)`, `page.fill(sel, v)`, … | `page.click(sel)`, `page.fill(sel, v)`, … | Selector conveniences: `click`, `dblclick`, `tap`, `fill`, `clear`, `type`, `press`, `hover`, `focus`, `highlight`, `check`, `uncheck`, `setChecked`, `selectOption`, `setInputFiles`, `dragAndDrop`, `dispatchEvent`, `textContent`, `innerText`, `innerHTML`, `getAttribute`, `inputValue`, `isVisible`, `isHidden`, `isEnabled`, `isDisabled`, `isChecked`, `isEditable`, `count`. |
+
+## Assertions
+
+`expect(locator)` returns `LocatorAssertions`; `expect(page)` returns `PageAssertions`. Each assertion re-reads until it holds or `timeoutMs` (default `TimeoutConfig.waitForSelector`) passes, then throws `KmpwrightTimeoutException`. Use `.not` to negate.
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `toBeVisible()` / `toBeHidden()` | same | |
+| `toBeAttached()` | `toBeAttached()` | No `{ attached: false }`; use `.not.toBeAttached()`. |
+| `toBeEnabled()` / `toBeDisabled()` | same | |
+| `toBeChecked()` | `toBeChecked()` | No `{ checked: false }`; use `.not`. |
+| `toBeFocused()` / `toBeEditable()` / `toBeEmpty()` | same | |
+| `toHaveText(text)` | `toHaveText(String)` / `toHaveText(Regex)` | Whitespace-normalised `innerText`; full match for strings. No array form. |
+| `toContainText(text)` | `toContainText(String)` / `toContainText(Regex)` | |
+| `toHaveValue(value)` | `toHaveValue(String)` / `toHaveValue(Regex)` | |
+| `toHaveAttribute(name, value?)` | `toHaveAttribute(name)`, `(name, String)`, `(name, Regex)` | |
+| `toHaveClass(cls)` | `toHaveClass(String)` / `toHaveClass(Regex)` | String compares the whole normalised `class` attribute. |
+| `toHaveCount(n)` | `toHaveCount(n)` | |
+| `expect(page).toHaveURL(url)` | `expect(page).toHaveURL(String)` / `(Regex)` | String is an exact match (no glob). |
+| `expect(page).toHaveTitle(title)` | `expect(page).toHaveTitle(String)` / `(Regex)` | |
+| `toHaveCSS`, `toHaveId`, `toHaveJSProperty`, `toBeInViewport`, `toHaveAccessibleName`, `toHaveRole`, `toHaveValues`, `toHaveScreenshot`, `toMatchAriaSnapshot`, `expect.poll`, `expect.soft` | — | Use `locator.evaluate(...)` with your own check, or `page.visualDiff(...)` for images. |
+
+## Network
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `page.route(url, handler)` | `page.route(url) { route -> … }` | `String` glob (`*` within a path segment, `**` across segments) or `Regex`. `suspend`: returns once interception is active. Registering the same URL again replaces its handler. |
+| `route.fulfill({ status, headers, body, contentType, json })` | `route.fulfill(status, headers, body, bodyBytes, contentType, json)` | `json` is a JSON **string**. `bodyBytes` for binary. `contentType` defaults to `application/json`, so set it for other bodies. No `path` or `response`. |
+| `route.abort(errorCode)` | `route.abort(errorCode = "failed")` | e.g. `"aborted"`, `"timedout"`. |
+| `route.continue({ url, method, headers, postData })` | `route.resume(url, method, headers, postData)` | Playwright-Java name. |
+| `route.fallback()` | `route.fallback()` | Returning from the handler without deciding also falls back. |
+| `route.request()` | `route.request` | `Request(url, method, headers, postData, postDataJSON, resourceType, timestamp, id)`. |
+| `route.fetch()`, `page.routeFromHAR()`, `page.routeWebSocket()` | — | |
+| `page.unroute(url)` / `page.unrouteAll()` | `page.unroute(url)` / `page.unrouteAll()` | |
+| `page.waitForRequest(urlOrPredicate)` | `page.waitForRequest(url)` / `(Regex)` / `{ request -> … }` | `String` without wildcards is a **substring** match (Playwright: exact). Returns `Request`. |
+| `page.waitForResponse(urlOrPredicate)` | `page.waitForResponse(url)` / `(Regex)` / `{ response -> … }` | Returns `Response(url, status, statusText, headers, body, fromCache, …)`; `ok` is true for 2xx. |
+| `Promise.all([page.waitForResponse(u), click()])` | `page.waitForResponse(u) { click("#load") }` | Also for `waitForRequest`. |
+| `page.on('request')` / `page.on('response')` | `page.events.request` / `page.events.response` | Hot `SharedFlow`s. A failed request is a response with status 0. |
+| `context.setExtraHTTPHeaders(h)` | `page.setExtraHTTPHeaders(h)` | |
+| `httpCredentials` context option | `page.setHTTPCredentials(HttpCredentials(user, pass))`; `null` clears | |
+| `recordHar` context option | `page.network.startHar()` / `page.network.stopHar()` (HAR JSON string) | |
+| — | `page.network.requests(filter, limit)`, `detail(id)`, `responseBody(id, maxBytes)`, `clear()` | Request history (agent-browser `network requests`). |
+
+## Cookies, storage and storage state
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `context.cookies(urls?)` | `page.cookies(urls)` | Empty list returns every cookie. |
+| `context.addCookies(cookies)` | `page.addCookies(cookies)` | `Cookie(name, value, domain, path, expires, secure, httpOnly, sameSite, hostOnly)`; `expires` in Unix seconds, `null` for session. |
+| `context.clearCookies({ name, domain })` | `page.clearCookies(name, domain)` | Both `null` removes all. |
+| `context.storageState()` | `page.storageState()` | `StorageState(url, cookies, localStorage, sessionStorage)` for the current origin. |
+| `storageState({ path })` | `page.storageState().save(path, password)` | `password` is required; pass `null` explicitly for plaintext. |
+| `newContext({ storageState })` | `page.setStorageState(StorageState.load(path, password))` | Restores cookies, navigates to the state URL when needed, restores storage. |
+| `page.evaluate(() => localStorage…)` | `page.localStorage.get/set/remove/clear/entries()`, `page.sessionStorage.…` | |
+| `context.grantPermissions(['clipboard-read'])` + clipboard | `page.clipboard.readText()` / `writeText(text)` | |
+| — | `page.autosaveStorageState(StorageStateAutosaveOptions(path, password, intervalMs))` | |
+
+## Emulation
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `page.emulateMedia({ colorScheme })` | `page.emulateMedia(colorScheme = ColorScheme.Dark)`; `null` resets | Only `colorScheme`; no `media`, `reducedMotion`, `forcedColors`. Native on CDP and on iOS (light/dark, in a window); JavaScript fallback on Android. |
+| `context.setGeolocation(...)` | `page.setGeolocation(Geolocation(lat, lon, accuracy))`; `null` resets | CDP grants the permission for you. JavaScript fallback on WebViews. |
+| `context.setOffline(b)` | `page.setOffline(b)` | |
+| CDP `Network.emulateNetworkConditions` | `page.emulateNetworkConditions(NetworkConditions(...))`; presets `Slow3G`, `Fast3G`, `Offline` | WebViews support offline only and throw `UnsupportedOperationException` for latency or throughput. |
+| `page.setViewportSize({ width, height })` / `viewportSize()` | `page.setViewportSize(w, h)` / `page.viewportSize()` | `ViewportSize?`. |
+| `deviceScaleFactor` option | `page.setDeviceScaleFactor(scale)` | |
+| `userAgent` option | `page.setUserAgent(ua)` or `KmpwrightConfig(userAgent = …)` | |
+| `devices['iPhone 15']` | `page.emulateDevice(Devices.iPhone15)` | `Devices.all` maps names to descriptors. |
+| `locale`, `timezoneId`, `permissions` options | — | |
+
+## Input devices
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `page.keyboard.type(text, { delay })` | `page.keyboard.type(text, TypeOptions(delayMs))` | |
+| `page.keyboard.press(key, { delay })` | `page.keyboard.press(key, PressOptions(delayMs))` | |
+| `page.keyboard.down(key)` / `up(key)` | same | |
+| `page.keyboard.insertText(text)` | same | |
+| `page.mouse.move(x, y, { steps })` | `page.mouse.move(x, y, MoveOptions(steps))` | |
+| `page.mouse.click(x, y, { button, clickCount, delay })` | `page.mouse.click(x, y, MouseClickOptions(button, clickCount, delayMs))` | |
+| `page.mouse.dblclick(x, y)` | same | |
+| `page.mouse.down()` / `up()` | `down(MouseDownOptions(button, clickCount))` / `up(MouseUpOptions(button))` | |
+| `page.mouse.wheel(dx, dy)` | `page.mouse.wheel(dx, dy)` | |
+| — | `page.mouse.drag(x1, y1, x2, y2)` | |
+| `page.touchscreen.tap(x, y)` | `page.touchscreen.tap(x, y)` | Also `longTap`, `scroll`, `swipe`, `pinch`. |
+
+Coordinates are viewport CSS pixels. Mouse input is Partial on Android and iOS (`PageCapability.MouseInput`); CDP uses trusted input events.
+
+## Dialogs
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `page.on('dialog', d => d.accept())` | `page.onDialog { DialogResponse.Accept }` | Returns a `DialogHandler`; `close()` removes it. Newest handler wins. |
+| `dialog.dismiss()` / `dialog.accept(text)` | `DialogResponse.Dismiss` / `DialogResponse.Text(text)` | |
+| `dialog.type()` / `message()` / `defaultValue()` | `event.type` / `event.message` / `event.defaultPrompt` | `DialogType.Alert`, `Confirm`, `Prompt`, `BeforeUnload`. |
+| Auto-dismiss when unhandled | Same | Also dismissed if a handler throws or exceeds `TimeoutConfig.default`. |
+| `page.waitForEvent('dialog')` | `page.waitForDialog { click("…") }` | Also `acceptDialogs()`, `dismissDialogs()`, `acceptDialogsIf { … }`. |
+
+## Frames
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `page.frameLocator(sel).getByRole(...)` | same | |
+| `page.mainFrame()` | `page.mainFrame()` | Returns a `FrameLocator`. |
+| `frameLocator.…` attributes | `frame.name()`, `frame.url()`, `frame.boundingBox()` | |
+| `page.frames()`, `page.frame(name)`, `frame.evaluate(...)` | — | |
+
+CDP resolves same-process and cross-process (out-of-process) frames. Mobile WebViews are limited to same-origin frames.
+
+## Downloads and file chooser
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `page.waitForEvent('download')` | `page.waitForDownload(url) { click("…") }` | Returns `Download(url, suggestedFilename)`. CDP only. |
+| `download.path()` / `saveAs(path)` | `download.path()` / `download.saveAs(path)` | `path()` is `null` when not saved to disk. |
+| `acceptDownloads` option | `page.setDownloadBehavior(DownloadBehavior.…)`, `page.setDownloadPath(dir)` | `SaveToDownloadPath`, `Allow`, `Deny`. |
+| `page.waitForEvent('filechooser')` | `page.setFileChooserInterception(true)` then `page.waitForFileChooser { click("…") }` | CDP needs interception first. |
+| `fileChooser.setFiles(files)` / `isMultiple()` | `chooser.setFiles(paths)` / `chooser.isMultiple` | Empty list cancels. |
+
+## Screenshots and PDF
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `page.screenshot({ fullPage, clip, omitBackground, quality, type, scale })` | `page.screenshot(ScreenshotOptions(fullPage, clip, omitBackground, quality, format, scale, annotate, timeoutMs))` | Returns `ScreenshotResult(bytes, width, height, annotations)`. No `path` (write `bytes` yourself), `mask` or `animations`. `format`: `PNG`, `JPEG`, `WEBP`. |
+| `locator.screenshot()` | `locator.screenshot()` | |
+| — | `ScreenshotOptions(annotate = true)` | Draws snapshot refs on the image (agent-browser `screenshot --annotate`). |
+| `page.pdf({ format, landscape, … })` | `page.pdf(PdfOptions(format, landscape, displayHeaderFooter, headerTemplate, footerTemplate, printBackground, scale, width, height, margin, pageRanges))` | Returns `PdfResult(bytes)`. Partial on every backend; `PdfFormat.Content` for WKWebView's unpaginated canvas. |
+
+## Tracing and video
+
+| Playwright (JS) | KMPwright | Notes |
+| --- | --- | --- |
+| `context.tracing.start()` / `stop()` | `page.tracing.start(TracingOptions(categories, screenshots, path))` / `page.tracing.stop()` | Chrome trace JSON (`ByteArray?`), not a Playwright trace zip. CDP only. |
+| `recordVideo` context option | `page.video.start(RecordingOptions(path, fps, …))` / `page.video.stop()` | Records the current page on demand. CDP only; needs FFmpeg. |
+| — | `page.profiler.start()` / `stop()` | V8 CPU profile JSON. CDP only. |
+| — | `page.screencast(ScreencastOptions(...))` | Experimental frame `Flow`. CDP only. |
+
+## Differences to keep in mind
+
+**`suspend` instead of `await`.** Every operation that touches the page is a `suspend` function. There are no Promises to forget to await, but you need a coroutine scope.
+
+**State as flows.** `page.url` and `page.title` are `StateFlow`s you can read (`.value`) or collect. `page.events` exposes hot `SharedFlow`s (`console`, `navigation`, `loadState`, `dialog`, `request`, `response`, `download`, `fileChooser`) instead of `page.on(...)`. Subscribe before you trigger the action, or use the action-scoped helpers (`waitForNavigation { }`, `waitForResponse(url) { }`, …), which subscribe for you.
+
+**Options are data classes.** `page.goto(url, GotoOptions(waitUntil = LoadState.DOMContentLoaded))`. Kotlin's named and default arguments replace option objects. `timeoutMs` is always the last field.
+
+**Timeouts are `timeoutMs: Long?`.** `null` (the default) means "use the configured default" from `KmpwrightConfig.timeouts`: `navigation` for navigations, `action` for locator actions, `waitForSelector` for assertions, `default` for everything else. All four default to 30 000 ms. Timeouts throw `KmpwrightTimeoutException`; other failures throw `KmpwrightException`.
+
+**Strict selectors.** By default a locator action that matches more than one element fails, like Playwright. `KmpwrightConfig(strictSelectors = false)` relaxes this.
+
+**No element handles.** Everything goes through lazy locators. `page.evaluate` takes an expression string; `locator.evaluate` takes a function string such as `"el => el.value"`.
+
+**String URL patterns.** `route`, `waitForURL`: globs. `waitForRequest`, `waitForResponse`, `waitForDownload`, `WaitForNavigationOptions.url`: glob when the string has `*` or `?`, otherwise substring; a `regex:` prefix makes the string a regular expression (useful where there is no `Regex` overload, such as `waitForDownload`). Prefer the `Regex` overloads where they exist.
+
+**Capabilities instead of "it just works".** Check what the backend can do before you depend on it:
+
+```kotlin
+page.requireCapabilities(PageCapability.Downloads)                    // fails fast if not Supported
+page.requireCapabilities(PageCapability.RouteInterception.require(SupportLevel.Partial))
+val level = page.capabilities().supportLevel(PageCapability.VideoRecording)
+val why = page.capabilities().notes                                   // human-readable gaps
+```
+
+### Not supported
+
+- Firefox and WebKit desktop browsers. The JVM backend is Chromium over CDP; mobile backends are the system WebViews.
+- A test runner. There is no `@playwright/test` equivalent (fixtures, projects, retries, reporters); use your own test framework and call `expect`.
+- Codegen, the inspector, `page.pause()`, Playwright trace viewer files.
+- Element handles, `evaluateHandle`, `exposeFunction`, `exposeBinding`.
+- `route.fetch`, `routeFromHAR`, WebSocket routing.
+- Context options without a runtime setter: `locale`, `timezoneId`, `permissions`, `reducedMotion`.
+- Visual assertions (`toHaveScreenshot`). `page.visualDiff(expected, actual)` compares two `ScreenshotResult`s.
+
+### Mobile WebView limitations
+
+On Android `WebView` and iOS `WKWebView`, KMPwright runs inside an app's view rather than a browser it controls, so:
+
+- Input is synthesized as DOM events, not trusted OS input. Mouse and (on iOS) keyboard input are Partial.
+- Routing covers what the platform exposes: Android `shouldInterceptRequest`; iOS fetch/XHR through a bridge plus optional custom-scheme interception. Neither sees every request a desktop browser would.
+- No downloads, file chooser, `setInputFiles`, tracing, profiling, video or screencast.
+- Network emulation is offline-only.
+- Android has no isolated browser contexts; cookies are shared by every `WebView` in the process.
+- Frames are limited to same-origin documents.
+
+See [Capabilities](/docs/platforms/capabilities) for the full matrix and each backend's notes.

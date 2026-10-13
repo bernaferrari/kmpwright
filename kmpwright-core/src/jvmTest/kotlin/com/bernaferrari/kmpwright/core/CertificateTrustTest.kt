@@ -50,10 +50,10 @@ class CertificateTrustTest {
             if (System.getProperty("os.name").startsWith("Linux") && !chrome.isNullOrBlank()) {
                 val launched = launchBrowser(BrowserLaunchOptions(chrome, caCertificatePath = certificate.toString()))
                 try {
-                    val page = launched.browser.newPageAsync()
+                    val page = launched.browser.newPage()
                     page.goto("https://localhost:$port/")
                     assertTrue(page.locator("body").innerText().orEmpty().contains("Trusted private service"))
-                } finally { launched.closeAsync() }
+                } finally { launched.close() }
             }
             val cert = loadCaCertificates(certificate.toString()).single()
             val der = directory.resolve("ca.der"); Files.write(der, cert.encoded)

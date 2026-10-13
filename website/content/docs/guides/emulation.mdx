@@ -1,0 +1,172 @@
+---
+title: Emulation
+description: Emulate color scheme, geolocation, offline mode, network throttling, viewport, user agent, device scale factor and device presets, with what each backend does natively and what it fakes in JavaScript.
+---
+
+```kotlin
+page.emulateMedia(colorScheme = ColorScheme.Dark)
+page.setGeolocation(Geolocation(latitude = 48.8584, longitude = 2.2945, accuracy = 10.0))
+page.setViewportSize(390, 844)
+page.goto("https://example.com/store-locator")
+
+page.setOffline(true)
+page.getByRole("button", name = "Refresh").click()
+expect(page.getByText("You are offline")).toBeVisible()
+
+// Reset
+page.setOffline(false)
+page.setGeolocation(null)
+page.emulateMedia(colorScheme = null)
+```
+
+Emulation is per page. Settings stay in effect across navigations. A tab opened with `page.openNewTab()` inherits them.
+
+## Native or JavaScript
+
+Each backend applies an override natively when it can. When it can't, KMPwright patches the page's JavaScript APIs in every document: it installs a document-start script and also patches the current document. Page scripts can't switch the patch off, but it only changes what JavaScript sees. CSS `@media` rules, the network stack and native permission prompts are not affected.
+
+| Feature | Android WebView | iOS WKWebView | JVM (CDP) |
+|---|---|---|---|
+| `emulateMedia(colorScheme)` | JavaScript | Native for `Light` and `Dark` when the web view is in a window; JavaScript otherwise and for `NoPreference` | Native (`Emulation.setEmulatedMedia`) |
+| `setGeolocation` | JavaScript | JavaScript | Native (`Emulation.setGeolocationOverride`) |
+| `setOffline` | JavaScript | JavaScript | Native (`Network.emulateNetworkConditions`) |
+| `emulateNetworkConditions` with latency or throughput | Throws `UnsupportedOperationException` | Throws `UnsupportedOperationException` | Native |
+| `setViewportSize` | Resizes the WebView's layout (CSS px times display density) | Sets the `WKWebView` frame | Native (`Emulation.setDeviceMetricsOverride`) |
+| `setDeviceScaleFactor` | Throws `UnsupportedOperationException` | Throws `UnsupportedOperationException` | Native |
+| `setUserAgent` | `WebSettings.userAgentString` | `customUserAgent` | `Network.setUserAgentOverride` |
+| `emulateDevice` | Applies viewport and user agent, then throws (see below) | Applies viewport and user agent, then throws (see below) | Viewport, user agent and scale factor |
+
+`PageCapability.NetworkEmulation` is `Supported` on JVM and `Partial` on Android and iOS (offline only). The `notes` from `page.capabilities()` explain the color scheme and geolocation fallbacks in plain text. Check them at runtime:
+
+```kotlin
+page.capabilities().notes.forEach(::println)
+```
+
+What the JavaScript fallback patches:
+
+- **Color scheme:** `window.matchMedia('(prefers-color-scheme: …)')` answers with the emulated value, and the root element gets a `color-scheme` style. Stylesheet `@media (prefers-color-scheme)` rules don't change. On Android with targetSdk 33 or higher, WebView takes that media feature from the app theme.
+- **Geolocation:** `navigator.geolocation.getCurrentPosition` and `watchPosition` return the emulated position asynchronously. `watchPosition` reports once.
+- **Offline:** `navigator.onLine` returns false, `fetch` rejects, `XMLHttpRequest.send` throws, `navigator.sendBeacon` returns false, and the `offline`/`online` event fires. Navigations, images, iframes and other requests the browser makes itself are not blocked.
+
+## Color scheme
+
+```kotlin
+public suspend fun emulateMedia(colorScheme: ColorScheme?)
+```
+
+`ColorScheme` is `Light`, `Dark` or `NoPreference`. `null` removes the override.
+
+Playwright's `page.emulateMedia` also takes `media`, `reducedMotion` and `forcedColors`. KMPwright only takes `colorScheme`.
+
+On iOS, KMPwright sets `overrideUserInterfaceStyle` and then waits up to a short timeout for `matchMedia` to confirm the change. If it isn't confirmed (for example, the web view isn't in a window), it undoes the native override and uses the JavaScript fallback.
+
+## Geolocation
+
+```kotlin
+public suspend fun setGeolocation(geolocation: Geolocation?)
+public data class Geolocation(val latitude: Double, val longitude: Double, val accuracy: Double = 0.0)
+```
+
+- Latitude must be in -90..90 and longitude in -180..180. Accuracy must be finite and at least 0. Otherwise it throws `IllegalArgumentException`.
+- `null` removes the override.
+- JVM: KMPwright also grants the `geolocation` permission to the page's browser context, like Playwright's `permissions: ["geolocation"]`. The permission stays granted after you reset.
+- Android and iOS: only the JavaScript API is patched. Native location permission prompts are not affected.
+
+## Offline and network conditions
+
+```kotlin
+page.setOffline(true)
+
+page.emulateNetworkConditions(NetworkConditions.Slow3G)            // JVM only
+page.emulateNetworkConditions(NetworkConditions(latencyMs = 400))  // JVM only
+page.emulateNetworkConditions(NetworkConditions.Offline)           // all backends
+page.emulateNetworkConditions(null)                                 // remove throttling
+```
+
+<TypeTable
+  type={{
+    offline: { type: 'Boolean', description: 'Every request fails.', default: 'false' },
+    latencyMs: { type: 'Long', description: 'Added round-trip time in milliseconds.', default: '0' },
+    downloadThroughput: { type: 'Long', description: 'Bytes per second. 0 means unthrottled.', default: '0' },
+    uploadThroughput: { type: 'Long', description: 'Bytes per second. 0 means unthrottled.', default: '0' },
+  }}
+/>
+
+| Preset | Latency | Download | Upload |
+|---|---|---|---|
+| `NetworkConditions.Slow3G` | 100 ms | 750 kbit/s (93,750 B/s) | 250 kbit/s (31,250 B/s) |
+| `NetworkConditions.Fast3G` | 56 ms | 1.6 Mbit/s (200,000 B/s) | 750 kbit/s (93,750 B/s) |
+| `NetworkConditions.Offline` | | offline | |
+
+- Negative values throw `IllegalArgumentException`.
+- On Android and iOS, any non-zero latency or throughput throws `UnsupportedOperationException`. Only `offline` is emulated there.
+- `setOffline(x)` and `emulateNetworkConditions(...)` set the same state. The last call wins.
+- Playwright has `context.setOffline()` but no throttling API. KMPwright's `emulateNetworkConditions` matches CDP's `Network.emulateNetworkConditions`.
+
+## Viewport and device scale factor
+
+```kotlin
+page.setViewportSize(1280, 800)        // CSS pixels
+val size: ViewportSize? = page.viewportSize()
+page.setDeviceScaleFactor(2.0)         // JVM only
+```
+
+- `setViewportSize(width, height)` requires positive values.
+- `viewportSize()` is not `suspend`. It returns the current size in CSS pixels. Android converts device pixels with the display density. iOS reports the web view's bounds. JVM reports the emulated size or, without an override, the last size it observed.
+- `setDeviceScaleFactor(scale)` requires a finite positive value. Android and iOS throw `UnsupportedOperationException`, because the host display sets the scale there.
+- On Android and iOS, the WebView is a native view. If it's laid out inside your UI, your layout may resize it again.
+
+`KmpwrightConfig.viewport` and `KmpwrightConfig.userAgent` set the initial size and user agent for WebViews that KMPwright creates on Android and iOS. The iOS default frame is 1280×800. The JVM backend doesn't read these fields, so call `setViewportSize`/`setUserAgent` on the page there.
+
+## User agent
+
+```kotlin
+page.setUserAgent("Mozilla/5.0 (Linux; Android 14) MyTestAgent/1.0")
+```
+
+The user agent applies to requests made after the call.
+
+## Device presets
+
+```kotlin
+page.emulateDevice(Devices.iPhone15)            // JVM: viewport + UA + scale factor
+val pixel = Devices.all.getValue("Pixel 7")
+```
+
+`emulateDevice(device)` applies `device.viewport.width`/`height`, then `device.userAgent`, then `device.viewport.deviceScaleFactor`. It does not apply `isMobile`, `hasTouch` or `isLandscape`. On JVM the metrics override always uses `mobile = false`.
+
+<Callout type="warn">
+On Android and iOS, `emulateDevice` sets the viewport and user agent and then throws `UnsupportedOperationException` from the scale-factor step. To emulate a device there, call `setViewportSize(d.viewport.width, d.viewport.height)` and `setUserAgent(d.userAgent)` yourself.
+</Callout>
+
+| Property | Name (`Devices.all` key) | Viewport | Scale |
+|---|---|---|---|
+| `Devices.iPhone15` | iPhone 15 | 393×852 | 3.0 |
+| `Devices.iPhone15ProMax` | iPhone 15 Pro Max | 430×932 | 3.0 |
+| `Devices.iPhone14` | iPhone 14 | 390×844 | 3.0 |
+| `Devices.iPhoneSE` | iPhone SE | 375×667 | 2.0 |
+| `Devices.iPadAir` | iPad Air | 820×1180 | 2.0 |
+| `Devices.iPadPro11` | iPad Pro 11" | 834×1194 | 2.0 |
+| `Devices.iPadPro12_9` | iPad Pro 12.9" | 1024×1366 | 2.0 |
+| `Devices.Pixel7` | Pixel 7 | 412×915 | 2.625 |
+| `Devices.Pixel7Pro` | Pixel 7 Pro | 412×915 | 2.625 |
+| `Devices.GalaxyS23` | Galaxy S23 | 360×780 | 3.0 |
+| `Devices.MacBook14` | MacBook Pro 14" | 1512×982 | 2.0 |
+| `Devices.DesktopHD` | Desktop 1920x1080 | 1920×1080 | 1.0 |
+| `Devices.DesktopLaptop` | Desktop 1366x768 | 1366×768 | 1.0 |
+
+Phones and tablets are portrait with `isMobile = true` and `hasTouch = true`. iOS presets use Safari user agents; Android and desktop presets use Chrome 116 user agents.
+
+To add your own device, build a `DeviceDescriptor(name, viewport = Viewport(width, height, deviceScaleFactor, isMobile, hasTouch, isLandscape), userAgent)`. `Viewport` also has `DEFAULT` (1280×800), `MOBILE` (390×844, touch) and `TABLET` (768×1024, touch) presets.
+
+Playwright's `devices["iPhone 15"]` is a context option. KMPwright applies the preset to a page that already exists.
+
+## Policies
+
+Every emulation setter is checked against `ActionType.Emulation` in the page's [action policy](/docs/security). `viewportSize()` is not checked.
+
+## Related
+
+- [Capabilities](/docs/platforms/capabilities): `NetworkEmulation` and backend notes
+- [Network](/docs/guides/network): routing and the domain allowlist
+- [Page reference](/docs/reference/page)

@@ -19,8 +19,8 @@ class LocalStorageTest {
     @Test
     fun `setLocalStorage and getLocalStorage roundtrip`() {
         runBlocking {
-            page.setLocalStorage("key1", "value1")
-            val result = page.getLocalStorage("key1")
+            page.localStorage.set("key1", "value1")
+            val result = page.localStorage.get("key1")
             assertEquals("value1", result)
         }
     }
@@ -28,7 +28,7 @@ class LocalStorageTest {
     @Test
     fun `getLocalStorage returns null for missing key`() {
         runBlocking {
-            val result = page.getLocalStorage("nonexistent")
+            val result = page.localStorage.get("nonexistent")
             assertNull(result)
         }
     }
@@ -36,8 +36,8 @@ class LocalStorageTest {
     @Test
     fun `setLocalStorage handles keys and values with special characters`() {
         runBlocking {
-            page.setLocalStorage("key_with-dash.dot", "value123")
-            val result = page.getLocalStorage("key_with-dash.dot")
+            page.localStorage.set("key_with-dash.dot", "value123")
+            val result = page.localStorage.get("key_with-dash.dot")
             assertEquals("value123", result)
         }
     }
@@ -45,10 +45,10 @@ class LocalStorageTest {
     @Test
     fun `getAllLocalStorage returns all items`() {
         runBlocking {
-            page.setLocalStorage("a", "1")
-            page.setLocalStorage("b", "2")
-            page.setLocalStorage("c", "3")
-            val all = page.getAllLocalStorage()
+            page.localStorage.set("a", "1")
+            page.localStorage.set("b", "2")
+            page.localStorage.set("c", "3")
+            val all = page.localStorage.entries()
             assertEquals(3, all.size)
             assertEquals("1", all["a"])
             assertEquals("2", all["b"])
@@ -59,7 +59,7 @@ class LocalStorageTest {
     @Test
     fun `getAllLocalStorage returns empty map when empty`() {
         runBlocking {
-            val all = page.getAllLocalStorage()
+            val all = page.localStorage.entries()
             assertTrue(all.isEmpty())
         }
     }
@@ -67,30 +67,30 @@ class LocalStorageTest {
     @Test
     fun `removeLocalStorage removes item`() {
         runBlocking {
-            page.setLocalStorage("toRemove", "bye")
-            assertEquals("bye", page.getLocalStorage("toRemove"))
-            page.removeLocalStorage("toRemove")
-            assertNull(page.getLocalStorage("toRemove"))
+            page.localStorage.set("toRemove", "bye")
+            assertEquals("bye", page.localStorage.get("toRemove"))
+            page.localStorage.remove("toRemove")
+            assertNull(page.localStorage.get("toRemove"))
         }
     }
 
     @Test
     fun `clearLocalStorage removes all items`() {
         runBlocking {
-            page.setLocalStorage("x", "1")
-            page.setLocalStorage("y", "2")
-            page.clearLocalStorage()
-            assertNull(page.getLocalStorage("x"))
-            assertNull(page.getLocalStorage("y"))
-            assertTrue(page.getAllLocalStorage().isEmpty())
+            page.localStorage.set("x", "1")
+            page.localStorage.set("y", "2")
+            page.localStorage.clear()
+            assertNull(page.localStorage.get("x"))
+            assertNull(page.localStorage.get("y"))
+            assertTrue(page.localStorage.entries().isEmpty())
         }
     }
 
     @Test
     fun `localStorage handles empty string value`() {
         runBlocking {
-            page.setLocalStorage("empty", "")
-            assertEquals("", page.getLocalStorage("empty"))
+            page.localStorage.set("empty", "")
+            assertEquals("", page.localStorage.get("empty"))
         }
     }
 
@@ -106,7 +106,7 @@ class LocalStorageTest {
                 override suspend fun evaluateJavaScriptAsync(script: String): String? = null
             }
 
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
     }
@@ -143,18 +143,14 @@ class LocalStorageTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
         override fun removeRouteHandler(urlPattern: String) {}
         override fun removeAllRouteHandlers() {}
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
         override fun setCookie(cookie: Cookie) {}
         override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
         override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
         override fun deleteCookie(name: String, domain: String) {}
         override fun deleteAllCookies() {}
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
 
         fun executeLocalStorageJs(script: String): String? {
             val setItemRegex = Regex("""localStorage\.setItem\('([^']*)',\s*'([^']*)'\)""")

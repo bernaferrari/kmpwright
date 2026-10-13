@@ -7,7 +7,7 @@ import kotlinx.cinterop.ExperimentalForeignApi
 
 internal const val APPLE_REFERENCE_TO_UNIX_EPOCH_SECONDS = 978307200.0
 
-actual fun currentTimeMillis(): Long {
+public actual fun currentTimeMillis(): Long {
     val date = NSDate()
     return ((date.timeIntervalSinceReferenceDate + APPLE_REFERENCE_TO_UNIX_EPOCH_SECONDS) * 1000).toLong()
 }
@@ -16,3 +16,5 @@ actual fun currentTimeMillis(): Long {
 internal actual fun secureRandomBytes(size: Int): ByteArray =
     KmpwrightSnapshot.randomDataOfLength(size.toULong())?.toByteArrayPinned()
         ?: throw KmpwrightException("Unable to obtain secure random bytes")
+
+internal actual fun controlOrMetaModifier(): String = KeyboardModifiers.META

@@ -1,0 +1,18 @@
+{
+  "title": "Guides",
+  "pages": [
+    "locators",
+    "actions",
+    "assertions",
+    "navigation",
+    "screenshots",
+    "network",
+    "storage",
+    "dialogs-and-frames",
+    "emulation",
+    "accessibility",
+    "reading",
+    "recording",
+    "compose"
+  ]
+}

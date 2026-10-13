@@ -19,14 +19,14 @@ import kotlinx.serialization.json.jsonPrimitive
  * // --- END_AGENT_BROWSER_PAGE_CONTENT nonce=a1b2c3d4... ---
  * ```
  */
-class ContentBoundary private constructor(
-    val nonce: String,
-    val origin: String
+public class ContentBoundary private constructor(
+    public val nonce: String,
+    public val origin: String
 ) {
     /**
      * Wraps content in boundary markers.
      */
-    fun wrap(content: String): String {
+    public fun wrap(content: String): String {
         return buildString {
             appendLine("--- AGENT_BROWSER_PAGE_CONTENT nonce=$nonce origin=$origin ---")
             appendLine(content)
@@ -37,7 +37,7 @@ class ContentBoundary private constructor(
     /**
      * Wraps content for a specific element selector.
      */
-    fun wrapWithSelector(selector: String, content: String): String {
+    public fun wrapWithSelector(selector: String, content: String): String {
         return buildString {
             appendLine("--- AGENT_BROWSER_PAGE_CONTENT nonce=$nonce origin=$origin element=$selector ---")
             appendLine(content)
@@ -48,7 +48,7 @@ class ContentBoundary private constructor(
     /**
      * Checks whether a string is bounded by this boundary.
      */
-    fun isBounded(text: String): Boolean {
+    public fun isBounded(text: String): Boolean {
         val startMarker = "--- AGENT_BROWSER_PAGE_CONTENT nonce=$nonce "
         val endMarker = "--- END_AGENT_BROWSER_PAGE_CONTENT nonce=$nonce ---"
         return text.contains(startMarker) && text.contains(endMarker)
@@ -57,7 +57,7 @@ class ContentBoundary private constructor(
     /**
      * Extracts the content between boundary markers.
      */
-    fun unwrap(text: String): String? {
+    public fun unwrap(text: String): String? {
         val startMarker = "--- AGENT_BROWSER_PAGE_CONTENT nonce=$nonce "
         val startIndex = text.indexOf(startMarker)
         if (startIndex < 0) return null
@@ -68,13 +68,14 @@ class ContentBoundary private constructor(
         return text.substring(contentStart, endIndex).trimEnd()
     }
 
-    companion object {
+    /** Creates boundaries with fresh nonces. */
+    public companion object {
         private val hexChars = "0123456789abcdef"
 
         /**
          * Creates a new ContentBoundary with a cryptographically random nonce.
          */
-        fun create(origin: String): ContentBoundary {
+        public fun create(origin: String): ContentBoundary {
             val bytes = secureRandomBytes(16)
             val nonce = buildString(bytes.size * 2) {
                 bytes.forEach { byte ->

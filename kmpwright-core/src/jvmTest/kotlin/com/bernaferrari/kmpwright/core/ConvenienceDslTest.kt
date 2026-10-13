@@ -9,6 +9,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -45,63 +47,71 @@ class ConvenienceDslTest {
     @Test
     fun `click delegates to locator`() = testBlocking {
         page.click("button.submit")
-        assertTrue(controller.executedScripts.any { it.contains("el.click") })
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'click'") })
     }
 
     @Test
     fun `fill delegates to locator`() = testBlocking {
         page.fill("input.email", "user@test.com")
-        assertTrue(controller.executedScripts.any { it.contains("el.value") && it.contains("user@test.com") })
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'fill'") && it.contains("user@test.com") })
     }
 
     @Test
     fun `type delegates to locator`() = testBlocking {
         page.type("input.name", "abc")
-        assertTrue(controller.executedScripts.any { it.contains("el.value") })
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'type'") })
     }
 
     @Test
     fun `press delegates to locator`() = testBlocking {
         page.press("input", "Enter")
-        assertTrue(controller.executedScripts.any { it.contains("KeyboardEvent") })
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'press'") && it.contains("\"key\":\"Enter\"") })
     }
 
     @Test
     fun `hover delegates to locator`() = testBlocking {
         page.hover("button")
-        assertTrue(controller.executedScripts.any { it.contains("mouseover") })
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'hover'") })
     }
 
     @Test
     fun `focus delegates to locator`() = testBlocking {
         page.focus("input")
-        assertTrue(controller.executedScripts.any { it.contains("el.focus") })
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'focus'") })
     }
 
     @Test
     fun `check delegates to locator`() = testBlocking {
-        controller.evalHandler = { "false" }
+        var reads = 0
+        controller.evalHandler = { script -> if (script.contains("H.checkedState")) (if (reads++ == 0) "false" else "true") else null }
         page.check("input[type=checkbox]")
-        assertTrue(controller.executedScripts.any { it.contains("el.checked") })
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'click'") })
     }
 
     @Test
     fun `uncheck delegates to locator`() = testBlocking {
-        controller.evalHandler = { "true" }
+        var reads = 0
+        controller.evalHandler = { script ->
+            when {
+                script.contains("H.checkedState") -> if (reads++ == 0) "true" else "false"
+                script.contains("'radio'") -> "false"
+                else -> null
+            }
+        }
         page.uncheck("input[type=checkbox]")
-        assertTrue(controller.executedScripts.size > 0)
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'click'") })
     }
 
     @Test
     fun `selectOption delegates to locator`() = testBlocking {
         page.selectOption("select", "option1")
-        assertTrue(controller.executedScripts.any { it.contains("var all = Array.from(el.options)") })
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'select'") && it.contains("option1") })
     }
 
     @Test
     fun `text delegates to textContent`() = testBlocking {
         controller.evalHandler = { "Hello World" }
-        val result = page.text("div.msg")
+        val result = page.textContent("div.msg")
         assertEquals("Hello World", result)
     }
 
@@ -115,21 +125,21 @@ class ConvenienceDslTest {
     @Test
     fun `html delegates to locator innerHTML`() = testBlocking {
         controller.evalHandler = { "<span>hi</span>" }
-        val result = page.html("div")
+        val result = page.innerHTML("div")
         assertEquals("<span>hi</span>", result)
     }
 
     @Test
     fun `attr delegates to locator getAttribute`() = testBlocking {
         controller.evalHandler = { "value123" }
-        val result = page.attr("input", "data-id")
+        val result = page.getAttribute("input", "data-id")
         assertEquals("value123", result)
     }
 
     @Test
     fun `value delegates to locator inputValue`() = testBlocking {
         controller.evalHandler = { "typed text" }
-        val result = page.value("input")
+        val result = page.inputValue("input")
         assertEquals("typed text", result)
     }
 
@@ -160,67 +170,61 @@ class ConvenienceDslTest {
     @Test
     fun `waitFor delegates to locator`() = testBlocking {
         controller.evalHandler = { "true" }
-        page.waitFor("button")
+        page.waitForSelector("button")
         assertTrue(controller.executedScripts.isNotEmpty())
     }
 
-    // --- Feature 4: find() dispatch ---
+    // --- Feature 4: locator() accepts refs and selectors ---
 
     @Test
-    fun `find with @e ref delegates to locatorByRef`() = testBlocking {
+    fun `locator with @e ref keeps the ref`() = testBlocking {
         page.currentSnapshotRefMap = mapOf(
             "@e1" to RefEntry("@e1", "button", "Submit", "#submit-btn")
         )
-        val locator = page.find("@e1") as TestLocator
-        assertEquals("ref=@e1", locator.selectorStr)
+        val locator = page.locator("@e1") as TestLocator
+        assertEquals("@e1", locator.selectorStr)
     }
 
     @Test
-    fun `find with plain e ref delegates to locatorByRef`() = testBlocking {
+    fun `locator with plain e ref keeps the ref`() = testBlocking {
         page.currentSnapshotRefMap = mapOf(
             "@e3" to RefEntry("@e3", "link", "Home", "a[href='/']")
         )
-        val locator = page.find("e3") as TestLocator
-        assertEquals("ref=@e3", locator.selectorStr)
+        val locator = page.locator("e3") as TestLocator
+        assertEquals("e3", locator.selectorStr)
     }
 
     @Test
-    fun `find with ref= prefix delegates to locatorByRef`() = testBlocking {
+    fun `locator with ref= prefix keeps the ref`() = testBlocking {
         page.currentSnapshotRefMap = mapOf(
             "@e2" to RefEntry("@e2", "input", "Email", "input[name=email]")
         )
-        val locator = page.find("ref=e2") as TestLocator
-        assertEquals("ref=@e2", locator.selectorStr)
-    }
-
-    @Test(expected = KmpwrightException::class)
-    fun `find with @e ref but empty snapshot throws`() = testBlocking {
-        page.currentSnapshotRefMap = emptyMap()
-        page.find("@e1")
+        val locator = page.locator("ref=e2") as TestLocator
+        assertEquals("ref=e2", locator.selectorStr)
     }
 
     @Test
-    fun `find with CSS selector delegates to locator`() = testBlocking {
-        val locator = page.find("button.submit") as TestLocator
+    fun `locator with CSS selector delegates to locator`() = testBlocking {
+        val locator = page.locator("button.submit") as TestLocator
         assertEquals("button.submit", locator.selectorStr)
     }
 
     @Test
-    fun `find with role selector delegates to locator`() = testBlocking {
-        val locator = page.find("role=button") as TestLocator
+    fun `locator with role selector delegates to locator`() = testBlocking {
+        val locator = page.locator("role=button") as TestLocator
         assertEquals("role=button", locator.selectorStr)
     }
 
     @Test
-    fun `find with text selector delegates to locator`() = testBlocking {
-        val locator = page.find("text=Hello") as TestLocator
+    fun `locator with text selector delegates to locator`() = testBlocking {
+        val locator = page.locator("text=Hello") as TestLocator
         assertEquals("text=Hello", locator.selectorStr)
     }
 
     @Test
-    fun `find returns locator for chaining`() = testBlocking {
-        page.find("button").click()
-        assertTrue(controller.executedScripts.any { it.contains("el.click") })
+    fun `locator returns locator for chaining`() = testBlocking {
+        page.locator("button").click()
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'click'") })
     }
 
     // --- Feature 5: TestPage + MockWebViewController ---
@@ -279,75 +283,30 @@ class ConvenienceDslTest {
 
     // --- Feature 1: DSL entry points (Page.on only, Browser.use needs real Browser) ---
 
-    @Test
-    fun `Page on navigates then runs block`() = testBlocking {
-        page.on("https://example.com") {
-            assertEquals("https://example.com", url.value)
-        }
-    }
-
-    @Test
-    fun `Page on runs convenience methods in scope`() = testBlocking {
-        page.on("https://example.com") {
-            click("button")
-            fill("input", "test")
-            assertEquals("https://example.com", url.value)
-        }
-    }
-
     // --- Feature A: Semantic find() overloads ---
 
     @Test
-    fun `findByText creates text selector locator`() = testBlocking {
-        val loc = page.findByText("Hello") as TestLocator
+    fun `getByText creates text selector locator`() = testBlocking {
+        val loc = page.getByText("Hello") as TestLocator
         assertEquals("text=Hello", loc.selectorStr)
     }
 
     @Test
-    fun `findByRole creates role selector locator`() = testBlocking {
-        val loc = page.findByRole("button") as TestLocator
+    fun `getByRole creates role selector locator`() = testBlocking {
+        val loc = page.getByRole("button") as TestLocator
         assertEquals("role=button", loc.selectorStr)
     }
 
     @Test
-    fun `findByLabel creates label selector locator`() = testBlocking {
-        val loc = page.findByLabel("Email") as TestLocator
+    fun `getByLabel creates label selector locator`() = testBlocking {
+        val loc = page.getByLabel("Email") as TestLocator
         assertEquals("label=Email", loc.selectorStr)
     }
 
     @Test
-    fun `findByPlaceholder creates CSS attribute selector`() = testBlocking {
-        val loc = page.findByPlaceholder("Search") as TestLocator
-        assertEquals("[placeholder=\"Search\"]", loc.selectorStr)
-    }
-
-    @Test
-    fun `semantic find with text param creates text locator`() = testBlocking {
-        val loc = page.find(text = "Hello") as TestLocator
-        assertEquals("text=Hello", loc.selectorStr)
-    }
-
-    @Test
-    fun `semantic find with role param creates role locator`() = testBlocking {
-        val loc = page.find(role = "button") as TestLocator
-        assertEquals("role=button", loc.selectorStr)
-    }
-
-    @Test
-    fun `semantic find with label param creates label locator`() = testBlocking {
-        val loc = page.find(label = "Email") as TestLocator
-        assertEquals("label=Email", loc.selectorStr)
-    }
-
-    @Test
-    fun `semantic find with placeholder param creates CSS locator`() = testBlocking {
-        val loc = page.find(placeholder = "Search") as TestLocator
-        assertEquals("[placeholder=\"Search\"]", loc.selectorStr)
-    }
-
-    @Test(expected = KmpwrightException::class)
-    fun `semantic find with no params throws`() = testBlocking {
-        page.find()
+    fun `getByPlaceholder creates CSS attribute selector`() = testBlocking {
+        val loc = page.getByPlaceholder("Search") as TestLocator
+        assertEquals("placeholder=Search", loc.selectorStr)
     }
 
     // --- Feature C: snapshot() convenience ---
@@ -359,68 +318,19 @@ class ConvenienceDslTest {
             RefEntry("@e3", "textbox", "Email", "input.email"),
             RefEntry("@e1", "button", "Submit", "#submit-btn"),
             RefEntry("@e2", "link", "Home", "a[href='/']")
-        ).sortedBy { it.refId }
-        assertEquals("@e1", refs[0].refId)
-        assertEquals("@e2", refs[1].refId)
-        assertEquals("@e3", refs[2].refId)
-    }
-
-    @Test
-    fun `byName finds exact match case-insensitive`() {
-        val refs = listOf(
-            RefEntry("@e1", "button", "Submit", "#submit"),
-            RefEntry("@e2", "link", "Home", "a.home"),
-            RefEntry("@e3", "textbox", "Email", "input.email")
-        )
-        val found = refs.byName("submit")
-        assertEquals("@e1", found?.refId)
-    }
-
-    @Test
-    fun `byName returns null when not found`() {
-        val refs = listOf(
-            RefEntry("@e1", "button", "Submit", "#submit")
-        )
-        assertNull(refs.byName("Cancel"))
-    }
-
-    @Test
-    fun `byNameContains finds partial match case-insensitive`() {
-        val refs = listOf(
-            RefEntry("@e1", "button", "Submit Form", "#submit"),
-            RefEntry("@e2", "button", "Cancel", "#cancel")
-        )
-        val found = refs.byNameContains("submit")
-        assertEquals("@e1", found?.refId)
-    }
-
-    @Test
-    fun `byRole filters by role case-insensitive`() {
-        val refs = listOf(
-            RefEntry("@e1", "button", "Submit", "#submit"),
-            RefEntry("@e2", "button", "Cancel", "#cancel"),
-            RefEntry("@e3", "link", "Home", "a.home")
-        )
-        val buttons = refs.byRole("button")
-        assertEquals(2, buttons.size)
-        assertTrue(buttons.all { it.role.equals("button", ignoreCase = true) })
-    }
-
-    @Test
-    fun `byRole returns empty list when no match`() {
-        val refs = listOf(
-            RefEntry("@e1", "link", "Home", "a.home")
-        )
-        assertTrue(refs.byRole("button").isEmpty())
+        ).sortedBy { it.ref }
+        assertEquals("@e1", refs[0].ref)
+        assertEquals("@e2", refs[1].ref)
+        assertEquals("@e3", refs[2].ref)
     }
 
     // --- Feature D: Auto-wait ---
 
     @Test
-    fun `click calls waitFor Attached before acting`() = testBlocking {
+    fun `click waits for actionability before acting`() = testBlocking {
         controller.evalHandler = { "true" }
         page.click("button.submit")
-        assertTrue(controller.executedScripts.any { it.contains("waitForCondition") || it.contains("Attached") || it.contains("el.click") })
+        assertTrue(controller.executedScripts.any { it.contains("H.probe(el,") && it.contains("H.perform(el, 'click'") })
     }
 
     @Test
@@ -430,48 +340,30 @@ class ConvenienceDslTest {
         assertTrue(controller.executedScripts.size > 0)
     }
 
-    // --- findByAlt, findByTestId ---
+    // --- getByAltText, getByTestId ---
 
     @Test
-    fun `findByAlt creates alt selector locator`() = testBlocking {
-        val loc = page.findByAlt("Logo") as TestLocator
+    fun `getByAlt creates alt selector locator`() = testBlocking {
+        val loc = page.getByAltText("Logo") as TestLocator
         assertEquals("alt=Logo", loc.selectorStr)
     }
 
     @Test
-    fun `findByTestId creates testid selector locator`() = testBlocking {
-        val loc = page.findByTestId("submit-btn") as TestLocator
+    fun `getByTestId creates testid selector locator`() = testBlocking {
+        val loc = page.getByTestId("submit-btn") as TestLocator
         assertEquals("testid=submit-btn", loc.selectorStr)
     }
 
     @Test
-    fun `findByText with exact=true creates exact selector`() = testBlocking {
-        val loc = page.findByText("Submit", exact = true) as TestLocator
-        assertEquals("exact_text=Submit", loc.selectorStr)
+    fun `getByText with exact=true creates exact selector`() = testBlocking {
+        val loc = page.getByText("Submit", exact = true) as TestLocator
+        assertEquals("text=\"Submit\"", loc.selectorStr)
     }
 
     @Test
-    fun `findByText with exact=false creates text selector`() = testBlocking {
-        val loc = page.findByText("Submit") as TestLocator
+    fun `getByText with exact=false creates text selector`() = testBlocking {
+        val loc = page.getByText("Submit") as TestLocator
         assertEquals("text=Submit", loc.selectorStr)
-    }
-
-    @Test
-    fun `semantic find with alt param creates alt locator`() = testBlocking {
-        val loc = page.find(alt = "Logo") as TestLocator
-        assertEquals("alt=Logo", loc.selectorStr)
-    }
-
-    @Test
-    fun `semantic find with testId param creates testid locator`() = testBlocking {
-        val loc = page.find(testId = "submit-btn") as TestLocator
-        assertEquals("testid=submit-btn", loc.selectorStr)
-    }
-
-    @Test
-    fun `semantic find with text and exact=true`() = testBlocking {
-        val loc = page.find(text = "Submit", exact = true) as TestLocator
-        assertEquals("exact_text=Submit", loc.selectorStr)
     }
 
     // --- clear() convenience ---
@@ -480,76 +372,48 @@ class ConvenienceDslTest {
     fun `clear delegates to fill with empty string`() = testBlocking {
         controller.evalHandler = { "true" }
         page.clear("input.email")
-        assertTrue(controller.executedScripts.any { it.contains("el.value") })
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'fill'") && it.contains("\"value\":\"\"") })
     }
 
-    // --- upload() convenience ---
+    // --- setInputFiles() convenience ---
 
     @Test(expected = KmpwrightException::class)
     fun `upload delegates to setInputFiles`() = testBlocking {
         // setInputFiles throws in TestPage (mobile WebView limitation)
-        page.upload("input[type=file]", listOf("/path/to/file.pdf"))
+        page.setInputFiles("input[type=file]", listOf("/path/to/file.pdf"))
     }
 
-    // --- SelectorParser: alt= and testid= ---
+
+
+    // --- SnapshotOptions: scopeSelector ---
 
     @Test
-    fun `SelectorParser parses alt selector`() {
-        val parsed = SelectorParser.parse("alt=Logo")
-        assertEquals(SelectorType.CSS, parsed.type)
-        assertTrue(parsed.css.contains("img[alt="))
-    }
-
-    @Test
-    fun `SelectorParser parses testid selector`() {
-        val parsed = SelectorParser.parse("testid=submit-btn")
-        assertEquals(SelectorType.CSS, parsed.type)
-        assertTrue(parsed.css.contains("data-testid"))
-    }
-
-    // --- A11ySnapshotOptions: scopeSelector ---
-
-    @Test
-    fun `A11ySnapshotOptions defaults are correct`() {
-        val opts = A11ySnapshotOptions()
-        assertNull(opts.scopeSelector)
-        assertFalse(opts.cursorInteractive)
+    fun `SnapshotOptions defaults are correct`() {
+        val opts = SnapshotOptions()
+        assertNull(opts.selector)
+        assertFalse(opts.cursor)
     }
 
     @Test
-    fun `A11ySnapshotOptions with scopeSelector`() {
-        val opts = A11ySnapshotOptions(scopeSelector = ".modal")
-        assertEquals(".modal", opts.scopeSelector)
+    fun `SnapshotOptions with scopeSelector`() {
+        val opts = SnapshotOptions(selector = ".modal")
+        assertEquals(".modal", opts.selector)
     }
 
     @Test
-    fun `A11ySnapshotOptions with cursorInteractive`() {
-        val opts = A11ySnapshotOptions(cursorInteractive = true)
-        assertTrue(opts.cursorInteractive)
+    fun `SnapshotOptions with cursorInteractive`() {
+        val opts = SnapshotOptions(cursor = true)
+        assertTrue(opts.cursor)
     }
 
     // --- findByTitle ---
 
     @Test
-    fun `findByTitle creates title selector locator`() = testBlocking {
-        val loc = page.findByTitle("Close") as TestLocator
+    fun `getByTitle creates title selector locator`() = testBlocking {
+        val loc = page.getByTitle("Close") as TestLocator
         assertEquals("title=Close", loc.selectorStr)
     }
 
-    @Test
-    fun `semantic find with title param creates title locator`() = testBlocking {
-        val loc = page.find(title = "Close") as TestLocator
-        assertEquals("title=Close", loc.selectorStr)
-    }
-
-    // --- SelectorParser: title= ---
-
-    @Test
-    fun `SelectorParser parses title selector`() {
-        val parsed = SelectorParser.parse("title=Close")
-        assertEquals(SelectorType.CSS, parsed.type)
-        assertTrue(parsed.css.contains("[title="))
-    }
 
     // --- Tab convenience ---
 
@@ -584,17 +448,17 @@ class ConvenienceDslTest {
 
     @Test
     fun `requests collects request events`() {
-        val event = RequestEvent("https://api.example.com/data", "GET", emptyMap(), 0)
+        val event = Request("https://api.example.com/data", "GET", emptyMap())
         assertEquals("https://api.example.com/data", event.url)
         assertEquals("GET", event.method)
     }
 
     @Test
-    fun `RequestEvent url contains works for filtering`() {
+    fun `Request url contains works for filtering`() {
         val events = listOf(
-            RequestEvent("https://api.example.com/users", "GET", emptyMap(), 0),
-            RequestEvent("https://cdn.example.com/logo.png", "GET", emptyMap(), 0),
-            RequestEvent("https://api.example.com/posts", "GET", emptyMap(), 0)
+            Request("https://api.example.com/users", "GET", emptyMap()),
+            Request("https://cdn.example.com/logo.png", "GET", emptyMap()),
+            Request("https://api.example.com/posts", "GET", emptyMap())
         )
         val filtered = events.filter { it.url.contains("/api", ignoreCase = true) }
         assertEquals(2, filtered.size)
@@ -644,7 +508,7 @@ class ConvenienceDslTest {
         val p = TestPage(ctrl)
         p.highlight("#myButton")
         assertNotNull(highlightJs)
-        assertTrue(highlightJs!!.contains("__kmpwright_resolveAll"))
+        assertTrue(highlightJs!!.contains("H.resolveAll"))
         assertTrue(highlightJs!!.contains("data-kmpwright-highlight"))
         assertTrue(highlightJs!!.contains("fixed"))
     }
@@ -687,38 +551,17 @@ class ConvenienceDslTest {
         handler.close()
     }
 
-    // --- Network profile convenience ---
+    // --- Network condition presets ---
 
     @Test
-    fun `NetworkProfile presets have correct values`() {
-        assertEquals(0L, NetworkProfile.None.latency)
-        assertEquals(0L, NetworkProfile.None.downloadKbps)
-        assertEquals(100L, NetworkProfile.Slow3G.latency)
-        assertEquals(750_000 / 8, NetworkProfile.Slow3G.downloadKbps)
-        assertEquals(56L, NetworkProfile.Fast3G.latency)
-        assertEquals(1_600_000 / 8, NetworkProfile.Fast3G.downloadKbps)
-        assertEquals(0L, NetworkProfile.Offline.latency)
-    }
-
-    @Test
-    fun `setNetworkProfile calls emulateNetwork with profile values`() = testBlocking {
-        var offlineCaptured: Boolean? = null
-        var latencyCaptured: Long? = null
-        var downloadCaptured: Long? = null
-        val ctrl = MockWebViewController().apply { waitResultOverride = "true" }
-        // Test by checking that setNetworkProfile invokes emulateNetwork via BasePage
-        // We verify the profile values are passed through correctly
-        val profile = NetworkProfile.Slow3G
-        assertEquals(false, profile == NetworkProfile.Offline)
-        assertEquals(100L, profile.latency)
-        assertEquals(750_000 / 8, profile.downloadKbps)
-    }
-
-    @Test
-    fun `setNetworkProfile Offline passes offline=true`() = testBlocking {
-        val profile = NetworkProfile.Offline
-        assertEquals(true, profile == NetworkProfile.Offline)
-        assertEquals(0L, profile.latency)
+    fun `NetworkConditions presets have correct values`() {
+        assertEquals(0L, NetworkConditions().latencyMs)
+        assertEquals(0L, NetworkConditions().downloadThroughput)
+        assertEquals(100L, NetworkConditions.Slow3G.latencyMs)
+        assertEquals(750_000L / 8, NetworkConditions.Slow3G.downloadThroughput)
+        assertEquals(56L, NetworkConditions.Fast3G.latencyMs)
+        assertEquals(1_600_000L / 8, NetworkConditions.Fast3G.downloadThroughput)
+        assertTrue(NetworkConditions.Offline.offline)
     }
 
     // --- Tracing / Profiling defaults ---
@@ -726,10 +569,10 @@ class ConvenienceDslTest {
     @Test
     fun `unsupported backend tracing and profiling fail explicitly`() = testBlocking {
         val p = TestPage(MockWebViewController().apply { waitResultOverride = "true" })
-        kotlin.test.assertFailsWith<UnsupportedOperationException> { p.startTracing() }
-        kotlin.test.assertFailsWith<UnsupportedOperationException> { p.stopTracing() }
-        kotlin.test.assertFailsWith<UnsupportedOperationException> { p.startProfiler() }
-        kotlin.test.assertFailsWith<UnsupportedOperationException> { p.stopProfiler() }
+        kotlin.test.assertFailsWith<KmpwrightUnsupportedException> { p.tracing.start() }
+        kotlin.test.assertFailsWith<KmpwrightUnsupportedException> { p.tracing.stop() }
+        kotlin.test.assertFailsWith<KmpwrightUnsupportedException> { p.profiler.start() }
+        kotlin.test.assertFailsWith<KmpwrightUnsupportedException> { p.profiler.stop() }
     }
 
     @Test
@@ -855,24 +698,24 @@ class ConvenienceDslTest {
     // --- Persistent state files ---
 
     @Test
-    fun `saveStateToFile writes a valid JSON file`() = testBlocking {
+    fun `StorageState save writes a valid JSON file`() = testBlocking {
         val tmpDir = System.getProperty("java.io.tmpdir") + "/kmpwright-test-${System.currentTimeMillis()}"
         val page = TestPage(MockWebViewController().apply { waitResultOverride = "true" })
-        page.saveStateToFile("test-session", "$tmpDir/test-session.json")
+        page.storageState().save("$tmpDir/test-session.json", password = null)
         assertTrue(fileExists("$tmpDir/test-session.json"))
         val content = fileRead("$tmpDir/test-session.json")
         assertNotNull(content)
-        assertTrue(content!!.contains("test-session"))
+        assertTrue(content!!.contains("\"cookies\""))
         // Cleanup
         fileDelete("$tmpDir/test-session.json")
         fileDelete(tmpDir)
     }
 
     @Test
-    fun `saveStateToFile with encryption writes encrypted content`() = testBlocking {
+    fun `StorageState save with encryption writes encrypted content`() = testBlocking {
         val tmpDir = System.getProperty("java.io.tmpdir") + "/kmpwright-test-enc-${System.currentTimeMillis()}"
         val page = TestPage(MockWebViewController().apply { waitResultOverride = "true" })
-        page.saveStateToFile("enc-session", "$tmpDir/enc-session.json", encrypt = true, password = "test-password")
+        page.storageState().save("$tmpDir/enc-session.json", password = "test-password")
         val content = fileRead("$tmpDir/enc-session.json")
         assertNotNull(content)
         // Encrypted content should not contain the session name in plaintext JSON
@@ -883,19 +726,18 @@ class ConvenienceDslTest {
     }
 
     @Test
-    fun `loadStateFromFile round-trips with saved state`() = testBlocking {
+    fun `StorageState load round-trips with saved state`() = testBlocking {
         val tmpDir = System.getProperty("java.io.tmpdir") + "/kmpwright-test-rt-${System.currentTimeMillis()}"
         val ctrl = MockWebViewController().apply { waitResultOverride = "true" }
         ctrl.setCookie(Cookie("sid", "abc123", "example.com"))
         ctrl.setCookie(Cookie("lang", "en", "example.com"))
         val page = TestPage(ctrl)
-        page.saveStateToFile("rt-session", "$tmpDir/rt-session.json")
+        page.storageState().save("$tmpDir/rt-session.json", password = null)
 
         // Create a new page with empty cookies and load
         val ctrl2 = MockWebViewController().apply { waitResultOverride = "true" }
         val page2 = TestPage(ctrl2)
-        val loaded = page2.loadStateFromFile("rt-session", "$tmpDir/rt-session.json")
-        assertTrue(loaded)
+        page2.setStorageState(StorageState.load("$tmpDir/rt-session.json", password = null))
         assertEquals(2, ctrl2.cookies.size)
         assertEquals("abc123", ctrl2.cookies.find { it.name == "sid" }?.value)
         // Cleanup
@@ -904,15 +746,14 @@ class ConvenienceDslTest {
     }
 
     @Test
-    fun `loadStateFromFile rejects an encrypted state with the wrong password`() = testBlocking {
+    fun `StorageState load rejects an encrypted state with the wrong password`() = testBlocking {
         val tmpDir = System.getProperty("java.io.tmpdir") + "/kmpwright-test-wrong-password-${System.currentTimeMillis()}"
         val path = "$tmpDir/state.json"
-        TestPage(MockWebViewController().apply { waitResultOverride = "true" }).saveStateToFile("state", path, encrypt = true, password = "correct")
+        TestPage(MockWebViewController().apply { waitResultOverride = "true" }).storageState().save(path, password = "correct")
 
         val controller = MockWebViewController().apply { waitResultOverride = "true" }
         controller.cookies += Cookie("sentinel", "keep", "example.com")
-        val loaded = TestPage(controller).loadStateFromFile("state", path, password = "wrong")
-        assertFalse(loaded)
+        assertThrows(KmpwrightException::class.java) { runBlocking { TestPage(controller).setStorageState(StorageState.load(path, password = "wrong")) } }
         assertEquals(listOf("sentinel"), controller.cookies.map { it.name })
 
         fileDelete(path)
@@ -920,17 +761,16 @@ class ConvenienceDslTest {
     }
 
     @Test
-    fun `loadStateFromFile rejects tampered encrypted state without restoring cookies`() = testBlocking {
+    fun `StorageState load rejects tampered encrypted state without restoring cookies`() = testBlocking {
         val tmpDir = System.getProperty("java.io.tmpdir") + "/kmpwright-test-tampered-${System.currentTimeMillis()}"
         val path = "$tmpDir/state.json"
-        TestPage(MockWebViewController().apply { waitResultOverride = "true" }).saveStateToFile("state", path, encrypt = true, password = "correct")
+        TestPage(MockWebViewController().apply { waitResultOverride = "true" }).storageState().save(path, password = "correct")
         val encrypted = fileRead(path)!!
         fileWrite(path, encrypted.dropLast(1) + if (encrypted.last() == 'A') 'B' else 'A')
 
         val controller = MockWebViewController().apply { waitResultOverride = "true" }
         controller.cookies += Cookie("sentinel", "keep", "example.com")
-        val loaded = TestPage(controller).loadStateFromFile("state", path, password = "correct")
-        assertFalse(loaded)
+        assertThrows(KmpwrightException::class.java) { runBlocking { TestPage(controller).setStorageState(StorageState.load(path, password = "correct")) } }
         assertEquals(listOf("sentinel"), controller.cookies.map { it.name })
 
         fileDelete(path)
@@ -938,15 +778,14 @@ class ConvenienceDslTest {
     }
 
     @Test
-    fun `loadStateFromFile does not accept plaintext replacement when password is supplied`() = testBlocking {
+    fun `StorageState load does not accept plaintext replacement when password is supplied`() = testBlocking {
         val tmpDir = System.getProperty("java.io.tmpdir") + "/kmpwright-test-plaintext-replacement-${System.currentTimeMillis()}"
         val path = "$tmpDir/state.json"
-        TestPage(MockWebViewController().apply { waitResultOverride = "true" }).saveStateToFile("state", path)
+        TestPage(MockWebViewController().apply { waitResultOverride = "true" }).storageState().save(path, password = null)
 
         val controller = MockWebViewController().apply { waitResultOverride = "true" }
         controller.cookies += Cookie("sentinel", "keep", "example.com")
-        val loaded = TestPage(controller).loadStateFromFile("state", path, password = "supplied")
-        assertFalse(loaded)
+        assertThrows(KmpwrightException::class.java) { runBlocking { TestPage(controller).setStorageState(StorageState.load(path, password = "supplied")) } }
         assertEquals(listOf("sentinel"), controller.cookies.map { it.name })
 
         fileDelete(path)
@@ -954,44 +793,15 @@ class ConvenienceDslTest {
     }
 
     @Test
-    fun `loadStateFromFile loads unencrypted state only through explicit passwordless path`() = testBlocking {
+    fun `StorageState load loads unencrypted state only through explicit passwordless path`() = testBlocking {
         val tmpDir = System.getProperty("java.io.tmpdir") + "/kmpwright-test-explicit-plaintext-${System.currentTimeMillis()}"
         val path = "$tmpDir/state.json"
-        TestPage(MockWebViewController().apply { waitResultOverride = "true" }).saveStateToFile("state", path)
+        TestPage(MockWebViewController().apply { waitResultOverride = "true" }).storageState().save(path, password = null)
 
         val controller = MockWebViewController().apply { waitResultOverride = "true" }
-        val loaded = TestPage(controller).loadStateFromFile("state", path, password = null)
-        assertTrue(loaded)
+        TestPage(controller).setStorageState(StorageState.load(path, password = null))
 
         fileDelete(path)
-        fileDelete(tmpDir)
-    }
-
-    @Test
-    fun `listSavedStateFiles returns saved state names`() = testBlocking {
-        val tmpDir = System.getProperty("java.io.tmpdir") + "/kmpwright-test-list-${System.currentTimeMillis()}"
-        val page = TestPage(MockWebViewController().apply { waitResultOverride = "true" })
-        page.saveStateToFile("state-a", "$tmpDir/state-a.json")
-        page.saveStateToFile("state-b", "$tmpDir/state-b.json")
-        val names = page.listSavedStateFiles(tmpDir)
-        assertTrue(names.contains("state-a"))
-        assertTrue(names.contains("state-b"))
-        // Cleanup
-        fileDelete("$tmpDir/state-a.json")
-        fileDelete("$tmpDir/state-b.json")
-        fileDelete(tmpDir)
-    }
-
-    @Test
-    fun `deleteStateFile removes the file`() = testBlocking {
-        val tmpDir = System.getProperty("java.io.tmpdir") + "/kmpwright-test-del-${System.currentTimeMillis()}"
-        val page = TestPage(MockWebViewController().apply { waitResultOverride = "true" })
-        page.saveStateToFile("del-session", "$tmpDir/del-session.json")
-        assertTrue(fileExists("$tmpDir/del-session.json"))
-        val deleted = page.deleteStateFile("del-session", "$tmpDir/del-session.json")
-        assertTrue(deleted)
-        assertFalse(fileExists("$tmpDir/del-session.json"))
-        // Cleanup
         fileDelete(tmpDir)
     }
 
@@ -1121,33 +931,35 @@ class ConvenienceDslTest {
 
     // --- Auth profiles ---
 
-    @Test
-    fun `AuthManager save and load round-trips`() {
-        val tmpDir = System.getProperty("java.io.tmpdir") + "/kmpwright-test-auth-${System.currentTimeMillis()}"
-        val profile = AuthProfile(
-            name = "github",
-            url = "https://github.com/login",
-            username = "testuser",
-            password = "testpass"
-        )
-        // Write directly to temp dir to avoid polluting user's home
-        mkdirs(tmpDir)
-        val serialized = kotlinx.serialization.json.Json {
-            ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true
-        }.encodeToString(AuthProfile.serializer(), profile)
-        fileWrite("$tmpDir/github.json", serialized)
+    private fun <T> withAuthDirectory(block: suspend (String) -> T): T {
+        val dir = java.nio.file.Files.createTempDirectory("kmpwright-auth").toString()
+        AuthManager.directoryOverride = dir
+        try {
+            return runBlocking { block(dir) }
+        } finally {
+            AuthManager.directoryOverride = null
+            java.io.File(dir).deleteRecursively()
+        }
+    }
 
-        val content = fileRead("$tmpDir/github.json")
-        assertNotNull(content)
-        val loaded = kotlinx.serialization.json.Json {
-            ignoreUnknownKeys = true
-        }.decodeFromString<AuthProfile>(content!!)
+    @Test
+    fun `AuthManager save and load round-trips`() = withAuthDirectory { dir ->
+        val profile = AuthProfile(name = "github", url = "https://github.com/login", username = "testuser", password = "testpass")
+        AuthManager.save(profile, password = null)
+        assertTrue("null password writes plaintext explicitly", fileRead("$dir/github.json")!!.contains("testuser"))
+        val loaded = AuthManager.load("github", password = null)
         assertEquals("github", loaded.name)
         assertEquals("testuser", loaded.username)
         assertEquals("testpass", loaded.password)
-        // Cleanup
-        fileDelete("$tmpDir/github.json")
-        fileDelete(tmpDir)
+    }
+
+    @Test
+    fun `AuthManager load throws like StorageState load`() = withAuthDirectory {
+        AuthManager.save(AuthProfile("secure", "https://x", "admin", "s3cret"), password = "right")
+        kotlin.test.assertFailsWith<KmpwrightException> { AuthManager.load("missing", password = null) }
+        kotlin.test.assertFailsWith<KmpwrightException> { AuthManager.load("secure", password = "wrong") }
+        kotlin.test.assertFailsWith<KmpwrightException> { AuthManager.load("secure", password = null) }
+        assertEquals("s3cret", AuthManager.load("secure", password = "right").password)
     }
 
     @Test
@@ -1168,31 +980,12 @@ class ConvenienceDslTest {
     }
 
     @Test
-    fun `AuthManager encrypted save and load`() {
-        val tmpDir = System.getProperty("java.io.tmpdir") + "/kmpwright-test-authenc-${System.currentTimeMillis()}"
-        mkdirs(tmpDir)
-        val profile = AuthProfile(
-            name = "secure-site",
-            url = "https://secure.example.com",
-            username = "admin",
-            password = "s3cret"
-        )
-        val serialized = kotlinx.serialization.json.Json {
-            ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true
-        }.encodeToString(AuthProfile.serializer(), profile)
-        val encrypted = SessionManager.encrypt(serialized, "test-pass")
-        fileWrite("$tmpDir/secure-site.json", encrypted)
-
-        val raw = fileRead("$tmpDir/secure-site.json")!!
-        val decrypted = SessionManager.decrypt(raw, "test-pass")!!
-        val loaded = kotlinx.serialization.json.Json {
-            ignoreUnknownKeys = true
-        }.decodeFromString<AuthProfile>(decrypted)
+    fun `AuthManager encrypted save and load`() = withAuthDirectory { dir ->
+        AuthManager.save(AuthProfile("secure-site", "https://secure.example.com", "admin", "s3cret"), password = "test-pass")
+        assertFalse(fileRead("$dir/secure-site.json")!!.contains("s3cret"))
+        val loaded = AuthManager.load("secure-site", password = "test-pass")
         assertEquals("admin", loaded.username)
         assertEquals("s3cret", loaded.password)
-        // Cleanup
-        fileDelete("$tmpDir/secure-site.json")
-        fileDelete(tmpDir)
     }
 
     @Test
@@ -1227,14 +1020,6 @@ class ConvenienceDslTest {
     }
 
     // --- CSS escaping ---
-
-    @Test
-    fun `escapeCssString escapes special characters`() {
-        assertEquals("hello", escapeCssString("hello"))
-        assertEquals("foo\\\"bar", escapeCssString("foo\"bar"))
-        assertEquals("foo\\]", escapeCssString("foo]"))
-        assertEquals("foo\\\\bar", escapeCssString("foo\\bar"))
-    }
 
     @Test
     fun `sanitizeStateFileName strips path traversal`() {
@@ -1343,105 +1128,9 @@ class ConvenienceDslTest {
         assertTrue(filter.isAllowed("EXAMPLE.COM"))
     }
 
-    @Test
-    fun `DomainFilter injection script contains WebSocket override`() {
-        val filter = DomainFilter(setOf("example.com"))
-        val script = filter.injectionScript()
-        assertTrue(script.contains("WebSocket"))
-        assertTrue(script.contains("EventSource"))
-        assertTrue(script.contains("sendBeacon"))
-        assertTrue(script.contains("example.com"))
-        assertTrue(script.contains("SecurityError"))
-        assertTrue(script.contains("__kmpwright_domainFilter"))
-    }
-
-    @Test
-    fun `DomainFilter injection script contains fetch and XHR override`() {
-        val filter = DomainFilter(setOf("example.com"))
-        val script = filter.injectionScript()
-        assertTrue(script.contains("XMLHttpRequest"))
-        assertTrue(script.contains("__kmpwright_origFetch"))
-    }
-
-    @Test
-    fun `DomainFilter injection script with empty domains still works`() {
-        val filter = DomainFilter(emptySet())
-        val script = filter.injectionScript()
-        assertTrue(script.contains("__kmpwright_domainFilter"))
-        // Empty allowed list — function still checks but always returns true
-        assertTrue(script.contains("_isAllowed"))
-    }
-
-    @Test
-    fun `DomainFilter injection script prevents duplicate injection`() {
-        val filter = DomainFilter(setOf("example.com"))
-        val script = filter.injectionScript()
-        // Guard check at the top
-        assertTrue(script.contains("if (window.__kmpwright_domainFilter) return;"))
-    }
-
     // --- Stealth mode ---
 
-    @Test
-    fun `stealthJsSource hides navigator webdriver property`() {
-        val source = TestPage(MockWebViewController().apply { waitResultOverride = "true" }).stealthJsSource()
-        assertTrue(source.contains("navigator"))
-        assertTrue(source.contains("webdriver"))
-        assertTrue(source.contains("undefined"))
-    }
-
-    @Test
-    fun `stealthJsSource overrides navigator plugins`() {
-        val source = TestPage(MockWebViewController().apply { waitResultOverride = "true" }).stealthJsSource()
-        assertTrue(source.contains("plugins"))
-    }
-
-    @Test
-    fun `stealthJsSource overrides navigator languages`() {
-        val source = TestPage(MockWebViewController().apply { waitResultOverride = "true" }).stealthJsSource()
-        assertTrue(source.contains("languages"))
-        assertTrue(source.contains("en-US"))
-    }
-
-    @Test
-    fun `stealthJsSource sets chrome runtime`() {
-        val source = TestPage(MockWebViewController().apply { waitResultOverride = "true" }).stealthJsSource()
-        assertTrue(source.contains("chrome"))
-        assertTrue(source.contains("runtime"))
-    }
-
-    @Test
-    fun `stealthJsSource prevents duplicate injection`() {
-        val source = TestPage(MockWebViewController().apply { waitResultOverride = "true" }).stealthJsSource()
-        assertTrue(source.contains("__kmpwright_stealth"))
-        assertTrue(source.contains("if (window.__kmpwright_stealth) return;"))
-    }
-
-    @Test
-    fun `stealthJsSource patches permissions API`() {
-        val source = TestPage(MockWebViewController().apply { waitResultOverride = "true" }).stealthJsSource()
-        assertTrue(source.contains("permissions"))
-        assertTrue(source.contains("notifications"))
-    }
-
-    @Test
-    fun `enableStealth is callable on TestPage`() = testBlocking {
-        val p = TestPage(MockWebViewController().apply { waitResultOverride = "true" })
-        p.enableStealth()
-        assertTrue(true) // Did not throw
-    }
-
     // --- DomainFilter escaping ---
-
-    @Test
-    fun `DomainFilter injectionScript escapes special characters in domains`() {
-        val filter = DomainFilter(setOf("test\"domain.com", "foo\\bar.com"))
-        val script = filter.injectionScript()
-        // Domains should be escaped so they don't break JS
-        assertFalse(script.contains("test\"domain"))
-        assertFalse(script.contains("foo\\bar"))
-        assertTrue(script.contains("__kmpwright_domainFilter"))
-    }
 
     // --- addScriptTag ---
 
@@ -1479,13 +1168,14 @@ class ConvenienceDslTest {
 
     @Test
     fun `emulateColorScheme injects meta and style`() = testBlocking {
-        page.emulateColorScheme(ColorScheme.Dark)
+        page.emulateMedia(colorScheme = ColorScheme.Dark)
         assertTrue(controller.executedScripts.any { it.contains("color-scheme") && it.contains("dark") })
     }
 
     @Test
     fun `resetColorScheme removes meta and style`() = testBlocking {
-        page.resetColorScheme()
+        page.emulateMedia(colorScheme = ColorScheme.Dark)
+        page.emulateMedia(colorScheme = null)
         assertTrue(controller.executedScripts.any { it.contains("remove") })
     }
 
@@ -1493,33 +1183,35 @@ class ConvenienceDslTest {
 
     @Test
     fun `emulateGeolocation patches navigator geolocation`() = testBlocking {
-        page.emulateGeolocation(37.7749, -122.4194)
+        page.setGeolocation(Geolocation(37.7749, -122.4194))
         assertTrue(controller.executedScripts.any { it.contains("geolocation") && it.contains("37.7749") })
     }
 
     @Test
     fun `resetGeolocation restores original geolocation`() = testBlocking {
-        page.resetGeolocation()
-        assertTrue(controller.executedScripts.any { it.contains("__kmpwright_origGeolocation") })
+        page.setGeolocation(Geolocation(1.0, 2.0))
+        page.setGeolocation(null)
+        assertTrue(controller.executedScripts.any { it.contains("api.apply(SEAL") && it.contains("\"geo\":null") })
     }
 
     // --- emulateOffline / emulateNetwork ---
 
     @Test
     fun `emulateOffline true overrides navigator onLine`() = testBlocking {
-        page.emulateOffline(true)
+        page.setOffline(true)
         assertTrue(controller.executedScripts.any { it.contains("onLine") && it.contains("false") })
     }
 
     @Test
-    fun `emulateOffline false restores navigator onLine`() = testBlocking {
-        page.emulateOffline(false)
-        assertTrue(controller.executedScripts.any { it.contains("onLine") && it.contains("true") })
+    fun `setOffline false restores navigator onLine`() = testBlocking {
+        page.setOffline(true)
+        page.setOffline(false)
+        assertTrue(controller.executedScripts.any { it.contains("onLine") && it.contains("\"offline\":false") })
     }
 
     @Test
-    fun `emulateNetwork with offline overrides fetch`() = testBlocking {
-        page.emulateNetwork(offline = true)
+    fun `emulateNetworkConditions offline overrides fetch`() = testBlocking {
+        page.emulateNetworkConditions(NetworkConditions.Offline)
         assertTrue(controller.executedScripts.any { it.contains("fetch") && it.contains("Offline") })
     }
 
@@ -1538,7 +1230,7 @@ class ConvenienceDslTest {
     @Test
     fun `setHTTPCredentials uses native controller without page script`() = testBlocking {
         val scriptsBefore = controller.executedScripts.size
-        page.setHTTPCredentials("user", "pass")
+        page.setHTTPCredentials(HttpCredentials("user", "pass"))
         assertEquals("user" to "pass", controller.recordedHttpCredentials)
         assertEquals(scriptsBefore, controller.executedScripts.size)
     }
@@ -1546,19 +1238,18 @@ class ConvenienceDslTest {
     @Test
     fun `clearHTTPCredentials clears native controller without page script`() = testBlocking {
         val scriptsBefore = controller.executedScripts.size
-        page.clearHTTPCredentials()
+        page.setHTTPCredentials(null)
         assertNull(controller.recordedHttpCredentials)
         assertEquals(scriptsBefore, controller.executedScripts.size)
     }
 
-    // --- openNewTab / closeTab ---
+    // --- openNewTab ---
 
     @Test
     fun `openNewTab delegates to runtime`() = testBlocking {
         val runtime = object : PageTabRuntime {
             override suspend fun openTab(source: Page, url: String?): NavigationResult =
                 NavigationResult(url ?: "about:blank", 200, true)
-            override suspend fun closeTab(page: Page): Boolean = true
         }
         val page = TestPage(controller, runtime)
         val result = page.openNewTab("https://example.com")
@@ -1571,23 +1262,10 @@ class ConvenienceDslTest {
         val runtime = object : PageTabRuntime {
             override suspend fun openTab(source: Page, url: String?): NavigationResult =
                 NavigationResult(url ?: "about:blank", 200, true)
-            override suspend fun closeTab(page: Page): Boolean = true
         }
         val page = TestPage(controller, runtime)
         val result = page.openNewTab(null)
         assertEquals("about:blank", result.url)
-    }
-
-    @Test
-    fun `closeTab delegates to runtime`() = testBlocking {
-        val runtime = object : PageTabRuntime {
-            override suspend fun openTab(source: Page, url: String?): NavigationResult =
-                NavigationResult(url ?: "about:blank", 200, true)
-            override suspend fun closeTab(page: Page): Boolean = true
-        }
-        val page = TestPage(controller, runtime)
-        val result = page.closeTab()
-        assertTrue(result)
     }
 
     // --- Local storage ---
@@ -1595,28 +1273,28 @@ class ConvenienceDslTest {
     @Test
     fun `setLocalStorage and getLocalStorage round-trip`() = testBlocking {
         controller.evalHandler = { "undefined" }
-        page.setLocalStorage("key1", "value1")
+        page.localStorage.set("key1", "value1")
         controller.evalHandler = { "\"value1\"" }
-        val value = page.getLocalStorage("key1")
+        val value = page.localStorage.get("key1")
         assertEquals("value1", value)
     }
 
     @Test
     fun `removeLocalStorage calls removeItem`() = testBlocking {
-        page.removeLocalStorage("key1")
+        page.localStorage.remove("key1")
         assertTrue(controller.executedScripts.any { it.contains("removeItem") })
     }
 
     @Test
     fun `clearLocalStorage calls clear`() = testBlocking {
-        page.clearLocalStorage()
+        page.localStorage.clear()
         assertTrue(controller.executedScripts.any { it.contains("localStorage.clear") })
     }
 
     @Test
     fun `getAllLocalStorage returns map`() = testBlocking {
         controller.evalHandler = { "{\"k\":\"v\"}" }
-        val map = page.getAllLocalStorage()
+        val map = page.localStorage.entries()
         assertEquals("v", map["k"])
     }
 
@@ -1625,42 +1303,17 @@ class ConvenienceDslTest {
     @Test
     fun `setSessionStorage and getSessionStorage round-trip`() = testBlocking {
         controller.evalHandler = { "undefined" }
-        page.setSessionStorage("skey", "sval")
+        page.sessionStorage.set("skey", "sval")
         controller.evalHandler = { "\"sval\"" }
-        assertEquals("sval", page.getSessionStorage("skey"))
+        assertEquals("sval", page.sessionStorage.get("skey"))
     }
 
     @Test
     fun `clearSessionStorage calls clear`() = testBlocking {
-        page.clearSessionStorage()
+        page.sessionStorage.clear()
         assertTrue(controller.executedScripts.any { it.contains("sessionStorage.clear") })
     }
 
-    // --- saveState / loadState (in-memory) ---
-
-    @Test
-    fun `saveState and loadState round-trip`() = testBlocking {
-        val ctrl = MockWebViewController().apply { waitResultOverride = "true" }
-        ctrl.setCookie(Cookie("sid", "abc", "example.com"))
-        val p = TestPage(ctrl)
-        p.saveState("test-session")
-        assertTrue(p.stateNames().contains("test-session"))
-
-        // Create a fresh page and load state
-        val ctrl2 = MockWebViewController().apply { waitResultOverride = "true" }
-        val p2 = TestPage(ctrl2)
-        // In-memory state won't carry across instances, but stateNames should be empty
-        assertFalse(p2.stateNames().contains("test-session"))
-    }
-
-    @Test
-    fun `deleteState removes saved state`() = testBlocking {
-        val p = TestPage(MockWebViewController().apply { waitResultOverride = "true" })
-        p.saveState("to-delete")
-        assertTrue(p.stateNames().contains("to-delete"))
-        p.deleteState("to-delete")
-        assertFalse(p.stateNames().contains("to-delete"))
-    }
 
     // --- pdf ---
 
@@ -1703,21 +1356,23 @@ class ConvenienceDslTest {
 
     @Test
     fun `back does not throw`() = testBlocking {
-        page.back()
+        page.goBack()
     }
 
     @Test
     fun `forward does not throw`() = testBlocking {
-        page.forward()
+        page.goForward()
     }
 
     // --- scroll ---
 
     @Test
-    fun `scrollBy calls window scrollBy`() = testBlocking {
+    fun `scroll calls window scrollBy with the direction and amount`() = testBlocking {
         controller.evalHandler = { "undefined" }
-        page.scroll(100.0, 200.0)
-        assertTrue(controller.executedScripts.any { it.contains("scrollBy") && it.contains("100") && it.contains("200") })
+        page.scroll(ScrollDirection.Down, 200.0)
+        assertTrue(controller.executedScripts.any { it.contains("scrollBy(0.0, 200.0)") })
+        page.scroll(ScrollDirection.Left, 100.0)
+        assertTrue(controller.executedScripts.any { it.contains("scrollBy(-100.0, 0.0)") })
     }
 
     @Test
@@ -1772,14 +1427,14 @@ class ConvenienceDslTest {
     @Test
     fun `clipboardWrite injects text`() = testBlocking {
         controller.evalHandler = { "undefined" }
-        page.clipboardWrite("hello clipboard")
+        page.clipboard.writeText("hello clipboard")
         assertTrue(controller.executedScripts.any { it.contains("writeText") || it.contains("execCommand") })
     }
 
     @Test
     fun `clipboardRead extracts text`() = testBlocking {
         controller.evalHandler = { "\"copied text\"" }
-        val result = page.clipboardRead()
+        val result = page.clipboard.readText()
         assertEquals("copied text", result)
     }
 
@@ -1798,33 +1453,13 @@ class ConvenienceDslTest {
 
     // --- DomainFilter escaping integration ---
 
-    @Test
-    fun `DomainFilter with quotes in domain name does not break script`() {
-        val filter = DomainFilter(setOf("normal.com"))
-        val script = filter.injectionScript()
-        // Verify the script contains the domain and is valid JS structure
-        assertTrue(script.contains("normal.com"))
-        assertTrue(script.contains("_isAllowed"))
-    }
-
-    @Test
-    fun `DomainFilter empty domains produces allow-all script`() {
-        val filter = DomainFilter(emptySet())
-        val script = filter.injectionScript()
-        assertTrue(script.contains("_allowed"))
-        assertTrue(script.contains("_isAllowed"))
-    }
-
     // --- waitForDownload ---
 
     @Test
     fun `waitForDownload receives emitted event`() = testBlocking {
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             kotlinx.coroutines.delay(50)
-            page.events.download.emit(DownloadEvent(
-                url = "https://example.com/file.pdf",
-                suggestedFilename = "file.pdf"
-            ))
+            (page.events as PageEventSinks).downloadSink.emit(Download("https://example.com/file.pdf", "file.pdf", { null }, { _, _ -> }))
         }
         val event = page.waitForDownload(timeoutMs = 5000)
         assertEquals("https://example.com/file.pdf", event.url)
@@ -1835,22 +1470,17 @@ class ConvenienceDslTest {
     fun `waitForDownload with url pattern filters events`() = testBlocking {
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             kotlinx.coroutines.delay(50)
-            page.events.download.emit(DownloadEvent(
-                url = "https://cdn.example.com/logo.png",
-                suggestedFilename = "logo.png"
-            ))
-            page.events.download.emit(DownloadEvent(
-                url = "https://example.com/report.pdf",
-                suggestedFilename = "report.pdf"
-            ))
+            (page.events as PageEventSinks).downloadSink.emit(Download("https://cdn.example.com/logo.png", "logo.png", { null }, { _, _ -> }))
+            (page.events as PageEventSinks).downloadSink.emit(Download("https://example.com/report.pdf", "report.pdf", { null }, { _, _ -> }))
         }
-        val event = page.waitForDownload(urlPattern = "report", timeoutMs = 5000)
+        // String URL patterns are Playwright globs over the full URL (no substring matching).
+        val event = page.waitForDownload(url = "**/report.pdf", timeoutMs = 5000)
         assertEquals("https://example.com/report.pdf", event.url)
     }
 
     @Test(expected = KmpwrightException::class)
     fun `waitForDownload times out when no event matches`() = testBlocking {
-        page.waitForDownload(urlPattern = "nonexistent", timeoutMs = 100)
+        page.waitForDownload(url = "nonexistent", timeoutMs = 100)
     }
 
     // --- waitForFileChooser ---
@@ -1859,14 +1489,11 @@ class ConvenienceDslTest {
     fun `waitForFileChooser receives emitted event`() = testBlocking {
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             kotlinx.coroutines.delay(50)
-            page.events.fileChooser.emit(FileChooserEvent(
-                element = "input[type=file]",
-                multiple = false
-            ))
+            (page.events as PageEventSinks).fileChooserSink.emit(FileChooser("input[type=file]", false) { _, _ -> })
         }
         val event = page.waitForFileChooser(timeoutMs = 5000)
-        assertEquals("input[type=file]", event.element)
-        assertFalse(event.multiple)
+        assertEquals("input[type=file]", event.handle)
+        assertFalse(event.isMultiple)
     }
 
     @Test(expected = KmpwrightException::class)

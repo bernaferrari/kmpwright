@@ -1,0 +1,291 @@
+---
+title: LLM tools
+description: Expose a KMPwright page to an LLM as one tool-calling function, with sketches for Koog, Firebase AI Logic and OpenAI- or Anthropic-style HTTP APIs.
+---
+
+Every tool-calling API needs the same three things: a tool declaration, a function that runs the call, and a loop that sends the result back. With KMPwright the function is `page.runCommand`.
+
+```kotlin
+import com.bernaferrari.kmpwright.core.*
+import kotlinx.coroutines.CancellationException
+
+/** Text for the model, plus PNG bytes when the command was `screenshot`. */
+class BrowserToolResult(val text: String, val png: ByteArray? = null, val isError: Boolean = false)
+
+suspend fun Page.callBrowserTool(command: String): BrowserToolResult = try {
+    val result = runCommand(command)
+    BrowserToolResult(result.output, result.screenshot?.bytes)
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    BrowserToolResult("Error: ${e.message ?: e.toString()}", isError = true)
+}
+```
+
+## The tool declaration
+
+| Field | Value |
+|---|---|
+| Name | `browser` |
+| Description | `AgentCommands.HELP` |
+| Parameters | one required string, `command` |
+
+As JSON Schema (the `parameters` / `input_schema` object most APIs expect):
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string",
+      "description": "One agent-browser command line, for example `snapshot -i`, `click @e3` or `fill @e2 \"hello\"`."
+    }
+  },
+  "required": ["command"]
+}
+```
+
+Build the description in Kotlin so it stays in sync with the library:
+
+```kotlin
+val browserToolDescription = """
+    Operates the web page shown in the app. Send one command per call.
+    Start with `snapshot -i`, then act on refs such as @e3 from the latest snapshot.
+
+""".trimIndent() + AgentCommands.HELP
+```
+
+## The loop
+
+1. Send the conversation and the tool declaration.
+2. If the response contains tool calls, run each with `page.callBrowserTool(command)` **in order, one at a time**, and append one tool result per call, using the call id the API gave you.
+3. Repeat until the model answers without a tool call, or you hit a step limit.
+
+Return errors as normal tool results (many APIs also have an `is_error` flag). The messages tell the model what to do next, such as re-snapshotting after a stale ref.
+
+### Screenshots
+
+`screenshot` returns a PNG in `result.screenshot.bytes` and a short text (`Screenshot 1080×2148`, plus a ref legend with `--annotate`). Send the bytes as an image when the API accepts images in tool results; otherwise put the image in the next user message. Base64 for JSON APIs:
+
+```kotlin
+import kotlin.io.encoding.Base64
+
+val base64 = result.png?.let { Base64.encode(it) }
+```
+
+Screenshots cost far more tokens than `snapshot -i`. Encourage the model to use them only when layout or visual state matters, and prefer `screenshot --annotate`, whose labels match the refs it can act on.
+
+## JetBrains Koog
+
+[Koog](https://github.com/JetBrains/koog) is a Kotlin Multiplatform agent framework, so the agent and the WebView can run in the same process on Android or iOS. Wrap the tool function in a Koog tool and register it.
+
+<Callout type="warn">
+
+Sketch only: Koog's tool API has changed between releases. Adapt the class and function names to your Koog version.
+
+</Callout>
+
+```kotlin
+// Koog side: adapt to your Koog version.
+@LLMDescription("Operates the web page shown in the app")
+class BrowserTools(private val page: Page) : ToolSet {
+    @Tool
+    @LLMDescription("Runs one browser command, for example `snapshot -i` or `click @e3`. Run `help` for the list.")
+    suspend fun browser(
+        @LLMDescription("One command line") command: String,
+    ): String = page.callBrowserTool(command).text
+}
+
+val agent = AIAgent(
+    promptExecutor = executor,              // your Koog prompt executor
+    llmModel = model,                       // your model
+    systemPrompt = "You operate a web page through the `browser` tool.\n\n" + AgentCommands.HELP,
+    toolRegistry = ToolRegistry { tools(BrowserTools(page)) },
+)
+val answer = agent.run("Create an account for test@example.com")
+```
+
+Annotation arguments must be compile-time constants, so `AgentCommands.HELP` cannot go in `@LLMDescription`. Put it in the system prompt, as above, or define the tool with a descriptor object if your Koog version supports that.
+
+## Firebase AI Logic (Gemini) on Android
+
+Firebase AI Logic calls Gemini directly from the app, which pairs well with an on-device WebView: the model, the tool and the page all live in your app.
+
+<Callout type="warn">
+
+Sketch only: check the Firebase AI Logic function-calling docs for the exact class names in your SDK version.
+
+</Callout>
+
+```kotlin
+// Firebase side: adapt to your SDK version.
+val browserFunction = FunctionDeclaration(
+    name = "browser",
+    description = browserToolDescription,
+    parameters = mapOf("command" to Schema.string("One command line, for example `snapshot -i`")),
+)
+
+val model = Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
+    modelName = "<gemini model>",
+    tools = listOf(Tool.functionDeclarations(listOf(browserFunction))),
+)
+
+suspend fun runGeminiAgent(page: Page, task: String): String? {
+    val chat = model.startChat()
+    var response = chat.sendMessage(task)
+    repeat(30) {
+        val call = response.functionCalls.firstOrNull() ?: return response.text
+        val command = call.args["command"]?.jsonPrimitive?.content.orEmpty()
+        val result = page.callBrowserTool(command)
+        response = chat.sendMessage(
+            content("function") {
+                part(FunctionResponsePart(call.name, buildJsonObject { put("output", result.text) }))
+            }
+        )
+    }
+    return null
+}
+```
+
+The sketch handles one call per turn. If the model returns several, answer all of them, in order, in the same message.
+
+## OpenAI- or Anthropic-compatible HTTP APIs
+
+Any API with tool calling works. You only need to produce the request JSON and read the tool calls back; use your HTTP client of choice (Ktor works on Android, iOS and JVM). The shapes below are the commonly used ones; check your provider's reference for the exact fields.
+
+<Tabs items={['Anthropic Messages', 'OpenAI Chat Completions']}>
+<Tab value="Anthropic Messages">
+
+Tool declaration, in the request's `tools` array:
+
+```json
+{
+  "name": "browser",
+  "description": "<browserToolDescription>",
+  "input_schema": {
+    "type": "object",
+    "properties": { "command": { "type": "string" } },
+    "required": ["command"]
+  }
+}
+```
+
+The response contains `{"type": "tool_use", "id": "toolu_…", "name": "browser", "input": {"command": "snapshot -i"}}` blocks. Reply with a `user` message holding one `tool_result` per call; images can go inside the result:
+
+```json
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "tool_result",
+      "tool_use_id": "toolu_…",
+      "is_error": false,
+      "content": [
+        { "type": "text", "text": "<result.text>" },
+        { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "<base64>" } }
+      ]
+    }
+  ]
+}
+```
+
+</Tab>
+<Tab value="OpenAI Chat Completions">
+
+Tool declaration, in the request's `tools` array:
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "browser",
+    "description": "<browserToolDescription>",
+    "parameters": {
+      "type": "object",
+      "properties": { "command": { "type": "string" } },
+      "required": ["command"]
+    }
+  }
+}
+```
+
+The assistant message contains `tool_calls`, each with an `id` and `function.arguments`, a JSON **string** such as `"{\"command\":\"snapshot -i\"}"`. Parse it, run the command, and append one message per call:
+
+```json
+{ "role": "tool", "tool_call_id": "call_…", "content": "<result.text>" }
+```
+
+Tool messages carry text. Send a screenshot as an image part (`data:image/png;base64,…`) in a following `user` message.
+
+</Tab>
+</Tabs>
+
+A provider-neutral Kotlin loop, with the HTTP and JSON mapping left to you:
+
+```kotlin
+data class ToolCall(val id: String, val command: String)
+data class ModelTurn(val text: String?, val toolCalls: List<ToolCall>)
+
+/** Your code: serialize history + tool declaration, POST it, parse the reply. */
+interface ChatApi {
+    suspend fun send(): ModelTurn
+    fun addToolResult(callId: String, result: BrowserToolResult)
+}
+
+suspend fun runHttpAgent(page: Page, api: ChatApi, maxSteps: Int = 30): String? {
+    repeat(maxSteps) {
+        val turn = api.send()
+        if (turn.toolCalls.isEmpty()) return turn.text
+        for (call in turn.toolCalls) api.addToolResult(call.id, page.callBrowserTool(call.command))
+    }
+    return null
+}
+```
+
+## Keeping the context small
+
+Snapshots are the bulk of an agent's tokens. In rough order of impact:
+
+| Technique | How |
+|---|---|
+| Interactive-only snapshots | `snapshot -i` lists only elements the model can act on |
+| Scope to a region | `snapshot -s #checkout` or `snapshot -i -s form` |
+| Drop empty structure | `snapshot -c` |
+| Limit depth | `snapshot -d 4` |
+| Read specific text instead of the tree | `get text @e7`, `get value @e2` |
+| Keep only the latest snapshot in history | Replace older snapshot tool results with a placeholder such as `[older snapshot removed]` before each request. Their refs may be stale anyway |
+| Report changes, not pages | Outside the tool, `page.diffSnapshot(before, after)` returns a line diff (see [Snapshots](/docs/agents/snapshots#diffing)) |
+| Screenshots only when needed | Prefer `snapshot -i`; use `screenshot --annotate` when layout matters |
+
+Tell the model about these flags in the system prompt. Models that know agent-browser tend to use `snapshot -i` by default.
+
+## Alternative: one tool per action
+
+Instead of one `browser` tool, you can declare typed tools (`snapshot`, `click(ref)`, `fill(ref, text)`, `navigate(url)`) backed by the typed API:
+
+```kotlin
+suspend fun Page.callTypedTool(name: String, args: Map<String, String>): String = try {
+    when (name) {
+        "snapshot" -> snapshot(SnapshotOptions(interactive = true)).tree
+        "click" -> { locator(args.getValue("ref")).click(); "Clicked ${args["ref"]}" }
+        "fill" -> { locator(args.getValue("ref")).fill(args.getValue("text")); "Filled ${args["ref"]}" }
+        "navigate" -> "Opened ${goto(AgentCommands.normalizeUrl(args.getValue("url"))).url}"
+        else -> "Error: unknown tool $name"
+    }
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    "Error: ${e.message ?: e.toString()}"
+}
+```
+
+| | One `browser` tool | One tool per action |
+|---|---|---|
+| Tokens in tool declarations | Small: one schema plus `AgentCommands.HELP` | Grows with every tool |
+| Argument validation | Parsed by `runCommand`; mistakes come back as `Usage:` errors | JSON Schema per tool; the API validates types |
+| Exposing a subset | Filter commands in your tool function, or use `ActionPolicy` | Declare only the tools you want |
+| Per-action UI (confirm dialogs, progress) | Inspect the first token, or use `setPolicyConfirmCallback` | Natural: one handler per tool |
+| Familiarity | Matches agent-browser, which many models have seen | Your own vocabulary |
+| Features beyond `runCommand` | Add commands in your tool function | Add tools |
+
+The single tool is the default recommendation. Use typed tools when you need a narrow, audited surface, or when a smaller model follows JSON schemas better than a command syntax. Whichever you choose, keep `ActionPolicy`, `setAllowedDomains` and content boundaries in place (see [Safety](/docs/agents#safety)).

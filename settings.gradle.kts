@@ -24,6 +24,5 @@ rootProject.name = "kmpwright"
 include(":kmpwright-core")
 include(":kmpwright-compose")
 include(":kmpwright-test")
-include(":example")
 include(":example-android")
 include(":kmpwright-example-shared")

@@ -8,29 +8,36 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
+/** Options for [Page.webVitals]; a null [timeoutMs] uses [TimeoutConfig.default]. */
 @Serializable
-data class WebVitalsOptions(val url: String? = null, val reload: Boolean = true,
-    val settleMs: Long = 3_000, val timeoutMs: Long = 30_000)
+public data class WebVitalsOptions(val url: String? = null, val reload: Boolean = true,
+    val settleMs: Long = 3_000, val timeoutMs: Long? = null)
 
+/** One Core Web Vitals measurement. */
 @Serializable
-data class WebVitalMetric(val value: Double, val rating: String, val id: String, val delta: Double)
+public data class WebVitalMetric(val value: Double, val rating: String, val id: String, val delta: Double)
 
+/** The largest contentful paint element. */
 @Serializable
-data class LargestContentfulPaint(val startTime: Double, val size: Double, val element: String?, val url: String?)
+public data class LargestContentfulPaint(val startTime: Double, val size: Double, val element: String?, val url: String?)
 
+/** A single layout shift. */
 @Serializable
-data class LayoutShiftEntry(val value: Double, val startTime: Double)
+public data class LayoutShiftEntry(val value: Double, val startTime: Double)
 
+/** Cumulative layout shift and its entries. */
 @Serializable
-data class LayoutShiftReport(val score: Double?, val entries: List<LayoutShiftEntry>)
+public data class LayoutShiftReport(val score: Double?, val entries: List<LayoutShiftEntry>)
 
+/** A named phase of the page load timeline. */
 @Serializable
-data class PerformancePhase(val label: String, val startTime: Double, val endTime: Double) {
+public data class PerformancePhase(val label: String, val startTime: Double, val endTime: Double) {
     val duration: Double get() = endTime - startTime
 }
 
+/** Web Vitals measured by [Page.webVitals]. */
 @Serializable
-data class WebVitalsReport(val url: String, val metrics: Map<String, WebVitalMetric>,
+public data class WebVitalsReport(val url: String, val metrics: Map<String, WebVitalMetric>,
     val ttfb: Double?, val lcp: LargestContentfulPaint?, val cls: LayoutShiftReport,
     val fcp: Double?, val inp: Double?, val hydration: PerformancePhase?,
     val phases: List<PerformancePhase>, val hydratedComponents: List<PerformancePhase>,
@@ -42,12 +49,13 @@ internal class PageVitalsDelegate(private val controller: WebViewController) {
     private val namespace = secureRandomBytes(12).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
 
     suspend fun capture(page: Page, options: WebVitalsOptions): WebVitalsReport {
-        require(options.timeoutMs > 0 && options.settleMs >= 0) { "Invalid Web Vitals timing options" }
+        val timeoutMs = options.timeoutMs ?: TimeoutConfig().default
+        require(timeoutMs > 0 && options.settleMs >= 0) { "Invalid Web Vitals timing options" }
         return try {
-            withTimeout(options.timeoutMs) { mutex.withLock { captureDocument(page, options) } }
+            withTimeout(timeoutMs) { mutex.withLock { captureDocument(page, options) } }
         } catch (_: TimeoutCancellationException) {
             currentCoroutineContext().ensureActive()
-            throw KmpwrightException("Timeout measuring Web Vitals")
+            throw KmpwrightTimeoutException("Timeout measuring Web Vitals")
         }
     }
 
@@ -59,7 +67,7 @@ internal class PageVitalsDelegate(private val controller: WebViewController) {
             if (options.url != null || options.reload) registration = controller.addInitScript(script)
             if (options.url != null) {
                 val navigation = page.goto(options.url)
-                if (!navigation.ok) throw KmpwrightException(navigation.error ?: "Web Vitals navigation failed")
+                if (!navigation.committed) throw KmpwrightException(navigation.error ?: "Web Vitals navigation failed")
             } else if (options.reload) page.reload()
             controller.evaluateJavaScriptAsync(script)
             delay(options.settleMs)

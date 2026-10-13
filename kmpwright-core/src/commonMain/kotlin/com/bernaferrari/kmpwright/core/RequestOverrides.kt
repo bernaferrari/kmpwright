@@ -7,7 +7,7 @@ internal data class RequestOverride(
     val postData: String?
 )
 
-internal fun Request.applyContinueOptions(continueAction: RouteAction.Continue): RequestOverride {
+internal fun Request.applyOverrides(continueAction: RouteAction.Continue): RequestOverride {
     return RequestOverride(
         url = continueAction.url ?: url,
         method = continueAction.method ?: method,

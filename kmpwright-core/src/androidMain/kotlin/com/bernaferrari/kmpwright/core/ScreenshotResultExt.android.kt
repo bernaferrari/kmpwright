@@ -2,26 +2,31 @@ package com.bernaferrari.kmpwright.core
 
 import android.graphics.BitmapFactory
 
-actual fun ScreenshotResult.toRgbaImage(): RgbaImage? {
+public actual fun ScreenshotResult.toRgbaImage(): RgbaImage? {
     if (bytes.isEmpty()) return null
+    val bitmap = try {
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    } catch (_: Exception) {
+        null
+    } ?: return null
     return try {
-        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
         val width = bitmap.width
         val height = bitmap.height
-        val pixels = ByteArray(width * height * 4)
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val argb = bitmap.getPixel(x, y)
-                val idx = (y * width + x) * 4
-                pixels[idx] = ((argb shr 16) and 0xFF).toByte()     // R
-                pixels[idx + 1] = ((argb shr 8) and 0xFF).toByte()  // G
-                pixels[idx + 2] = (argb and 0xFF).toByte()          // B
-                pixels[idx + 3] = ((argb shr 24) and 0xFF).toByte() // A
-            }
+        val argb = IntArray(width * height)
+        bitmap.getPixels(argb, 0, width, 0, 0, width, height)
+        val pixels = ByteArray(argb.size * 4)
+        for (index in argb.indices) {
+            val color = argb[index]
+            val offset = index * 4
+            pixels[offset] = (color shr 16).toByte()     // R
+            pixels[offset + 1] = (color shr 8).toByte()  // G
+            pixels[offset + 2] = color.toByte()          // B
+            pixels[offset + 3] = (color ushr 24).toByte() // A
         }
-        bitmap.recycle()
         RgbaImage(width, height, pixels)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         null
+    } finally {
+        bitmap.recycle()
     }
 }

@@ -20,7 +20,7 @@ import kotlin.coroutines.resume
  * val page = TestPage(controller)
  * ```
  */
-class MockWebViewController : WebViewController {
+internal class MockWebViewController : WebViewController {
 
     var evalHandler: ((String) -> String?)? = null
     var waitResultOverride: String? = null
@@ -42,6 +42,21 @@ class MockWebViewController : WebViewController {
     var throwOnRemoveAllRouteHandlers: Boolean = false
     var throwOnDispose: Boolean = false
     var recordedExtraHttpHeaders: Map<String, String> = emptyMap()
+    /** When true, document-start scripts are accepted and recorded in [initScripts]. */
+    var supportsInitScripts: Boolean = false
+    val initScripts: MutableMap<String, String> = linkedMapOf()
+    private var initScriptCounter = 0
+
+    override suspend fun addInitScript(script: String): String {
+        if (!supportsInitScripts) throw KmpwrightException("Document-start scripts are unavailable on this backend")
+        val id = "init-${++initScriptCounter}"
+        initScripts[id] = script
+        return id
+    }
+
+    override suspend fun removeInitScript(id: String) {
+        if (initScripts.remove(id) == null) throw KmpwrightException("Unknown init-script identifier: $id")
+    }
     var recordedHttpCredentials: Pair<String, String>? = null
 
     constructor()
@@ -62,7 +77,8 @@ class MockWebViewController : WebViewController {
 
     override fun evaluateJavaScript(script: String, callback: (String?) -> Unit) {
         executedScripts.add(script)
-        val result = (if (script.contains("new Promise")) waitResultOverride else null) ?: evalHandler?.invoke(script)
+        val isWait = script.contains("new Promise") || script.contains("/*kmpwright:waitFor*/")
+        val result = (if (isWait) waitResultOverride else null) ?: evalHandler?.invoke(script)
             ?: if (script.contains("document.readyState")) "complete" else null
         callback(result)
     }
@@ -71,7 +87,9 @@ class MockWebViewController : WebViewController {
 
     override fun goForward() {}
 
-    override fun reload() {}
+    override fun reload() {
+        if (completeNavigationImmediately) _navigationCallback?.invoke(NavigationResult(committedUrl, 200, true))
+    }
 
     override fun getUrl(): String? = committedUrl
 
@@ -126,27 +144,31 @@ class MockWebViewController : WebViewController {
 
     override fun setRequestIdleTimeout(timeoutMs: Long) {}
 
-    override fun addDialogListener(listener: DialogListener) {}
+    val dialogListeners: MutableList<DialogListener> = mutableListOf()
+    /** Every pattern passed to [addRouteHandler], in order. */
+    val addedRoutePatterns: MutableList<String> = mutableListOf()
+
+    override fun addDialogListener(listener: DialogListener) { dialogListeners += listener }
 
     override fun removeDialogListener(listener: DialogListener) {
         removeDialogListenerCount += 1
         if (throwOnRemoveDialogListener) throw IllegalStateException("synthetic dialog cleanup failure")
     }
 
-    override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+    override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) { addedRoutePatterns += urlPattern }
 
-    override fun removeRouteHandler(urlPattern: String) {}
+    /** Every pattern passed to [removeRouteHandler], in order. */
+    val removedRoutePatterns: MutableList<String> = mutableListOf()
+
+    override fun removeRouteHandler(urlPattern: String) { removedRoutePatterns += urlPattern }
 
     override fun removeAllRouteHandlers() {
         removeAllRouteHandlersCount += 1
         if (throwOnRemoveAllRouteHandlers) throw IllegalStateException("synthetic route cleanup failure")
     }
 
-    override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
 
-    override fun abortRoute(requestId: String, errorCode: String) {}
 
-    override fun continueRoute(requestId: String, options: ContinueOptions) {}
 
     override fun setCookie(cookie: Cookie) {
         cookies.removeAll { it.name == cookie.name && it.domain == cookie.domain }
@@ -183,12 +205,6 @@ class MockWebViewController : WebViewController {
         return true
     }
 
-    override fun interceptRequest(
-        url: String,
-        method: String,
-        headers: Map<String, String>,
-        onResult: (RouteAction?) -> Unit
-    ) {}
 
     class Builder {
         private var evalHandler: ((String) -> String?)? = null
@@ -228,7 +244,7 @@ class MockWebViewController : WebViewController {
  * }
  * ```
  */
-class TestPage : BasePage {
+internal class TestPage : BasePage {
 
     val evalController: MockWebViewController
 
@@ -253,7 +269,7 @@ class TestPage : BasePage {
     override fun createPlatformLocator(selector: String): BaseLocator =
         TestLocator(selector, controller, config)
 
-    override fun createTouch(): Touch = throw UnsupportedOperationException("Touch not supported in TestPage")
+    override fun createTouch(): Touchscreen = throw UnsupportedOperationException("Touch not supported in TestPage")
 
     override fun createMouse(): Mouse = throw UnsupportedOperationException("Mouse not supported in TestPage")
 
@@ -263,7 +279,7 @@ class TestPage : BasePage {
 /**
  * A test [Locator] backed by [MockWebViewController].
  */
-class TestLocator(
+internal class TestLocator(
     selector: String,
     controller: WebViewLocatorController,
     config: KmpwrightConfig = KmpwrightConfig()
@@ -288,3 +304,6 @@ class TestLocator(
         private fun defaultController(): WebViewController = MockWebViewController()
     }
 }
+
+/** Test shorthand for the cookie named [name] (Playwright has no single-cookie getter). */
+internal suspend fun Page.cookie(name: String): Cookie? = cookies().firstOrNull { it.name == name }

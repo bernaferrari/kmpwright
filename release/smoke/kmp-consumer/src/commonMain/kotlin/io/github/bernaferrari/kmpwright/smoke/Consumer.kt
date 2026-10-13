@@ -1,8 +1,10 @@
 package io.github.bernaferrari.kmpwright.smoke
 
 import com.bernaferrari.kmpwright.core.KmpwrightConfig
+import com.bernaferrari.kmpwright.core.CdpConfig
 
-fun resolvedFromPublishedKmp(): KmpwrightConfig = KmpwrightConfig()
+fun resolvedFromPublishedKmp(): KmpwrightConfig =
+    KmpwrightConfig(cdp = CdpConfig(remoteBrowserSharesFileSystem = false))
 
 // Public signature dependencies must be available through the published artifact.
 suspend fun verifyBrowserFeatureApi(page: com.bernaferrari.kmpwright.core.Page) {
@@ -12,7 +14,7 @@ suspend fun verifyBrowserFeatureApi(page: com.bernaferrari.kmpwright.core.Page) 
         put("name", kotlinx.serialization.json.JsonPrimitive("Kotlin"))
     }
     page.webMcp.invoke("greet", input, waitForResult = false)
-    page.startHarCapture()
-    println(page.stopHarCapture())
+    page.network.startHar()
+    println(page.network.stopHar())
     page.read(options = com.bernaferrari.kmpwright.core.ReadOptions(raw = true))
 }

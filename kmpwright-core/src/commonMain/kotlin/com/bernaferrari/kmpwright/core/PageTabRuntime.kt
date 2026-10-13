@@ -1,8 +1,7 @@
 package com.bernaferrari.kmpwright.core
 
-interface PageTabRuntime {
+internal interface PageTabRuntime {
     suspend fun openTab(source: Page, url: String?): NavigationResult
-    suspend fun closeTab(page: Page): Boolean
 
     /**
      * Notifies the owning tab registry when a page closes itself.  Browser

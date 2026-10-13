@@ -1,0 +1,219 @@
+---
+title: Capabilities
+description: How each backend reports what it supports through PageCapabilities, how to fail fast with requireCapabilities, and the full support matrix for Android WebView, iOS WKWebView and JVM Chromium.
+---
+
+Not every backend can do everything. A `Page` reports what its engine supports through `page.capabilities()`, so portable code can check before it relies on a platform-dependent feature.
+
+```kotlin
+val caps = page.capabilities()
+if (caps.supports(PageCapability.Tracing)) {
+    page.tracing.start()
+}
+
+// Fail before a workflow starts instead of halfway through it.
+page.requireCapabilities(
+    PageCapability.RouteInterception.require(SupportLevel.Partial),
+    PageCapability.Downloads.require(reason = "the export step saves a file"),
+)
+```
+
+Playwright has no equivalent: every Playwright browser is a full browser. KMPwright also drives embedded WebViews, which expose far fewer hooks, so it makes the differences explicit.
+
+## Types
+
+### `PageCapability`
+
+A closed enum of the features that differ per backend:
+
+`RouteInterception`, `TouchInput`, `MouseInput`, `KeyboardInput`, `Pdf`, `BrowserContexts`, `ServiceWorkers`, `DomainFiltering`, `NetworkEmulation`, `HarRecording`, `Downloads`, `FileChooser`, `Tracing`, `Profiling`, `Tabs`, `Cdp`, `InitScripts`, `WebMcp`, `AccessibilityAudit`, `WebVitals`, `ReactInspection`, `HttpRead`, `NetworkHistory`, `Screencast`, `VideoRecording`, `CrossOriginFrames` (locating and acting inside cross-origin iframes through `frameLocator`).
+
+### `SupportLevel`
+
+| Value | Meaning |
+|---|---|
+| `Supported` | Works as on Chromium with Playwright. |
+| `Partial` | Works with documented gaps. The gaps are described in `notes`. |
+| `Unsupported` | Calling the API throws `KmpwrightUnsupportedException`. |
+
+`SupportLevel.isAvailable` is true for `Supported` and `Partial`. `level.meets(minimum)` compares levels: `Supported` meets everything, `Partial` meets `Partial` and `Unsupported`, and any level meets `Unsupported`.
+
+### `PageCapabilities`
+
+A data class with one `SupportLevel` property per capability (`routeInterception`, `touchInput`, `mouseInput`, `keyboardInput`, `pdf`, `browserContexts`, `serviceWorkers`, `domainFiltering`, `networkEmulation`, `harRecording`, `downloads`, `fileChooser`, `tracing`, `profiling`, `tabs`, `cdp`, `initScripts`, `webMcp`, `accessibilityAudit`, `webVitals`, `reactInspection`, `httpRead`, `networkHistory`, `screencast`, `videoRecording`, `crossOriginFrames`), plus:
+
+<TypeTable
+  type={{
+    backend: { type: 'BackendKind', description: 'The engine: AndroidWebView, IOSWebView, JvmCdp, or Unknown for a custom Page implementation.', default: 'BackendKind.Unknown' },
+    notes: { type: 'List<String>', description: 'Human-readable explanations of Partial levels and other backend behavior. Show them to users or log them; do not parse them.', default: 'emptyList()' },
+  }}
+/>
+
+Every support-level property defaults to `Unsupported`, so a custom `Page` that does not override `capabilities()` advertises nothing.
+
+Extension functions on `PageCapabilities`:
+
+| Function | Returns |
+|---|---|
+| `supportLevel(capability: PageCapability)` | The `SupportLevel` of one capability. |
+| `supports(capability: PageCapability, minimum: SupportLevel = Supported)` | Whether that capability meets `minimum`. |
+| `supportLevels()` | `Map<PageCapability, SupportLevel>` for every capability. |
+| `missing(requirements: Iterable<PageCapabilityRequirement>)` | `List<MissingPageCapability>` (requirement plus `actual` level) for the unmet requirements, in order. |
+| `require(requirements: Iterable<PageCapabilityRequirement>)` | `this`, or throws when any requirement is unmet. |
+| `require(vararg requirements: PageCapabilityRequirement)` | Same, vararg form. |
+| `require(vararg capabilities: PageCapability)` | Same, requiring `Supported` for each. |
+| `requireCapabilities(vararg requirements: PageCapabilityRequirement)` | Alias of `require(vararg requirements)`. |
+| `supports(level: SupportLevel)` | Whether every `PageCapability` of this backend meets `level`. |
+
+### Requirements
+
+```kotlin
+public data class PageCapabilityRequirement(
+    val capability: PageCapability,
+    val minimum: SupportLevel = SupportLevel.Supported,
+    val reason: String? = null
+)
+```
+
+`requiredLevel` is an alias of `minimum`, and `CapabilityRequirement` is a type alias of `PageCapabilityRequirement`. Build one with `PageCapability.require(minimum = Supported, reason = null)`.
+
+## `requireCapabilities`
+
+`Page` has two overloads, both returning the page's `PageCapabilities`:
+
+```kotlin
+public fun requireCapabilities(vararg requirements: PageCapabilityRequirement): PageCapabilities
+public fun requireCapabilities(vararg capabilities: PageCapability): PageCapabilities  // each must be Supported
+```
+
+When a requirement is not met they throw `KmpwrightUnsupportedException` (a `KmpwrightException`) with one entry per unmet requirement, separated by `; `:
+
+```text
+Page capability requirements are not satisfied: Downloads: requires Supported, actual Unsupported (the export step saves a file)
+```
+
+A `Partial` requirement accepts `Partial` or `Supported`. The default requirement (`Supported`) accepts only `Supported`.
+
+```kotlin
+// Accept Android's and iOS's partial routing, but insist on real downloads.
+page.requireCapabilities(
+    PageCapability.RouteInterception.require(SupportLevel.Partial),
+    PageCapability.Downloads.require(),
+)
+```
+
+The check is static: it reads the backend's advertisement and does not probe the page. Individual APIs can still fail for other reasons, for example `KmpwrightConfig.inputMode` disabling native input (see [Configuration](/docs/reference/configuration)).
+
+## Support matrix
+
+Transcribed from `androidPageCapabilities()`, `iosPageCapabilities()` and `jvmCdpPageCapabilities()`.
+
+| Capability | Android WebView | iOS WKWebView | JVM (Chromium over CDP) |
+|---|---|---|---|
+| `RouteInterception` | Partial | Partial | Supported |
+| `TouchInput` | Supported | Partial | Partial |
+| `MouseInput` | Partial | Partial | Supported |
+| `KeyboardInput` | Supported | Partial | Supported |
+| `Pdf` | Partial | Partial | Partial |
+| `BrowserContexts` | Unsupported | Partial | Supported |
+| `ServiceWorkers` | Unsupported | Unsupported | Supported |
+| `DomainFiltering` | Partial | Supported | Supported |
+| `NetworkEmulation` | Partial | Partial | Supported |
+| `HarRecording` | Partial | Partial | Supported |
+| `Downloads` | Unsupported | Unsupported | Supported |
+| `FileChooser` | Unsupported | Unsupported | Partial |
+| `Tracing` | Unsupported | Unsupported | Supported |
+| `Profiling` | Unsupported | Unsupported | Supported |
+| `Tabs` | Supported | Supported | Supported |
+| `Cdp` | Unsupported | Unsupported | Supported |
+| `InitScripts` | Partial | Supported | Supported |
+| `WebMcp` | Unsupported | Unsupported | Partial |
+| `AccessibilityAudit` | Partial | Partial | Supported |
+| `WebVitals` | Partial | Partial | Supported |
+| `ReactInspection` | Supported | Supported | Supported |
+| `HttpRead` | Supported | Supported | Supported |
+| `NetworkHistory` | Partial | Partial | Partial |
+| `Screencast` | Unsupported | Unsupported | Supported |
+| `VideoRecording` | Unsupported | Unsupported | Supported |
+| `CrossOriginFrames` | Unsupported | Unsupported | Supported |
+
+`backend` is `BackendKind.AndroidWebView`, `BackendKind.IOSWebView` and `BackendKind.JvmCdp` respectively.
+
+## Notes per backend
+
+These are the exact `notes` strings each backend returns.
+
+<Tabs items={['Android', 'iOS', 'JVM']}>
+<Tab value="Android">
+
+1. Android touch and keyboard automation dispatch native WebView events.
+2. Mouse automation is still partial and may fall back to hover/tap approximations.
+3. Routing works at the WebView interception layer. Fulfill and abort are supported; continue overrides are applied only for requests WebView exposes to shouldInterceptRequest.
+4. Network emulation is offline-only and implemented in JavaScript (navigator.onLine, fetch, XMLHttpRequest, sendBeacon); WebView has no native latency/throughput throttling, so those parameters are rejected.
+5. Color scheme emulation is a JavaScript fallback (matchMedia and the root color-scheme property): with targetSdk 33+ WebView derives the CSS prefers-color-scheme media feature from the app theme, so stylesheet @media rules are not affected.
+6. Geolocation emulation is a JavaScript fallback that patches navigator.geolocation in every document.
+7. The domain filter is enforced natively: requests to disallowed hosts fail as network errors in shouldInterceptRequest (fetch, XHR, images, iframes) and navigations, including main-frame server redirects, are cancelled in loadUrl/shouldOverrideUrlLoading. It is Partial because WebView exposes no hook for server redirects of subresource requests (an open redirect on an allowed host reaches the target), WebSocket connections, or requests made by service workers.
+8. Cookie enumeration is limited to origins observed by this WebView and does not expose full browser-cookie metadata.
+9. Download and file chooser events are not currently surfaced from Android WebView.
+10. Dialogs reach automation only while a Page.onDialog handler or a waitForDialog is active; otherwise WebView hands them to the host WebChromeClient (or its native UI) and no dialog event is emitted.
+11. WebView reports no response for requests it loads itself: the main-frame document gets its status when the page finishes, any request gets status and headers from onReceivedHttpError (4xx/5xx), network errors fail the record, and other subresources finish without a response. resourceType is "document" for the main frame and "other" otherwise. Response bodies are unavailable.
+12. Screenshots support PNG, JPEG and WEBP; omitBackground is unsupported because WebView always paints its background.
+13. emulateDevice applies the viewport size and user agent; the device scale factor, mobile layout and touch support come from the device and are not emulated.
+14. frameLocator reaches same-origin frames only: page JavaScript cannot enter cross-origin iframes.
+
+</Tab>
+<Tab value="iOS">
+
+1. WKWebView routing covers fetch, XHR, and optional custom-scheme interception, but full browser-network parity remains partial.
+2. iOS input uses touch-first event synthesis with modifier-aware printable keys and DOM text-input fallbacks; hover, drag-and-drop, and low-level key semantics remain partial.
+3. Network emulation is offline-only and implemented in JavaScript (navigator.onLine, fetch, XMLHttpRequest, sendBeacon); WKWebView has no latency/throughput throttling, so those parameters are rejected.
+4. Color scheme emulation is native for light and dark when the WKWebView is in a window (overrideUserInterfaceStyle drives the CSS prefers-color-scheme media feature, verified after applying); for a window-less web view and for "no-preference" it falls back to JavaScript (matchMedia and the root color-scheme property only).
+5. Geolocation emulation is a JavaScript fallback that patches navigator.geolocation in every document.
+6. The domain filter is enforced natively: navigations (including server redirects) are cancelled in the navigation policy, and every subresource (fetch, XHR, images, iframes, WebSockets, redirects) is blocked by a WKContentRuleList.
+7. Browser contexts use WKWebsiteDataStore isolation, not independent browser processes.
+8. Download and file chooser events are not currently surfaced from WKWebView.
+9. WKUIDelegate exposes no beforeunload callback on iOS, so DialogType.BeforeUnload is never reported; WebKit leaves the page without asking.
+10. Network history covers requests issued through fetch/XHR (resourceType "fetch"/"xhr") and custom-scheme interception ("document" or "other"); other page loads are not observed, and response bodies are unavailable.
+11. Screenshots support PNG and JPEG; WEBP (ImageIO cannot encode it) and omitBackground are unsupported.
+12. PDF export is WKWebView's unpaginated content canvas; page.pdf() defaults to it.
+13. emulateDevice applies the viewport size and user agent; the device scale factor, mobile layout and touch support come from the device and are not emulated.
+14. frameLocator reaches same-origin frames only: page JavaScript cannot enter cross-origin iframes.
+
+</Tab>
+<Tab value="JVM">
+
+1. CDP tracing, profiling, downloads, and routing are available.
+2. Mouse and keyboard automation use native CDP Input events.
+3. Touch automation uses CDP touch emulation and supports taps, swipes, scrolls, and pinch gestures.
+4. File chooser events are surfaced for page and iframe inputs once interception is enabled.
+5. Color scheme, geolocation, and network conditions (offline, latency, throughput) are emulated natively (Emulation.setEmulatedMedia, Emulation.setGeolocationOverride, Network.emulateNetworkConditions).
+6. Geolocation emulation grants the geolocation permission to the page's browser context; it stays granted after reset.
+7. The domain filter is enforced at the request layer through Fetch interception: navigations, iframes, redirects and every HTTP(S) subresource. WebSocket handshakes are not visible to Fetch interception and are not filtered.
+8. frameLocator reaches cross-origin (out-of-process) iframes through their CDP target sessions.
+9. Network history records every request with its CDP resourceType and response; response bodies are readable (Response.body/text/json, NetworkHistory.responseBody) while the browser retains them.
+
+</Tab>
+</Tabs>
+
+## What "Unsupported" looks like at runtime
+
+Unsupported features throw `KmpwrightUnsupportedException` rather than silently doing nothing. Some examples from the source:
+
+| Call | Android | iOS | JVM |
+|---|---|---|---|
+| `page.waitForDownload()` | "Android WebView does not currently surface download events." | "WKWebView does not currently surface download events." | Works |
+| `browser.newContext()` | "Android WebView cannot provide isolated BrowserContext semantics in-process. …" | Works (non-persistent data store) | Works |
+| `browser.targets()`, `attachTarget`, `newWindow` | "Browser target discovery requires CDP" (and similar) | Same | Works with a browser-scoped endpoint |
+| `page.emulateNetworkConditions(NetworkConditions.Slow3G)` | "This backend cannot throttle latency or throughput; only offline emulation is available (see PageCapabilities.networkEmulation)." | Same | Works |
+| `page.setDeviceScaleFactor(2.0)` | "Android WebView device scale is determined by the host display" | "WKWebView device scale is determined by the host screen" | Works |
+| `ScreenshotOptions(omitBackground = true)` | "ScreenshotOptions.omitBackground is not supported on Android WebView: …" | "ScreenshotOptions.omitBackground is not supported on iOS WKWebView: …" | Works |
+| `launchBrowser(...)` | "Desktop browser process launch requires the JVM backend" | Same | Works |
+
+`page.emulateDevice(device)` does not throw on WebViews: it applies the viewport size and user agent and leaves the scale factor, mobile layout and touch support to the device.
+
+See [Errors](/docs/reference/errors) for the full list of messages.
+
+## Related
+
+- [Android](/docs/platforms/android), [iOS](/docs/platforms/ios), [JVM](/docs/platforms/jvm) for the details behind each `Partial`.
+- Source: [PageCapabilities.kt](https://github.com/bernaferrari/kmpwright/blob/main/kmpwright-core/src/commonMain/kotlin/com/bernaferrari/kmpwright/core/PageCapabilities.kt)

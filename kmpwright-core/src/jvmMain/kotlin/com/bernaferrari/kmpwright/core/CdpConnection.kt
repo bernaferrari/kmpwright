@@ -32,8 +32,18 @@ internal class CdpConnection(
     private val wsUrl: String,
     private val connectionTimeoutMs: Long = 30_000,
     private val proxy: ProxyConfig? = null,
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    scope: CoroutineScope? = null,
+    /** Largest single protocol message buffered in memory (UTF-16 chars, so 2x in bytes). */
+    internal val maxMessageChars: Int = DEFAULT_MAX_MESSAGE_CHARS,
+    /** Upper bound on concurrently awaited commands; protects against unbounded growth. */
+    private val maxPendingRequests: Int = 10_000
 ) : CdpEventTransport {
+    private val scope: CoroutineScope = scope ?: CoroutineScope(SupervisorJob() + Dispatchers.IO +
+        CoroutineExceptionHandler { _, error ->
+            // Background protocol work must never vanish silently.
+            _connectionError.value = error.message ?: error.toString()
+            kmpwrightLogWarning("CDP connection background task failed", error)
+        })
     internal val downloadConfigurationMutex = kotlinx.coroutines.sync.Mutex()
     internal val configuredDownloadContexts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     internal val tracingOwner = java.util.concurrent.atomic.AtomicReference<Any?>(null)
@@ -62,7 +72,8 @@ internal class CdpConnection(
     private val eventListeners = ConcurrentHashMap<String, ConcurrentHashMap<Long, EventListener>>()
     private val nextListenerId = java.util.concurrent.atomic.AtomicLong()
 
-    private var webSocket: WebSocket? = null
+    @Volatile private var webSocket: WebSocket? = null
+    @Volatile private var httpClient: HttpClient? = null
     private val sendMutex = Mutex()
     private var listenerJob: Job? = null
     private var keepAliveJob: Job? = null
@@ -72,49 +83,48 @@ internal class CdpConnection(
      * Connects to the CDP WebSocket endpoint.
      */
     suspend fun connect() {
-        var client = HttpClient.newHttpClient()
-        if (proxy != null) {
-            val proxySelector = ProxySelector.of(InetSocketAddress(proxy.host, proxy.port))
-            client = HttpClient.newBuilder()
-                .proxy(proxySelector)
+        // A proxy needs a dedicated client; otherwise share one per connection
+        // and release it in close() (HttpClient is AutoCloseable on JDK 21+).
+        val client = if (proxy != null) {
+            HttpClient.newBuilder()
+                .proxy(ProxySelector.of(InetSocketAddress(proxy.host, proxy.port)))
                 .connectTimeout(java.time.Duration.ofMillis(connectionTimeoutMs))
                 .build()
-        }
+        } else HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofMillis(connectionTimeoutMs))
+            .build()
+        httpClient = client
         val builder = client.newWebSocketBuilder()
             .connectTimeout(java.time.Duration.ofMillis(connectionTimeoutMs))
 
         val listener = object : WebSocket.Listener {
-                private var textBuffer = StringBuilder()
+                private val assembler = CdpMessageAssembler(maxMessageChars)
 
                 override fun onOpen(webSocket: WebSocket) {
                     webSocket.request(1)
                 }
 
                 override fun onError(webSocket: WebSocket, error: Throwable) {
-                    _connectionError.value = error.message
-                    _isConnected.value = false
-                    failPending("CDP connection error: ${error.message.orEmpty()}")
+                    markDisconnected("CDP connection error: ${error.message.orEmpty()}", error.message)
                 }
 
                 override fun onClose(webSocket: WebSocket, code: Int, reason: String?): CompletionStage<*>? {
-                    _isConnected.value = false
-                    failPending("CDP connection closed ($code): ${reason.orEmpty()}")
+                    markDisconnected("CDP connection closed ($code): ${reason.orEmpty()}", null)
                     return null
                 }
 
                 override fun onText(webSocket: WebSocket, data: CharSequence, last: Boolean): CompletionStage<*>? {
-                    if (textBuffer.length.toLong() + data.length > 32L * 1024 * 1024) {
-                        textBuffer = StringBuilder()
-                        _connectionError.value = "CDP message exceeds its 64 MiB text memory budget"
-                        _isConnected.value = false
-                        failPending("CDP message exceeds its text memory budget")
-                        webSocket.abort()
-                        return null
+                    val message = when (val assembled = assembler.accept(data, last)) {
+                        null -> { webSocket.request(1); return null }
+                        is CdpMessageAssembler.Result.Oversized -> {
+                            // Fail only the command whose reply exceeded the
+                            // budget; the socket and every other command survive.
+                            failOversized(assembled)
+                            webSocket.request(1)
+                            return null
+                        }
+                        is CdpMessageAssembler.Result.Complete -> assembled.message
                     }
-                    textBuffer.append(data)
-                    if (!last) { webSocket.request(1); return null }
-                    val message = textBuffer.toString()
-                    if (textBuffer.capacity() > 1_048_576) textBuffer = StringBuilder() else textBuffer.clear()
                     val consumed = java.util.concurrent.CompletableFuture<Void>()
                     val job = scope.launch {
                         var acquired = 0
@@ -171,11 +181,23 @@ internal class CdpConnection(
 
     private suspend fun awaitResponse(id: Int, method: String, requestJson: String): CdpResponse {
         val socket = webSocket
-            ?: return CdpResponse(id = id, error = CdpError(-1, "CDP connection is not open"))
+        if (socket == null || !_isConnected.value) {
+            return CdpResponse(id = id, error = CdpError(-1,
+                "CDP connection is not open" + (_connectionError.value?.let { ": $it" } ?: "")))
+        }
+        if (pendingResponses.size >= maxPendingRequests) {
+            return CdpResponse(id = id, error = CdpError(-1,
+                "Too many CDP commands in flight ($maxPendingRequests); refusing $method"))
+        }
         return try {
             withTimeout(connectionTimeoutMs) {
                 val response = CompletableDeferred<CdpResponse>()
                 pendingResponses[id] = { response.complete(it) }
+                // failPending() may have run between the connectivity check and
+                // registration; never wait the full deadline on a dead socket.
+                if (!_isConnected.value && pendingResponses.remove(id) != null) {
+                    return@withTimeout CdpResponse(id = id, error = CdpError(-1, "CDP connection is not open"))
+                }
                 try {
                     // Java WebSocket permits only one pending text send. Hold the
                     // mutex until the send completes, then let replies arrive in
@@ -244,16 +266,44 @@ internal class CdpConnection(
      * Closes the WebSocket connection.
      */
     fun close() {
+        _isConnected.value = false
         try {
             keepAliveJob?.cancel()
             failPending("CDP connection closed")
-            webSocket?.sendClose(1000, "Closing")
+            webSocket?.let { socket ->
+                // sendClose completes asynchronously; abort afterwards so the
+                // input side never lingers when the peer does not answer.
+                socket.sendClose(1000, "Closing").whenComplete { _, _ -> socket.abort() }
+            }
             listenerJob?.cancel()
             scope.cancel()
         } catch (e: Exception) {
-            // Log but don't throw — close is best-effort
+            // close is best-effort
         }
+        webSocket = null
+        (httpClient as? AutoCloseable)?.let { runCatching { it.close() } }
+        httpClient = null
+    }
+
+    private fun markDisconnected(pendingMessage: String, error: String?) {
+        if (error != null) _connectionError.value = error
         _isConnected.value = false
+        failPending(pendingMessage)
+    }
+
+    private fun failOversized(result: CdpMessageAssembler.Result.Oversized) {
+        val description = "CDP message of ${result.length} chars exceeds the ${maxMessageChars}-char budget"
+        val id = result.id
+        if (id == null) {
+            // An oversized event cannot be delivered; record it without
+            // disturbing commands that are still in flight.
+            _connectionError.value = description
+            kmpwrightLogWarning("$description (event dropped)", null)
+            return
+        }
+        pendingResponses.remove(id)?.let { callback ->
+            try { callback(CdpResponse(id = id, error = CdpError(-1, description))) } catch (_: Throwable) {}
+        }
     }
 
     private fun startKeepAlive() {
@@ -265,13 +315,13 @@ internal class CdpConnection(
                 try {
                     ws.sendPing(ByteBuffer.wrap(ByteArray(0))).whenComplete { _, error ->
                         if (error != null) {
-                            _connectionError.value = error.message
-                            _isConnected.value = false
+                            markDisconnected("CDP keep-alive failed: ${error.message.orEmpty()}", error.message)
+                            ws.abort()
                         }
                     }
                 } catch (e: Exception) {
-                    _connectionError.value = e.message
-                    _isConnected.value = false
+                    markDisconnected("CDP keep-alive failed: ${e.message.orEmpty()}", e.message)
+                    ws.abort()
                 }
             }
         }
@@ -347,6 +397,58 @@ internal class CdpConnection(
     }
 }
 
+internal const val DEFAULT_MAX_MESSAGE_CHARS = 32 * 1024 * 1024
+
+/**
+ * Reassembles fragmented WebSocket text frames under a memory budget.
+ *
+ * Messages above [maxChars] are not buffered: only a short prefix is kept so
+ * the command id can be recovered (Chromium always serializes `id` first in
+ * replies) and the single affected command failed, instead of aborting the
+ * whole socket.
+ */
+internal class CdpMessageAssembler(private val maxChars: Int) {
+    sealed interface Result {
+        data class Complete(val message: String) : Result
+        data class Oversized(val id: Int?, val length: Long) : Result
+    }
+
+    private var buffer = StringBuilder()
+    private var oversizedHead: StringBuilder? = null
+    private var oversizedLength = 0L
+
+    fun accept(data: CharSequence, last: Boolean): Result? {
+        val head = oversizedHead
+        if (head != null) {
+            oversizedLength += data.length
+            if (head.length < HEAD_CHARS) head.append(data, 0, minOf(data.length, HEAD_CHARS - head.length))
+        } else if (buffer.length.toLong() + data.length > maxChars) {
+            val prefix = StringBuilder(HEAD_CHARS)
+            prefix.append(buffer, 0, minOf(buffer.length, HEAD_CHARS))
+            if (prefix.length < HEAD_CHARS) prefix.append(data, 0, minOf(data.length, HEAD_CHARS - prefix.length))
+            oversizedLength = buffer.length.toLong() + data.length
+            oversizedHead = prefix
+            buffer = StringBuilder()
+        } else {
+            buffer.append(data)
+        }
+        if (!last) return null
+        oversizedHead?.let { prefix ->
+            oversizedHead = null
+            val id = LEADING_ID.find(prefix)?.groupValues?.get(1)?.toIntOrNull()
+            return Result.Oversized(id, oversizedLength).also { oversizedLength = 0 }
+        }
+        val message = buffer.toString()
+        if (buffer.capacity() > 1_048_576) buffer = StringBuilder() else buffer.clear()
+        return Result.Complete(message)
+    }
+
+    private companion object {
+        const val HEAD_CHARS = 256
+        val LEADING_ID = Regex("""^\s*\{\s*"id"\s*:\s*(\d+)""")
+    }
+}
+
 /**
  * Factory for creating CDP connections.
  */
@@ -368,7 +470,7 @@ internal object CdpConnectionFactory {
      * Auto-discovers a local Chrome and returns a connection, or null.
      */
     suspend fun connectToLocalChrome(timeoutMs: Long = 10_000): CdpConnection? {
-        val wsUrl = ChromeDiscovery.discoverChromeWsUrl() ?: return null
+        val wsUrl = withContext(Dispatchers.IO) { ChromeDiscovery.discoverChromeWsUrl() } ?: return null
         val conn = CdpConnection(wsUrl, timeoutMs)
         conn.connect()
         return conn

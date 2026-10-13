@@ -2,7 +2,7 @@ package com.bernaferrari.kmpwright.core
 
 /** Physical print dimensions, expressed in inches at the protocol boundary. */
 internal fun PdfOptions.paperSizeInches(): Pair<Double, Double> {
-    val portrait = when (format) {
+    val portrait = when (format ?: PdfFormat.Letter) {
         PdfFormat.Letter -> 8.5 to 11.0
         PdfFormat.Legal -> 8.5 to 14.0
         PdfFormat.Tabloid -> 11.0 to 17.0
@@ -14,7 +14,7 @@ internal fun PdfOptions.paperSizeInches(): Pair<Double, Double> {
         PdfFormat.A4 -> 210.0 / 25.4 to 297.0 / 25.4
         PdfFormat.A5 -> 148.0 / 25.4 to 210.0 / 25.4
         PdfFormat.A6 -> 105.0 / 25.4 to 148.0 / 25.4
-        PdfFormat.Content -> throw UnsupportedOperationException("Content canvas PDFs require WKWebView")
+        PdfFormat.Content -> throw KmpwrightUnsupportedException("Content canvas PDFs require WKWebView")
     }
     val size = (width ?: portrait.first) to (height ?: portrait.second)
     require(size.first.isFinite() && size.second.isFinite() && size.first > 0 && size.second > 0) { "PDF dimensions must be positive inches" }

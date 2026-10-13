@@ -36,9 +36,9 @@ class BrowserReuseTest {
         controller.localStorage["token"] = "123"
         controller.sessionStorage["draft"] = "hello"
 
-        page.route(".*") { RouteHandler.Fallthrough }
+        page.route(".*") { it.fallback() }
         page.setExtraHTTPHeaders(mapOf("X-Test" to "1"))
-        page.setHTTPCredentials("user", "pass")
+        page.setHTTPCredentials(HttpCredentials("user", "pass"))
 
         resetPageForReuse(page)
 
@@ -60,7 +60,7 @@ class BrowserReuseTest {
                 override suspend fun evaluateJavaScriptAsync(script: String): String? = null
             }
 
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
     }
@@ -111,12 +111,9 @@ class BrowserReuseTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
         override fun removeRouteHandler(urlPattern: String) {}
         override fun removeAllRouteHandlers() {}
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
         override fun setCookie(cookie: Cookie) {
             cookies.removeAll { it.name == cookie.name && it.domain == cookie.domain }
             cookies.add(cookie)
@@ -141,7 +138,6 @@ class BrowserReuseTest {
             recordedHttpCredentials = if (username != null && password != null) username to password else null
             return true
         }
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
 
         private fun executeStorageScript(script: String): String? {
             val setItemRegex = Regex("""(localStorage|sessionStorage)\.setItem\('([^']*)',\s*'([^']*)'\)""")

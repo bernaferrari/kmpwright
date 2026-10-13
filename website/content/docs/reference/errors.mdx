@@ -1,0 +1,219 @@
+---
+title: Errors
+description: The exception types KMPwright throws, which failures are returned instead of thrown, and what the common error messages (actionability, selectors, stale refs, crashes, policies, origins, capabilities) mean.
+---
+
+```kotlin
+try {
+    page.getByRole("button", name = "Save").click(ClickOptions(timeoutMs = 5_000))
+} catch (e: KmpwrightTimeoutException) {
+    // "Element role=button[...] is not enabled after 5000ms while trying to click: <button disabled>"
+} catch (e: KmpwrightUnsupportedException) {
+    // this backend cannot do it at all; see page.capabilities()
+} catch (e: KmpwrightException) {
+    // any other KMPwright failure
+}
+```
+
+## Exception types
+
+| Type | Thrown for |
+|---|---|
+| `KmpwrightException(message, cause = null)` | Every KMPwright failure: script errors, invalid selectors, closed pages, policy denials, disabled features. `open`, extends `Exception`. Wrapping failures keep their `cause`. |
+| `KmpwrightTimeoutException(message, cause = null)` | An operation did not finish within its timeout. Extends `KmpwrightException`, so `catch (e: KmpwrightException)` also catches timeouts. |
+| `KmpwrightUnsupportedException(message, cause = null)` | The backend (or the page's configuration) lacks a capability: downloads on WebViews, CDP-only APIs, throttling on WebViews, disabled native input, unmet `requireCapabilities`. Extends `KmpwrightException`. Check [Capabilities](/docs/platforms/capabilities) first. |
+| `KmpwrightAssertionError(message, cause = null)` | An `expect(...)` assertion did not hold in time. Extends Kotlin's `AssertionError`, **not** `KmpwrightException`, so `catch (e: KmpwrightException)` does not catch it. |
+| `IllegalArgumentException` (Kotlin) | Invalid arguments, mostly from option constructors and validation: "Startup timeout must be between one and 120 seconds", "fullPage and clip are mutually exclusive", "Screenshot scale must be positive", "Autosave password must not be blank; pass null to write plaintext". |
+| `IllegalStateException` (Kotlin) | Misuse of the host: creating an Android `Browser` off the main thread, `browser.page()` when no page exists on Android or iOS. |
+
+KMPwright converts its own timeouts to `KmpwrightTimeoutException` and never lets `kotlinx.coroutines.TimeoutCancellationException` escape a page API, because that type is a `CancellationException` and would silently cancel your coroutine. Cancellation of your own coroutine (including an outer `withTimeout`) propagates unchanged. One exception today: when Chromium does not publish its endpoint within `BrowserLaunchOptions.startupTimeoutMs`, `launchBrowser` fails with `TimeoutCancellationException`.
+
+`page.requireCapabilities(...)` throws `KmpwrightUnsupportedException` ("Page capability requirements are not satisfied: …").
+
+<Callout type="error">
+From Swift, any Kotlin exception other than `CancellationException` thrown by a KMPwright `suspend` function terminates the app, because the API has no `@Throws` annotations. Call KMPwright through your own Kotlin wrapper. See [iOS](/docs/platforms/ios#calling-from-swift).
+</Callout>
+
+## Returned, not thrown
+
+Some failures are values, like in Playwright:
+
+| API | Failure |
+|---|---|
+| `goto`, `reload`, `goBack`, `goForward`, `pushState`, `waitForNavigation` | `NavigationResult(ok = false, error = "…")` for blocked, refused or failed navigations, and `ok = false` with `error = null` for a committed 4xx/5xx page. Only a timeout (and a few pre-checks below) throw. |
+| `goBack`, `goForward` | `null` when there is no history entry. |
+| `waitForNavigation(options)` (without an action) | `null` on timeout. |
+| `waitForEvent` | `null` on timeout. |
+| `Locator.isVisible`, `count`, `textContent`… | `false`, `0`, `null` when nothing matches (see [Locator queries](/docs/reference/locator#locator-queries)). |
+| `PageEvents.response` / `waitForResponse` | A failed request arrives as a `Response` with status 0 and the network error in `statusText`. |
+
+## Timeouts
+
+All are `KmpwrightTimeoutException`. `N` is the timeout that applied.
+
+| Message | Meaning |
+|---|---|
+| `Timeout Nms exceeded while navigating to "url"` | `goto` did not reach `waitUntil`. Also "while reloading", "while going back", "while going forward". |
+| `Timeout Nms exceeded waiting for network idle after navigating to url` | `waitUntil = NetworkIdle` did not settle (500 ms without requests). |
+| `Timeout Nms exceeded waiting for load` / `DOMContentLoaded` / `network idle` | `waitForLoadState`. |
+| `Timeout Nms exceeded waiting for a URL …` | `waitForURL`. |
+| `Timeout Nms exceeded waiting for a request …` / `a response …` | `waitForRequest` / `waitForResponse`. |
+| `Timeout Nms exceeded waiting for text "…"` | `waitForText`. |
+| `Timeout Nms exceeded waiting for JavaScript condition` | `waitForFunction`. |
+| `Timeout Nms exceeded waiting for '…' to be visible` | `locator.waitFor` / `page.waitForSelector` (also attached, detached, hidden). |
+| `Timeout Nms exceeded waiting for a dialog` / `download` / `file chooser` | The matching `waitFor*`. |
+| `No navigation matching … happened within the timeout` | Action-scoped `waitForNavigation { }`. |
+| `Timeout Nms exceeded evaluating JavaScript` / `evaluating a page script` | A script did not return in time. |
+| `Timeout Nms exceeded while performing tap` (or other gesture) | Native input through `page.touchscreen`, `page.mouse`, `page.keyboard`. |
+| `Timeout reading HTTP content` | `page.read` / `HttpReader` exceeded `ReadOptions.timeoutMs`. |
+
+## Assertion failures
+
+`expect(...)` matchers throw `KmpwrightAssertionError` (an `AssertionError`):
+
+```text
+Expected Locator(#status) to have text "Saved", but it did not happen within 30000ms (last error: …)
+Expected page not to have URL "https://example.com/login", but it did not happen within 5000ms
+```
+
+`last error` is the last `KmpwrightException` the condition threw, for example a strict-mode violation. See [Assertions](/docs/reference/assertions).
+
+## Actionability
+
+Locator actions retry until the element is ready. On timeout:
+
+```text
+Element <target> <reason> after <N>ms while trying to <action>: <element description>
+```
+
+`<target>` is the selector (or the ref, such as `@e3`). `<action>` is `click`, `double-click`, `tap`, `fill`, `type into`, `press Enter on`, `hover`, `select an option in`, `drag`, `focus`…
+
+| Reason | What to do |
+|---|---|
+| `was not found` | Nothing matches. Check the selector, or take a fresh snapshot if it is a ref. |
+| `was detached from the DOM` | The element was removed while acting; usually a re-render. |
+| `is not visible` | Hidden, zero-size or off-layout. Wait for it, or scroll its container. |
+| `is not enabled` | `disabled` or `aria-disabled`. |
+| `is not editable (Element is read-only)` | `fill` target is `readonly` or `aria-readonly`. |
+| `is not stable (still moving or animating)` | Its box changed between two animation frames. |
+| `would not receive the click: it is covered by <element> (pass force = true only when that is intended)` | Another element (overlay, cookie banner, sticky header) is on top at the click point. |
+| `has no option matching "…"` | `selectOption` value or label not present. |
+
+Errors that retrying cannot fix fail immediately with `KmpwrightException`:
+
+| Message | Meaning |
+|---|---|
+| `Cannot fill '…': Input of type "checkbox" cannot be filled: …` | Use `check()` / `setChecked()`. Same for other non-text input types. |
+| `Cannot fill '…': Element is not an <input>, <textarea>, <select> or [contenteditable] element: …` | Target the input itself. |
+| `Element … is not a checkbox or radio button` | `check`, `uncheck`, `setChecked`, `isChecked` on another element. |
+| `Cannot uncheck radio button …; check another option in its group instead` | Radios cannot be unchecked. |
+| `Clicking … did not check it` | The click did not change the state (custom widget). |
+| `Strict mode violation: '…' resolved to N elements (…). Use first(), last(), nth() or a more specific selector.` | The selector is ambiguous with `strictSelectors = true`. |
+| `… needs a locator created by the same page` / `dragTo target must belong to the same page` | `and`, `or`, `has`, `hasNot` or `dragTo` received a locator from another page. |
+| `Annotated screenshots are page screenshots; use page.screenshot(ScreenshotOptions(annotate = true))` | `annotate = true` on `Locator.screenshot`. |
+
+## Selectors and refs
+
+| Message | Meaning |
+|---|---|
+| `Invalid selector "…": …` | CSS the browser cannot parse. |
+| `Invalid selector: bad regular expression …` | A `text=/…/` (or similar) regex does not compile. |
+| `Invalid selector: role=…` / `Invalid selector: cannot parse role attributes in "role=…"` | Malformed `role=` selector. |
+| `Invalid selector "xpath=…": …` | Invalid XPath. |
+| `@e3: Unknown ref @e3 — run snapshot again` | The ref is not in the latest snapshot. Refs are cleared on navigation and replaced by every `snapshot()`. Thrown immediately; refs never auto-wait. |
+| `@e3: Ref @e3 is no longer attached — run snapshot again` | The element behind the ref was removed from the page. |
+| `No element found for '…'. Refresh the snapshot if this is a stale reference.` | A single-element read found nothing. |
+| `The page replaced or pre-defined the KMPwright runtime slot; refusing to automate this document` | The page tampered with KMPwright's in-page runtime. KMPwright stops rather than trusting forged results. |
+| `Selector helpers are disabled by KmpwrightConfig.installMode` | `installMode = Disabled`. |
+
+## Page lifecycle and crashes
+
+| Message | Meaning |
+|---|---|
+| `Page is closed` | The page (or its browser) was closed or disposed. Create a new page. |
+| `Page closed during operation` / `Page closed during navigation` | The page closed while the call was waiting. |
+| `Page crashed: the Android WebView renderer process crashed` / `was killed by the system` | Android renderer died during a navigation or evaluation (`NavigationResult.error` or exception). |
+| `Page crashed: the Android WebView renderer process is gone` | Any later call on that page. Recreate the WebView and `Browser`; see [Android](/docs/platforms/android#renderer-crashes). |
+| `Tab index N out of range (0..M)` | `switchToTab` / `closeTab`. |
+| `Tab management is not supported for pages detached from a browser runtime.` | `openNewTab` on a page not created by a `Browser`. |
+
+## Policies, origins and domains
+
+| Message | Where | Meaning |
+|---|---|---|
+| `Action denied by policy: Click` | Thrown | The page's `ActionPolicy` denies this `ActionType` or the current host. |
+| `Action Navigate requires confirmation but no confirm callback is set` | Thrown | The policy says `Confirm`; call `setPolicyConfirmCallback`. |
+| `Action denied by user confirmation: Navigate` | Thrown | The confirm callback returned false. |
+| `Navigation origin is not allowed by KmpwrightConfig: url` | Thrown by `goto` | `url` is outside `KmpwrightConfig.allowedOriginRules`. |
+| `Committed navigation origin is not allowed by KmpwrightConfig: url` | `NavigationResult.error` | A navigation (redirect, link) landed outside `allowedOriginRules`. |
+| `Navigation denied by action policy: url` / `Navigation origin is not allowed by policy: url` | `NavigationResult.error` | A WebView navigation refused by the policy or origin rules. |
+| `Blocked by KMPwright domain filter: host` (optionally `(redirected to url)`) | `NavigationResult.error` | `setAllowedDomains` blocked the navigation or its redirect. Blocked subresources fail as network errors. |
+| `Domain filter entry '…' is not a host name or '*.' wildcard` | Thrown | Invalid `setAllowedDomains` entry. |
+| `Frame origin is not allowed by KmpwrightConfig: url` | Thrown (JVM) | A frame operation targeted a disallowed origin. |
+| `HTTP read origin is not allowed: url` / `HTTP read domain is not allowed: host` | Thrown | `page.read` blocked by `allowedOriginRules` or `ReadOptions.allowedDomains`. |
+
+## Disabled by configuration
+
+| Message | Setting |
+|---|---|
+| `JavaScript evaluation is disabled…` / `Script insertion is disabled by KmpwrightConfig.allowEval` | `allowEval = false` |
+| `DOM extraction is disabled…` / `HAR capture is disabled…` / `Response body access is disabled…` / `HTTP content extraction is disabled…` | `allowDomExtraction = false` |
+| `Trace export is disabled by KmpwrightConfig.enableTraceExport` | `enableTraceExport = false` with `TracingOptions.path` |
+| `Native touch is disabled by InputMode.JsOnly` / `Native mouse requires InputMode.Hybrid` / `Native keyboard requires InputMode.Hybrid` | `inputMode` (`KmpwrightUnsupportedException`) |
+| `Debug mode cannot be enabled when KmpwrightConfig.productionMode is true` | `productionMode` with `debug.enabled` (`IllegalArgumentException`) |
+
+## Unsupported on this backend
+
+All `KmpwrightUnsupportedException`:
+
+| Message | Backend |
+|---|---|
+| `Android WebView does not currently surface download events.` (also file chooser, download path, download behavior) | Android |
+| `WKWebView does not currently surface download events.` (same family) | iOS |
+| `Android WebView cannot provide isolated BrowserContext semantics in-process. …` | Android `newContext()` |
+| `Browser target discovery requires CDP` / `… attachment …` / `… activation …` / `… closing …` / `Browser windows require CDP` | Android, iOS |
+| `Tracing is unavailable on this backend` / `Profiling …` / `Video recording …` / `Screencast …` / `HAR capture …` / `File chooser interception …` / `Response body retrieval …` | Backends without that hook |
+| `This backend cannot throttle latency or throughput; only offline emulation is available (see PageCapabilities.networkEmulation).` | Android, iOS |
+| `Android WebView device scale is determined by the host display` / `WKWebView device scale is determined by the host screen` | `setDeviceScaleFactor` |
+| `ScreenshotOptions.omitBackground is not supported on Android WebView: …` / `… on iOS WKWebView: …` / `WEBP screenshots are not supported on iOS (ImageIO cannot encode WebP); use PNG or JPEG` | `screenshot()` options |
+| `Cookie attribute reads require WebView GET_COOKIE_INFO support` | Android `cookies()` on an old WebView provider |
+| `Android PDF capture supports paper size, orientation and margins; …` / `WKWebView PDF export supports only the content canvas (format null or Content) with zero margins, …` | `pdf()` options |
+| `WKWebView cannot synthesize a trusted native pinch gesture` | iOS `touchscreen.pinch` |
+| `Desktop browser process launch requires the JVM backend` / `Desktop Chrome profiles are unavailable on native WebViews` | `launchBrowser`, `ChromeProfiles` on mobile |
+| `This CDP endpoint is page-scoped. Open a browser-scoped endpoint to manage multiple pages.` / `Target management requires a browser-scoped CDP endpoint` | JVM with a `/devtools/page/…` endpoint |
+
+Related plain `KmpwrightException`s: `setInputFiles is not supported in mobile WebView`, `This backend cannot apply extra HTTP headers securely without exposing them to page JavaScript.`, `This Android WebView does not support document-start scripts`.
+
+## Connection and launch (JVM)
+
+| Message | Meaning |
+|---|---|
+| `No CDP config provided` | `KmpwrightConfig.cdp` is null. |
+| `No CDP connection configured. Set cdp.websocketUrl or cdp.provider in KmpwrightConfig.` | `CdpConfig` has neither. |
+| `Unable to resolve CDP endpoint: url` | No WebSocket found behind the http(s) URL. |
+| `Failed to connect to CDP: …` | The WebSocket connection failed. |
+| `No running Chrome instance found. Start Chrome with --remote-debugging-port=9222` | `CloudProvider.AutoConnect` found nothing. |
+| `BROWSERBASE_API_KEY environment variable not set` (and the other providers' keys) | Missing provider credential. |
+| `Provider API error <status>` | The provider's session API returned a non-2xx status. |
+| `Could not launch Chromium: …` | The executable could not start. |
+| `Chromium exited before publishing a debugging endpoint (code N)` | Chromium crashed at startup; check the path and flags. |
+| `Isolated Chromium CA trust is supported only on Linux` / `Isolated CA trust requires NSS certutil (libnss3-tools/nss-tools): …` | `caCertificatePath` prerequisites. |
+| `ffmpeg is required before recording: …` | `page.video.start` without ffmpeg. |
+| `Tracing is already owned by another page on this browser` | Only one page per browser can trace at a time. |
+
+`browser.connectionError` (a `StateFlow<String?>`) holds the last connection failure, for example "CDP connection disconnected".
+
+## Network and storage
+
+| Message | Meaning |
+|---|---|
+| `Route is already handled` | A route handler called `fulfill`, `abort`, `resume` or `fallback` twice. |
+| `Route fulfill status must be within 100..599, was N` | Invalid `fulfill(status)`. |
+| `Route continue overrides support only http(s) URLs: …` / `Route continue received an unfollowable redirect (3xx) from …` | Android `route.resume(...)` with overrides. |
+| `Download of url was not saved to disk; set a download path first` | `Download.saveAs` without `setDownloadPath`. |
+| `Storage state file not found: path` / `Could not decrypt Storage state path (wrong password?)` / `Storage state path is not valid plaintext; pass its password` | `StorageState.load`. |
+| `Cannot restore localStorage/sessionStorage without a saved http(s) or file URL.` | `setStorageState` with storage but no usable URL. |
+| `Kmpwright storage is not initialized on Android. …` | Call `KmpwrightAndroid.initialize(context)` or create a `Browser` first. |
+| `Auth profile not found: name` | `AuthManager.load` for a missing profile. |
+| `Page capability requirements are not satisfied: …` | `requireCapabilities` found unmet requirements (`KmpwrightUnsupportedException`). |
+| ``Unknown command `name`. Run `help` to list commands.`` / `Usage: …` | `page.runCommand` received an unknown or malformed command. |

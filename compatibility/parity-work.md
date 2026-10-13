@@ -66,13 +66,13 @@ the table look complete.
 
 - React APIs passed a local React 19.3 application fixture, including Flight-first registration, component inspection, state-change render profiling, Suspense transitions and cleanup. The full suite then passed 811 JVM tests, 30 iOS contracts and both Android examples; the current Android instrumentation APK compiled. Nested OOPIF frames and inherited overlay checks passed expanded real Chrome checks. WebMCP observes tools before navigation and invokes tools across frame sessions; explicit cross-origin `allow="tools"` is required by Chromium.
 
-- HTTP reader/network history checkpoint passed 828 JVM tests with real Chrome/React, 37 iOS contracts and Android/shared compilation. History retains bounded request hops across navigation, and CDP bodies are available without HAR capture. Redirect/query resolution received additional contract cases. Async page/browser shutdown now awaits owned React cleanup; canceled native mouse actions release acquired buttons, preserving caller-held buttons. Android before-unload callbacks use the same asynchronous dialog path as confirms.
+- HTTP reader/network history checkpoint passed 828 JVM tests with real Chrome/React, 37 iOS contracts and Android/shared compilation. History retains bounded request hops across navigation, and CDP bodies are available without HAR capture. Redirect/query resolution received additional contract cases. Suspending page/browser `close()` now awaits owned React cleanup; canceled native mouse actions release acquired buttons, preserving caller-held buttons. Android before-unload callbacks use the same asynchronous dialog path as confirms.
 
 - Role/screencast checkpoint passed 833 JVM tests with real Chrome/React, 37 iOS contracts and Android/shared compilation. Role queries use browser AX metadata in root/shadow/nested OOPIF scopes, including dynamically appearing progress bars. Frame ownership tests traverse 150 replacement targets without exhausting attachments. Screencast collectors use independent sessions and bounded latest-frame delivery; tests verify start failures, first-frame cancellation and page-close cleanup. Capabilities now advertise all new browser API groups.
 
 - All 54 current Android instrumentation tests passed in 89 seconds on an isolated API 36 arm64 emulator, using one activity for the class. This covers new asynchronous dialogs, document-start scripts, vitals and router navigation. The owner's existing emulator remained untouched; the temporary test instance/data were removed afterward.
 
-## Latest browser checkpoint
+## Browser checkpoint — 2026-10-11
 
 859 JVM tests and 39 iOS simulator contracts passed, with no skipped tests.
 The JVM run includes real Chrome/React, native AX hierarchy/scopes, root/nested
@@ -80,7 +80,7 @@ OOPIF input and chooser upload, frame request bodies and HAR export, trusted
 cursor pixels in encoded MP4, 60 FPS WebM, launch/profile reuse and copied profiles,
 private HTTP certificate trust, hostname rejection, cancellation and cleanup.
 Both Android examples, Compose lint and fresh instrumentation APKs built.
-The shared examples expose HAR capture and session snapshots alongside the
+The shared examples expose HAR capture and storage-state snapshots alongside the
 reader, network history, React, axe, vitals and router controls.
 
 The checkbox completion records the Kotlin adaptation within each advertised
@@ -104,3 +104,18 @@ for the retained test totals and runtime verification limits.
 The final shared Compose iOS release framework passed after the new HAR/session
 example controls. The last JVM checkpoint includes the already-detached iframe
 cleanup regression (859 tests, no failures or skips).
+
+## Reliability checkpoint — 2026-10-13
+
+The full JVM suite passed 947 tests without failures or skips, including actual
+Chromium and React documents. All 85 iOS tests passed inside an app host, which
+executes the WKWebView document contracts that the older simulator checkpoint
+could not exercise. Android passed all 67 instrumentation tests on the task's
+arm64 emulator in 245.57 seconds, with activity reuse within each class.
+
+The latest review's ten findings and the additional request migration, recording
+clock and frame-input deadline repairs are described in
+[reliability-review.md](reliability-review.md). ABI validation, Compose lint,
+the Android example and the website's type/lint/production checks passed.
+The current artifact-consumer results and remaining runtime limits are retained
+in [validation-checkpoint.json](validation-checkpoint.json).

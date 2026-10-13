@@ -1,34 +1,20 @@
 package com.bernaferrari.kmpwright.core
 
 /**
- * Compatibility facade for backend controllers.
- *
- * Keep this public aggregate stable while implementation code can accept a
- * capability-scoped supertype. Existing backend implementations and mocks
- * remain source-compatible because all ports retain the former signatures and
- * defaults.
+ * Aggregate port implemented by every backend controller; implementation code can accept a
+ * capability-scoped supertype instead.
  */
-interface WebViewController :
+internal interface WebViewController :
     WebViewNavigationController,
     WebViewNetworkController,
     WebViewCookieStateController,
     WebViewLocatorController,
+    WebViewEmulationController,
+    WebViewDiagnosticsController,
     WebViewLifecycleController
 
-sealed class RouteAction {
-    data class Fulfill(
-        val status: Int,
-        val headers: Map<String, String>,
-        val body: String,
-        val contentType: String,
-        val bodyBytes: ByteArray? = null
-    ) : RouteAction()
-    data class Abort(val errorCode: String) : RouteAction()
-    data class Continue(val url: String?, val method: String?, val headers: Map<String, String>?, val postData: String?) : RouteAction()
-    data object Fallthrough : RouteAction()
-}
-
-data class Cookie(
+/** A browser cookie, like Playwright's `Cookie`. [expires] is Unix epoch seconds; null is a session cookie. */
+public data class Cookie(
     val name: String,
     val value: String,
     val domain: String,
@@ -41,15 +27,26 @@ data class Cookie(
     val hostOnly: Boolean = !domain.startsWith(".")
 )
 
-interface RequestListener {
+internal interface RequestListener {
     fun onRequestStarted(request: Request)
     fun onResponseReceived(response: Response)
     fun onRequestFinished(request: Request)
     fun onRequestFailed(request: Request, error: String)
 }
 
-interface DialogListener {
-    fun onDialog(type: DialogType, message: String, defaultPrompt: String?): DialogResponse
-    suspend fun onDialogAsync(type: DialogType, message: String, defaultPrompt: String?): DialogResponse =
-        onDialog(type, message, defaultPrompt)
+/** Receives JavaScript dialogs from a backend; the backend applies the returned response. */
+internal interface DialogListener {
+    suspend fun onDialogAsync(type: DialogType, message: String, defaultPrompt: String?): DialogResponse
+
+    /**
+     * Whether automation currently answers dialogs. When false, a backend may show its native dialog
+     * UI instead of calling [onDialogAsync] (which would dismiss).
+     */
+    val hasDialogHandlers: Boolean get() = true
+
+    /**
+     * A dialog the backend leaves to the host or native UI (no automation handler); reported so
+     * [PageEvents.dialog] still observes it.
+     */
+    fun onDialogObserved(type: DialogType, message: String, defaultPrompt: String?) {}
 }

@@ -24,11 +24,36 @@ import kotlin.math.ceil
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-class AndroidScreenshotController(
+internal class AndroidScreenshotController(
     private val webView: WebView,
     private val config: KmpwrightConfig = KmpwrightConfig()
 ) : ScreenshotController {
     private val maxBitmapBytes = 128L * 1024L * 1024L
+    /** Output encoding for this capture; set by [capture] (instances are per capture). */
+    private var outputFormat: ScreenshotFormat = ScreenshotFormat.PNG
+    private var outputQuality: Int = 90
+
+    /**
+     * Honors [ScreenshotOptions.format] and [ScreenshotOptions.quality]. Android WebView always
+     * paints its own background, so [ScreenshotOptions.omitBackground] is rejected.
+     */
+    override suspend fun capture(options: ScreenshotOptions): ScreenshotResult {
+        require(options.scale.isFinite() && options.scale > 0) { "Screenshot scale must be positive" }
+        require(options.quality in 0..100) { "Screenshot quality must be between 0 and 100" }
+        if (options.omitBackground) {
+            throw KmpwrightUnsupportedException(
+                "ScreenshotOptions.omitBackground is not supported on Android WebView: it always paints an opaque page background"
+            )
+        }
+        outputFormat = options.format
+        outputQuality = options.quality
+        val clip = options.clip
+        return when {
+            options.fullPage -> captureFullPage(options.scale)
+            clip != null -> captureClip(clip.x, clip.y, clip.width, clip.height, options.scale)
+            else -> captureViewport(options.scale)
+        }
+    }
 
     override suspend fun captureViewport(scale: Double): ScreenshotResult = withContext(Dispatchers.Main) {
         ensureLaidOut()
@@ -38,15 +63,11 @@ class AndroidScreenshotController(
         validateBitmapSize(scaledWidth, scaledHeight, "viewport screenshot")
 
         val bitmap = captureVisibleViewportBitmap(viewportScale, "viewport screenshot")
-        val outputStream = java.io.ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-        bitmap.recycle()
-
-        ScreenshotResult(
-            bytes = outputStream.toByteArray(),
-            width = scaledWidth,
-            height = scaledHeight
-        )
+        try {
+            ScreenshotResult(bytes = bitmap.encode(), width = scaledWidth, height = scaledHeight)
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     override suspend fun captureFullPage(scale: Double): ScreenshotResult = withContext(Dispatchers.Main) {
@@ -71,72 +92,68 @@ class AndroidScreenshotController(
             webView.isHorizontalScrollBarEnabled = false
 
             val stitched = createBitmap(scaledWidth, scaledHeight, "stitched full-page screenshot")
-            val stitchedCanvas = Canvas(stitched)
-            var documentY = 0
+            try {
+                val stitchedCanvas = Canvas(stitched)
+                var documentY = 0
 
-            while (documentY < pageDims.contentHeight) {
-                var documentX = 0
-                var rowCaptureHeight = 0
+                while (documentY < pageDims.contentHeight) {
+                    var documentX = 0
+                    var rowCaptureHeight = 0
 
-                while (documentX < pageDims.contentWidth) {
-                    // WebView.scrollY can report an offset beyond the renderer’s
-                    // clamped viewport. Clamp before computing the final tile crop.
-                    scrollToAndWait(
-                        documentX.coerceAtMost((pageDims.contentWidth - pageDims.viewportWidth).coerceAtLeast(0)),
-                        documentY.coerceAtMost((pageDims.contentHeight - pageDims.viewportHeight).coerceAtLeast(0))
-                    )
-
-                    val actualX = webView.scrollX.coerceAtLeast(0)
-                    val actualY = webView.scrollY.coerceAtLeast(0)
-                    if (documentX > actualX + pageDims.viewportWidth - 1 ||
-                        documentY > actualY + pageDims.viewportHeight - 1) {
-                        break
-                    }
-                    val sourceX = (documentX - actualX).coerceIn(0, pageDims.viewportWidth - 1)
-                    val sourceY = (documentY - actualY).coerceIn(0, pageDims.viewportHeight - 1)
-                    val captureWidth = min(pageDims.viewportWidth - sourceX, pageDims.contentWidth - documentX)
-                    val captureHeight = min(pageDims.viewportHeight - sourceY, pageDims.contentHeight - documentY)
-
-                    if (captureWidth <= 0 || captureHeight <= 0) break
-
-                    val viewportBitmap = captureVisibleViewportBitmap(pageScale, "full-page screenshot tile")
-                    try {
-                        val srcRect = Rect(
-                            (sourceX * pageScale).roundToInt(),
-                            (sourceY * pageScale).roundToInt(),
-                            ((sourceX + captureWidth) * pageScale).roundToInt().coerceAtMost(viewportBitmap.width),
-                            ((sourceY + captureHeight) * pageScale).roundToInt().coerceAtMost(viewportBitmap.height)
+                    while (documentX < pageDims.contentWidth) {
+                        // WebView.scrollY can report an offset beyond the renderer’s
+                        // clamped viewport. Clamp before computing the final tile crop.
+                        scrollToAndWait(
+                            documentX.coerceAtMost((pageDims.contentWidth - pageDims.viewportWidth).coerceAtLeast(0)),
+                            documentY.coerceAtMost((pageDims.contentHeight - pageDims.viewportHeight).coerceAtLeast(0))
                         )
-                        val dstRect = Rect(
-                            (documentX * pageScale).roundToInt(),
-                            (documentY * pageScale).roundToInt(),
-                            ((documentX + captureWidth) * pageScale).roundToInt().coerceAtMost(stitched.width),
-                            ((documentY + captureHeight) * pageScale).roundToInt().coerceAtMost(stitched.height)
-                        )
-                        if (!srcRect.isEmpty && !dstRect.isEmpty) {
-                            stitchedCanvas.drawBitmap(viewportBitmap, srcRect, dstRect, null)
+
+                        val actualX = webView.scrollX.coerceAtLeast(0)
+                        val actualY = webView.scrollY.coerceAtLeast(0)
+                        if (documentX > actualX + pageDims.viewportWidth - 1 ||
+                            documentY > actualY + pageDims.viewportHeight - 1) {
+                            break
                         }
-                    } finally {
-                        viewportBitmap.recycle()
+                        val sourceX = (documentX - actualX).coerceIn(0, pageDims.viewportWidth - 1)
+                        val sourceY = (documentY - actualY).coerceIn(0, pageDims.viewportHeight - 1)
+                        val captureWidth = min(pageDims.viewportWidth - sourceX, pageDims.contentWidth - documentX)
+                        val captureHeight = min(pageDims.viewportHeight - sourceY, pageDims.contentHeight - documentY)
+
+                        if (captureWidth <= 0 || captureHeight <= 0) break
+
+                        val viewportBitmap = captureVisibleViewportBitmap(pageScale, "full-page screenshot tile")
+                        try {
+                            val srcRect = Rect(
+                                (sourceX * pageScale).roundToInt(),
+                                (sourceY * pageScale).roundToInt(),
+                                ((sourceX + captureWidth) * pageScale).roundToInt().coerceAtMost(viewportBitmap.width),
+                                ((sourceY + captureHeight) * pageScale).roundToInt().coerceAtMost(viewportBitmap.height)
+                            )
+                            val dstRect = Rect(
+                                (documentX * pageScale).roundToInt(),
+                                (documentY * pageScale).roundToInt(),
+                                ((documentX + captureWidth) * pageScale).roundToInt().coerceAtMost(stitched.width),
+                                ((documentY + captureHeight) * pageScale).roundToInt().coerceAtMost(stitched.height)
+                            )
+                            if (!srcRect.isEmpty && !dstRect.isEmpty) {
+                                stitchedCanvas.drawBitmap(viewportBitmap, srcRect, dstRect, null)
+                            }
+                        } finally {
+                            viewportBitmap.recycle()
+                        }
+
+                        rowCaptureHeight = rowCaptureHeight.coerceAtLeast(captureHeight)
+                        documentX += captureWidth
                     }
 
-                    rowCaptureHeight = rowCaptureHeight.coerceAtLeast(captureHeight)
-                    documentX += captureWidth
+                    if (rowCaptureHeight <= 0) break
+                    documentY += rowCaptureHeight
                 }
 
-                if (rowCaptureHeight <= 0) break
-                documentY += rowCaptureHeight
+                ScreenshotResult(bytes = stitched.encode(), width = scaledWidth, height = scaledHeight)
+            } finally {
+                stitched.recycle()
             }
-
-            val outputStream = java.io.ByteArrayOutputStream()
-            stitched.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-            stitched.recycle()
-
-            ScreenshotResult(
-                bytes = outputStream.toByteArray(),
-                width = scaledWidth,
-                height = scaledHeight
-            )
         } finally {
             webView.isVerticalScrollBarEnabled = originalVerticalScrollbars
             webView.isHorizontalScrollBarEnabled = originalHorizontalScrollbars
@@ -144,6 +161,7 @@ class AndroidScreenshotController(
         }
     }
 
+    /** The clip is in CSS pixels (as returned by `Locator.boundingBox`); output is device pixels times [scale]. */
     override suspend fun captureClip(
         x: Double,
         y: Double,
@@ -153,10 +171,21 @@ class AndroidScreenshotController(
     ): ScreenshotResult = withContext(Dispatchers.Main) {
         ensureLaidOut()
         val clipScale = scale.coerceIn(0.1, 5.0)
-        val clipX = (x * clipScale).toInt().coerceAtLeast(0)
-        val clipY = (y * clipScale).toInt().coerceAtLeast(0)
-        val clipWidth = (width * clipScale).toInt().coerceAtLeast(1)
-        val clipHeight = (height * clipScale).toInt().coerceAtLeast(1)
+        val transform = webView.cssToViewTransform()
+        // Playwright semantics: trim to the viewport, and fail when nothing of the clip is visible.
+        val trimmed = trimScreenshotClip(
+            Rectangle(x, y, width, height),
+            webView.width / transform.pixelsPerCssPixel + transform.visualOffsetX,
+            webView.height / transform.pixelsPerCssPixel + transform.visualOffsetY
+        )
+        @Suppress("NAME_SHADOWING") val x = trimmed.x
+        @Suppress("NAME_SHADOWING") val y = trimmed.y
+        @Suppress("NAME_SHADOWING") val width = trimmed.width
+        @Suppress("NAME_SHADOWING") val height = trimmed.height
+        val clipX = (transform.x(x) * clipScale).roundToInt().coerceAtLeast(0)
+        val clipY = (transform.y(y) * clipScale).roundToInt().coerceAtLeast(0)
+        val clipWidth = (transform.length(width) * clipScale).roundToInt().coerceAtLeast(1)
+        val clipHeight = (transform.length(height) * clipScale).roundToInt().coerceAtLeast(1)
 
         val viewportWidth = (webView.width * clipScale).toInt().coerceAtLeast(1)
         val viewportHeight = (webView.height * clipScale).toInt().coerceAtLeast(1)
@@ -164,39 +193,40 @@ class AndroidScreenshotController(
         validateBitmapSize(clipWidth, clipHeight, "clip screenshot")
 
         val fullBitmap = captureVisibleViewportBitmap(clipScale, "clip source screenshot")
-        val right = (clipX + clipWidth).coerceAtMost(fullBitmap.width)
-        val bottom = (clipY + clipHeight).coerceAtMost(fullBitmap.height)
-        if (clipX >= right || clipY >= bottom) {
+        try {
+            val right = (clipX + clipWidth).coerceAtMost(fullBitmap.width)
+            val bottom = (clipY + clipHeight).coerceAtMost(fullBitmap.height)
+            if (clipX >= right || clipY >= bottom) {
+                throw KmpwrightException("Clipped area is either empty or outside the viewport")
+            }
+            val cropped = Bitmap.createBitmap(fullBitmap, clipX, clipY, right - clipX, bottom - clipY)
+            try {
+                ScreenshotResult(bytes = cropped.encode(), width = cropped.width, height = cropped.height)
+            } finally {
+                if (cropped !== fullBitmap) cropped.recycle()
+            }
+        } finally {
             fullBitmap.recycle()
-            return@withContext ScreenshotResult(ByteArray(0), 0, 0)
         }
-
-        val cropped = Bitmap.createBitmap(
-            fullBitmap,
-            clipX,
-            clipY,
-            right - clipX,
-            bottom - clipY
-        )
-        fullBitmap.recycle()
-
-        val outputStream = java.io.ByteArrayOutputStream()
-        cropped.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-        val croppedWidth = cropped.width
-        val croppedHeight = cropped.height
-        cropped.recycle()
-
-        ScreenshotResult(
-            bytes = outputStream.toByteArray(),
-            width = croppedWidth,
-            height = croppedHeight
-        )
     }
 
+    private fun Bitmap.encode(): ByteArray {
+        val outputStream = java.io.ByteArrayOutputStream()
+        val (format, quality) = when (outputFormat) {
+            ScreenshotFormat.PNG -> Bitmap.CompressFormat.PNG to 100
+            ScreenshotFormat.JPEG -> Bitmap.CompressFormat.JPEG to outputQuality
+            ScreenshotFormat.WEBP -> (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY
+                else @Suppress("DEPRECATION") Bitmap.CompressFormat.WEBP) to outputQuality
+        }
+        if (!compress(format, quality, outputStream)) {
+            throw KmpwrightException("Android screenshot ${outputFormat.name} encoding failed")
+        }
+        return outputStream.toByteArray()
+    }
+
+    /** Device pixels. Main thread only; [captureFullPage] refines this with renderer measurements. */
     override fun getPageDimensions(): PageDimensions {
-        @Suppress("DEPRECATION")
-        val scale = webView.scale.takeIf { it > 0f } ?: 1f
-        val contentHeightPx = (webView.contentHeight * scale).toInt().takeIf { it > 0 } ?: webView.height
+        val contentHeightPx = (webView.contentHeight * webView.displayDensity()).toInt().takeIf { it > 0 } ?: webView.height
         val contentWidthPx = webView.width.takeIf { it > 0 } ?: (webView.measuredWidth)
 
         return PageDimensions(
@@ -238,6 +268,14 @@ class AndroidScreenshotController(
 
     internal suspend fun scrollForCapture(x: Int, y: Int) = scrollToAndWait(x, y)
 
+    internal suspend fun scrollToEndForCapture() = evaluateScrollAndWait("""
+        (function() {
+            var root = document.scrollingElement || document.documentElement;
+            window.scrollTo({left: root.scrollWidth, top: root.scrollHeight, behavior: 'instant'});
+            return true;
+        })()
+    """.trimIndent())
+
     internal suspend fun readScrollPosition(): Pair<Double, Double> {
         val raw = evaluateJavaScript("JSON.stringify({x: window.scrollX, y: window.scrollY})")
             ?: throw KmpwrightException("Unable to read scroll position before capture")
@@ -249,6 +287,14 @@ class AndroidScreenshotController(
         scrollCssAndWait(position.first, position.second)
     }
 
+    internal suspend fun scrollPixelsForCapture(roundDown: Boolean = false): Pair<Int, Int> {
+        val css = readScrollPosition()
+        @Suppress("DEPRECATION")
+        val scale = webView.scale.toDouble().takeIf { it.isFinite() && it > 0 } ?: webView.displayDensity()
+        fun pixel(value: Double): Int = if (roundDown) kotlin.math.floor(value * scale).toInt() else (value * scale).roundToInt()
+        return pixel(css.first) to pixel(css.second)
+    }
+
     private suspend fun queryPageDimensions(): PageDimensions {
         val fallback = getPageDimensions()
         val raw = evaluateJavaScript(DIMENSIONS_SCRIPT) ?: return fallback
@@ -256,22 +302,16 @@ class AndroidScreenshotController(
             val parsed = JSONObject(raw)
             val scrollWidth = parsed.optDouble("scrollWidth", fallback.contentWidth.toDouble())
             val scrollHeight = parsed.optDouble("scrollHeight", fallback.contentHeight.toDouble())
-            val innerWidth = parsed.optDouble("innerWidth", webView.width.toDouble())
-            @Suppress("DEPRECATION")
-            val scale = webView.scale.takeIf { it > 0f }?.toDouble() ?: 1.0
-            val widthScale = if (innerWidth > 0.0 && webView.width > 0) {
-                webView.width.toDouble() / innerWidth
-            } else {
-                scale
-            }
-            val heightScale = if (scrollHeight > 0.0 && webView.contentHeight > 0) {
-                (webView.contentHeight * scale) / scrollHeight
-            } else {
-                scale
+            // Same CSS→device mapping as input and clip capture (devicePixelRatio × page zoom).
+            val pixelsPerCss = webView.cssToViewTransform().pixelsPerCssPixel
+            // Snap sub-pixel rounding to the viewport so it never yields a 1px extra tile.
+            fun toDevice(css: Double, viewport: Int): Int {
+                val pixels = (css * pixelsPerCss).roundToInt().coerceAtLeast(1)
+                return if (kotlin.math.abs(pixels - viewport) <= 1) viewport else pixels
             }
             PageDimensions(
-                contentWidth = ceil(scrollWidth * widthScale).toInt().coerceAtLeast(fallback.contentWidth),
-                contentHeight = ceil(scrollHeight * heightScale).toInt().coerceAtLeast(fallback.contentHeight),
+                contentWidth = toDevice(scrollWidth, fallback.viewportWidth),
+                contentHeight = toDevice(scrollHeight, fallback.viewportHeight),
                 viewportWidth = fallback.viewportWidth,
                 viewportHeight = fallback.viewportHeight
             )
@@ -302,20 +342,28 @@ class AndroidScreenshotController(
         webView.layout(0, 0, width, height)
     }
 
+    /** [x]/[y] are device pixels. */
     private suspend fun scrollToAndWait(x: Int, y: Int) {
+        // scrollX/Y and bitmap tiles are native layout pixels. visualViewport.scale
+        // can be rounded differently and accumulates several pixels of error on
+        // long documents; use WebView's own layout scale for this conversion.
         @Suppress("DEPRECATION")
-        val pixelScale = webView.scale.takeIf { it > 0 } ?: 1f
-        scrollCssAndWait(x / pixelScale.toDouble(), y / pixelScale.toDouble())
+        val pixelsPerCss = webView.scale.toDouble().takeIf { it.isFinite() && it > 0 } ?: webView.displayDensity()
+        scrollCssAndWait(x / pixelsPerCss, y / pixelsPerCss)
     }
 
     private suspend fun scrollCssAndWait(x: Double, y: Double) {
-        evaluateJavaScript("""
+        evaluateScrollAndWait("""
             (function() {
                 window.scrollTo({left: $x,
                     top: $y, behavior: 'instant'});
                 return true;
             })()
         """.trimIndent())
+    }
+
+    private suspend fun evaluateScrollAndWait(script: String) {
+        evaluateJavaScript(script)
         webView.invalidate()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && webView.isAttachedToWindow) {
             withTimeoutOrNull(500) {
@@ -350,19 +398,59 @@ class AndroidScreenshotController(
     private suspend fun captureVisibleViewportBitmap(scale: Double, label: String): Bitmap {
         val scaledWidth = (webView.width * scale).roundToInt().coerceAtLeast(1)
         val scaledHeight = (webView.height * scale).roundToInt().coerceAtLeast(1)
-        val bitmap = createBitmap(scaledWidth, scaledHeight, label)
-        if (tryPixelCopy(bitmap)) return bitmap
+        tryStablePixelCopy(scaledWidth, scaledHeight, label)?.let { return it }
 
-        val canvas = Canvas(bitmap)
-        canvas.scale(scale.toFloat(), scale.toFloat())
-        webView.draw(canvas)
-        return bitmap
+        // Always draw into a fresh bitmap: a timed-out PixelCopy may still
+        // write into the bitmap it was given.
+        val bitmap = createBitmap(scaledWidth, scaledHeight, label)
+        try {
+            val canvas = Canvas(bitmap)
+            canvas.scale(scale.toFloat(), scale.toFloat())
+            webView.draw(canvas)
+            return bitmap
+        } catch (error: Throwable) {
+            bitmap.recycle()
+            throw error
+        }
     }
 
-    private suspend fun tryPixelCopy(destination: Bitmap): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
-        if (!webView.isAttachedToWindow || webView.width <= 0 || webView.height <= 0) return false
-        val activity = webView.context.findActivity() ?: return false
+    /**
+     * PixelCopy reads the last composited frame. Chromium can composite a
+     * scrolled or freshly loaded document before its tiles are rasterized
+     * (they show as background-colored checkerboard, even after the visual
+     * state callback). Copy until two consecutive frames at an unchanged
+     * scroll position are identical, so a capture never contains half-
+     * rasterized tiles.
+     */
+    private suspend fun tryStablePixelCopy(width: Int, height: Int, label: String): Bitmap? {
+        var previous = tryPixelCopy(width, height, label) ?: return null
+        var previousScroll = webView.scrollX to webView.scrollY
+        repeat(MAX_STABILITY_COPIES) {
+            awaitRendered()
+            val next = tryPixelCopy(width, height, label) ?: return previous
+            val scroll = webView.scrollX to webView.scrollY
+            val stable = scroll == previousScroll && next.sameAs(previous)
+            previous.recycle()
+            previous = next
+            previousScroll = scroll
+            if (stable) return next
+        }
+        android.util.Log.w("Kmpwright", "Android $label did not settle after $MAX_STABILITY_COPIES frames; using the latest frame")
+        return previous
+    }
+
+    /** A visual-state round trip plus two vsync frames. */
+    private suspend fun awaitRendered() {
+        if (webView.isAttachedToWindow) withTimeoutOrNull(500) { awaitVisualState() }
+        awaitFrame()
+        awaitFrame()
+    }
+
+    /** Returns the copied bitmap, or null when PixelCopy is unavailable, failed or timed out. */
+    private suspend fun tryPixelCopy(width: Int, height: Int, label: String): Bitmap? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+        if (!webView.isAttachedToWindow || webView.width <= 0 || webView.height <= 0) return null
+        val activity = webView.context.findActivity() ?: return null
         val location = IntArray(2)
         webView.getLocationInWindow(location)
         val srcRect = Rect(
@@ -371,25 +459,34 @@ class AndroidScreenshotController(
             location[0] + webView.width,
             location[1] + webView.height
         )
-        if (srcRect.isEmpty) return false
+        if (srcRect.isEmpty) return null
 
-        return withTimeoutOrNull(500) {
+        val destination = createBitmap(width, height, label)
+        val copied = withTimeoutOrNull(500) {
             suspendCancellableCoroutine { cont ->
                 try {
                     PixelCopy.request(
                         activity.window,
                         srcRect,
                         destination,
-                        { result ->
-                            if (cont.isActive) cont.resume(result == PixelCopy.SUCCESS)
-                        },
+                        { result -> if (cont.isActive) cont.resume(result == PixelCopy.SUCCESS) },
                         Handler(Looper.getMainLooper())
                     )
                 } catch (_: Exception) {
                     if (cont.isActive) cont.resume(false)
                 }
             }
-        } ?: false
+        }
+        return when (copied) {
+            true -> destination
+            false -> {
+                destination.recycle()
+                null
+            }
+            // Timed out: PixelCopy may still own the destination, so it is
+            // neither reused nor recycled; the GC reclaims it afterwards.
+            null -> null
+        }
     }
 
     private tailrec fun Context.findActivity(): Activity? =
@@ -400,6 +497,7 @@ class AndroidScreenshotController(
         }
 
     private companion object {
+        private const val MAX_STABILITY_COPIES = 10
         private const val DIMENSIONS_SCRIPT = """
             (function() {
                 var doc = document.documentElement || {};

@@ -1,7 +1,10 @@
 package com.bernaferrari.kmpwright.core
 
+import kotlin.coroutines.cancellation.CancellationException
+
 /** Host Chromium process ownership. Native WebViews cannot launch a desktop browser. */
-data class BrowserLaunchOptions(val executablePath: String, val headless: Boolean = true,
+/** Options for [launchBrowser], which starts a local Chromium (JVM only) and connects over CDP. */
+public data class BrowserLaunchOptions @Throws(IllegalArgumentException::class) public constructor(val executablePath: String, val headless: Boolean = true,
     val userDataDirectory: String? = null, val arguments: List<String> = emptyList(),
     val webGpu: Boolean = false, val webMcp: Boolean = true, val useSystemKeychain: Boolean = false,
     val ignoreHttpsErrors: Boolean = false, val extensionDirectories: List<String> = emptyList(),
@@ -21,10 +24,16 @@ data class BrowserLaunchOptions(val executablePath: String, val headless: Boolea
     }
 }
 
-interface LaunchedBrowser {
-    val browser: Browser
-    /** Close owned pages and the process; preserve caller-provided profile directories. */
-    suspend fun closeAsync()
+/** A Chromium process started by [launchBrowser] and the [Browser] connected to it. */
+public interface LaunchedBrowser {
+    /** The browser connected to the launched process. */
+    public val browser: Browser
+
+    /** Closes owned pages and the process; caller-provided profile directories are preserved. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun close()
 }
 
-expect suspend fun launchBrowser(options: BrowserLaunchOptions, config: KmpwrightConfig = KmpwrightConfig()): LaunchedBrowser
+/** Starts a local Chromium and connects to it, like Playwright's `chromium.launch()` (JVM only). */
+@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+public expect suspend fun launchBrowser(options: BrowserLaunchOptions, config: KmpwrightConfig = KmpwrightConfig()): LaunchedBrowser

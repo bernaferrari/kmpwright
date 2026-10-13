@@ -1,0 +1,94 @@
+---
+title: Accessibility audits
+description: Run the bundled axe-core 4.14.0 against the current page with accessibilityAudit and read violations, incomplete checks and frame coverage.
+---
+
+```kotlin
+page.goto("https://example.com/signup")
+val report = page.accessibilityAudit(
+    AccessibilityAuditOptions(tags = setOf("wcag2a", "wcag2aa"), selector = "main")
+)
+
+println("axe ${report.axeVersion}: ${report.counts.violations} violations")
+for (issue in report.violations) {
+    println("[${issue.impact}] ${issue.id}: ${issue.help} (${issue.nodeCount} nodes)")
+    issue.nodes.forEach { println("  ${it.target} ${it.failureSummary}") }
+}
+check(report.violations.none { it.impact == "critical" })
+```
+
+`page.accessibilityAudit(options)` injects [axe-core](https://github.com/dequelabs/axe-core) into the page, runs it, and returns a typed report. The engine ships inside KMPwright (unmodified axe-core **4.14.0**, generated into `kmpwright-core/.../generated/AxeBundle.kt`), so nothing is downloaded at runtime and the page needs no network access.
+
+This guide covers rule-based audits. For the accessibility tree that agents use to find elements (`@e3` refs), see [Snapshots](/docs/agents/snapshots).
+
+Playwright has no built-in audit. Its docs suggest the `@axe-core/playwright` package, and `accessibilityAudit` covers the same use. The engine is injected privately: `window.axe` is left as the page had it.
+
+## Options
+
+<TypeTable
+  type={{
+    tags: { type: 'Set<String>', description: 'axe rule tags to run, such as "wcag2a", "wcag2aa", "wcag21aa" or "best-practice" (axe runOnly by tag). Empty runs every rule axe enables by default.', default: 'emptySet()' },
+    selector: { type: 'String?', description: 'CSS selector that limits the audit to matching elements. It must match at least one element, or the audit throws. null audits the whole document.', default: 'null' },
+    timeoutMs: { type: 'Long?', description: 'Timeout for the whole audit. null uses TimeoutConfig.default (30 s unless configured). Must be positive.', default: 'null' },
+    maxNodesPerRule: { type: 'Int', description: 'Maximum nodes listed per rule in the report (1..100). nodeCount always has the full count.', default: '10' },
+  }}
+/>
+
+## Report
+
+`AccessibilityAuditReport`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `url` | `String` | Document URL as axe reported it. |
+| `axeVersion` | `String` | Engine version (`4.14.0`). |
+| `counts` | `AccessibilityAuditCounts` | Rule counts by outcome: `violations`, `incomplete`, `passes`, `inapplicable`. |
+| `violations` | `List<AccessibilityAuditIssue>` | Rules that failed. |
+| `incomplete` | `List<AccessibilityAuditIssue>` | Rules axe could not decide and that need manual review. |
+| `coverage` | `AccessibilityAuditCoverage` | `auditedFrames: Int` and `skippedFrames: List<String>`. |
+
+Only `violations` and `incomplete` are listed in detail. Passing and inapplicable rules appear only in `counts`.
+
+`AccessibilityAuditIssue`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | `String` | axe rule id, such as `color-contrast` or `label`. |
+| `impact` | `String` | `minor`, `moderate`, `serious` or `critical`; `unknown` when axe gives none. |
+| `help` | `String` | Short description of the rule. |
+| `helpUrl` | `String` | Deque University page for the rule. |
+| `tags` | `List<String>` | Rule tags (`wcag2aa`, `cat.color`, ...). |
+| `nodeCount` | `Int` | Total number of affected elements. |
+| `nodes` | `List<AccessibilityAuditNode>` | Up to `maxNodesPerRule` elements. |
+
+`AccessibilityAuditNode`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `target` | `JsonArray` | axe's selector path for the element. Nested arrays step into shadow roots or frames. |
+| `html` | `String` | Element HTML, cut to 300 characters. |
+| `failureSummary` | `String` | axe's explanation of what to fix, cut to 16 KiB. |
+
+The report classes are `@Serializable`, so you can write them out with `kotlinx.serialization` for CI artifacts.
+
+## Backends and frames
+
+| Backend | `accessibilityAudit` capability | Frames |
+|---|---|---|
+| JVM (CDP) | Supported | Audits the top document and its iframes, each in its own isolated world, then merges the results with axe's `runPartial`/`finishRun`. `selector` applies to the top document only. Frames that can't be reached are listed in `coverage.skippedFrames` with the reason. Throws when there are more than 128 frames or more than 32 MiB of partial results. |
+| Android WebView | Partial | Audits the main document only. Every `iframe`/`frame` is listed in `coverage.skippedFrames` by `id`, `src` or `(unnamed frame)`. |
+| iOS WKWebView | Partial | Same as Android. |
+
+## Errors
+
+- `KmpwrightTimeoutException` when the audit exceeds `timeoutMs`.
+- `KmpwrightException` when `KmpwrightConfig.allowDomExtraction` or `allowEval` is false, when the report is larger than 4 MiB, when the selector is invalid or matches nothing, or when the page has a locked (non-configurable) `window.axe` property.
+- `IllegalArgumentException` for a non-positive timeout or `maxNodesPerRule` outside 1..100.
+
+Audits are checked against `ActionType.Evaluate` in the page's [action policy](/docs/security). Concurrent audits on the same page run one at a time.
+
+## Related
+
+- [Snapshots](/docs/agents/snapshots): accessibility tree and `@eN` refs
+- [Assertions](/docs/guides/assertions)
+- [Capabilities](/docs/platforms/capabilities)

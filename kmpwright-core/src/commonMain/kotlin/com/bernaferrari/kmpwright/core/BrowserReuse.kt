@@ -1,6 +1,9 @@
 package com.bernaferrari.kmpwright.core
 
-fun browserFarmSlot(
+import kotlin.coroutines.cancellation.CancellationException
+
+/** A [BrowserFarmSlot] that leases [connect]'s browser to one owner at a time. */
+public fun browserFarmSlot(
     id: String,
     metadata: Map<String, String> = emptyMap(),
     connect: suspend () -> Browser,
@@ -17,29 +20,32 @@ fun browserFarmSlot(
     )
 }
 
-suspend fun resetBrowserForReuse(browser: Browser) {
+/** Closes every page but one and resets it with [resetPageForReuse]. */
+@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+public suspend fun resetBrowserForReuse(browser: Browser) {
     val pages = browser.pages()
     val primary = pages.lastOrNull() ?: browser.newPage()
 
     pages.dropLast(1).forEach { page ->
-        browser.closePage(page)
+        page.close()
     }
 
     resetPageForReuse(primary)
 }
 
 /** Clears the active origin for same-owner reuse; does not establish tenant isolation. */
-suspend fun resetPageForReuse(page: Page) {
-    page.unroute()
-    page.setDomainFilter(emptySet())
-    page.clearHTTPCredentials()
+@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+public suspend fun resetPageForReuse(page: Page) {
+    page.unrouteAll()
+    page.setAllowedDomains(emptyList())
+    page.setHTTPCredentials(null)
     page.setExtraHTTPHeaders(emptyMap())
-    page.deleteAllCookies()
-    page.clearLocalStorage()
-    page.clearSessionStorage()
+    page.clearCookies()
+    page.localStorage.clear()
+    page.sessionStorage.clear()
 
     val navigation = page.goto("about:blank")
-    if (!navigation.ok) {
+    if (!navigation.committed) {
         throw KmpwrightException(
             "Failed to navigate page to about:blank during reset: ${navigation.error ?: "unknown error"}"
         )

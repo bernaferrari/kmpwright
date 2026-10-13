@@ -1,0 +1,295 @@
+---
+title: Storage and sessions
+description: Read and write cookies, localStorage, sessionStorage and the clipboard, and save, encrypt and restore a signed-in session with StorageState.
+---
+
+```kotlin
+// Sign in once, then save the session encrypted.
+page.goto("https://app.example.com/login")
+page.getByLabel("Email").fill("me@example.com")
+page.getByLabel("Password").fill(System.getenv("APP_PASSWORD"))
+page.getByRole("button", name = "Sign in").click()
+page.waitForURL("**/dashboard")
+
+page.storageState().save("auth/app.json", password = System.getenv("STATE_PASSWORD"))
+
+// Later, in a fresh page: restore it and continue signed in.
+val state = StorageState.load("auth/app.json", password = System.getenv("STATE_PASSWORD"))
+page.setStorageState(state)
+page.goto("https://app.example.com/dashboard")
+```
+
+All state APIs live on `Page` and are `suspend`. Playwright keeps cookies and `storageState()` on the `BrowserContext`; KMPwright puts them on the page because Android WebView has no isolated context (see [Isolation per backend](#isolation-per-backend)).
+
+## Cookies
+
+```kotlin
+val all = page.cookies()                                   // every cookie the backend can see
+val forApp = page.cookies(listOf("https://app.example.com/")) // only cookies sent to these URLs
+val session = page.cookies().firstOrNull { it.name == "session" }
+
+page.addCookies(listOf(
+    Cookie(name = "consent", value = "yes", domain = "example.com", secure = true, sameSite = "Lax")
+))
+
+page.clearCookies(name = "consent", domain = "example.com") // matching cookies only
+page.clearCookies()                                         // every cookie
+```
+
+| Method | Playwright | Behavior |
+|---|---|---|
+| `cookies(urls: List<String> = emptyList())` | `context.cookies(urls)` | Empty list returns every cookie. With URLs, a cookie is kept when its domain, path and `secure` flag match at least one URL. |
+| `addCookies(cookies: List<Cookie>)` | `context.addCookies()` | Adds or replaces. Every cookie is validated first; an invalid one throws `IllegalArgumentException` before anything is written. |
+| `clearCookies(name: String? = null, domain: String? = null)` | `context.clearCookies()` | Both null removes every cookie. Otherwise removes cookies matching the given name and/or domain (a leading `.` is ignored when comparing domains). |
+
+<TypeTable
+  type={{
+    name: { type: 'String', description: 'Must be non-empty and must not contain whitespace, control characters, ";" or "=".' },
+    value: { type: 'String', description: 'Must not contain CR, LF or ";".' },
+    domain: { type: 'String', description: 'Required. A leading "." makes the cookie apply to subdomains.' },
+    path: { type: 'String', description: 'Must start with "/".', default: '"/"' },
+    expires: { type: 'Double?', description: 'Unix epoch seconds. null is a session cookie.', default: 'null' },
+    secure: { type: 'Boolean', description: 'Only sent over HTTPS.', default: 'false' },
+    httpOnly: { type: 'Boolean', description: 'Hidden from document.cookie.', default: 'false' },
+    sameSite: { type: 'String?', description: '"Strict", "Lax" or "None" (case-insensitive).', default: 'null' },
+    hostOnly: { type: 'Boolean', description: 'Cookie applies to the exact host only.', default: '!domain.startsWith(".")' },
+  }}
+/>
+
+On Android, cookies live in the process-wide `CookieManager`. Enumeration only covers origins this WebView has observed and does not expose full cookie metadata (the capability notes say so), and `clearCookies()` with no arguments clears every cookie of every WebView in the app.
+
+Agent command equivalents: `cookies`, `cookies clear` (see [/docs/agents/commands](/docs/agents/commands)).
+
+## localStorage and sessionStorage
+
+`page.localStorage` and `page.sessionStorage` are `WebStorage` objects scoped to the current document's origin. Navigate to the origin before you read or write.
+
+```kotlin
+page.goto("https://app.example.com")
+page.localStorage.set("theme", "dark")
+val theme: String? = page.localStorage.get("theme")
+val all: Map<String, String> = page.sessionStorage.entries()
+page.localStorage.remove("theme")
+page.sessionStorage.clear()
+```
+
+| Method | Returns | Notes |
+|---|---|---|
+| `get(key)` | `String?` | null when the key is absent. |
+| `set(key, value)` | `Unit` | |
+| `remove(key)` | `Unit` | |
+| `clear()` | `Unit` | Removes every entry of the origin. |
+| `entries()` | `Map<String, String>` | Every entry. |
+
+There is no Playwright equivalent; Playwright users call `page.evaluate("localStorage...")`. Agent command equivalents: `storage local`, `storage session`, `storage local clear`.
+
+## Clipboard
+
+`page.clipboard` uses the web `navigator.clipboard` names.
+
+```kotlin
+page.clipboard.writeText("hello")
+val text: String? = page.clipboard.readText()
+```
+
+- `readText()` returns null when the page is not allowed to read the clipboard (for example, no user activation or no permission). It does not throw.
+- `writeText(text)` tries `navigator.clipboard.writeText` and falls back to a hidden `<textarea>` plus `document.execCommand('copy')`. It throws `KmpwrightException` if both fail.
+
+## StorageState
+
+`page.storageState()` captures the cookies plus the `localStorage` and `sessionStorage` of the current origin. `page.setStorageState(state)` restores it.
+
+```kotlin
+public data class StorageState(
+    val url: String?,                          // page URL whose origin owns the storage maps
+    val cookies: List<Cookie>,
+    val localStorage: Map<String, String>,
+    val sessionStorage: Map<String, String>
+)
+```
+
+`setStorageState(state)` does the following, in order:
+
+1. Validates every cookie.
+2. Throws `KmpwrightException` if the state has storage entries but its `url` is null or not `http://`, `https://` or `file://`.
+3. Checks the required cookie, storage and navigation actions against the current policy and checks the destination against the allowed-origin rules. A refusal leaves existing cookies and storage untouched.
+4. Clears existing cookies and adds `state.cookies`, so cookies not in the state are removed.
+5. If `url` is usable, navigates there when the page is on a different URL (throws if the navigation fails), then replaces `localStorage` and `sessionStorage` with the saved maps. An empty saved map clears that storage.
+
+The preflight protects against policy and origin refusals. A later browser or network failure can still interrupt restoration after changes begin; restoration is not a transaction with rollback.
+
+Differences from Playwright's `storageState()`:
+
+- It covers one origin (the page's current URL), not every origin in the context.
+- IndexedDB is not captured.
+- Writing to a file is a separate `save` call, and encryption is the default.
+- Restoring goes through `page.setStorageState`, not a `newContext(storageState = ...)` option.
+
+`StorageState.toString()` prints cookie counts and storage keys, never values.
+
+### Saving and loading files
+
+```kotlin
+suspend fun StorageState.save(path: String, password: String?)
+suspend fun StorageState.Companion.load(path: String, password: String?): StorageState
+```
+
+`password` has no default. You must pass either a password or an explicit `null`:
+
+| `password` | `save` | `load` |
+|---|---|---|
+| non-blank string | Writes the encrypted file. | Decrypts with authentication. Never falls back to plaintext. A wrong password or tampered file throws `KmpwrightException`. |
+| `null` | Writes plaintext JSON. | Reads plaintext JSON. Loading an encrypted file this way throws, and the message asks for its password. |
+| blank string | Throws `IllegalArgumentException`. | Treated as a failed decryption and throws. |
+
+`save` creates missing parent directories. `load` throws `KmpwrightException` when the file is missing, cannot be decrypted, or is malformed. File I/O runs on `Dispatchers.Default`.
+
+The plaintext format is JSON with `name`, `url`, `cookies`, `localStorage`, `sessionStorage` and `timestamp` fields.
+
+### Encryption format
+
+Every platform writes the same format, so a file saved on the JVM opens on Android or iOS with the same password.
+
+| Part | Value |
+|---|---|
+| Prefix | `WW2:` followed by Base64 |
+| Key derivation | PBKDF2-HMAC-SHA256, 210,000 iterations, 16-byte random salt, 64 bytes of output split into an AES key and an HMAC key |
+| Cipher | AES-256-CBC with PKCS#7 padding and a 16-byte random IV |
+| Authentication | HMAC-SHA256 over `salt + IV + ciphertext` (encrypt-then-MAC), checked in constant time before decryption |
+| Implementation | `javax.crypto` on Android and JVM; CommonCrypto on iOS |
+
+The password is not stored anywhere. If you lose it, the file cannot be recovered. See [/docs/security](/docs/security) for how to handle secrets.
+
+### Autosave
+
+`autosaveStorageState` saves the state to a file now and then at a fixed interval until you stop it.
+
+```kotlin
+val autosave = page.autosaveStorageState(
+    StorageStateAutosaveOptions(path = "auth/app.json", password = secret, intervalMs = 60_000)
+)
+// ...
+autosave.error.value?.let { println("Autosave stopped: $it") }
+autosave.stop()
+```
+
+<TypeTable
+  type={{
+    path: { type: 'String', description: 'Target file. Must not be blank.' },
+    password: { type: 'String?', description: 'Required argument. null writes plaintext; a blank string is rejected.' },
+    intervalMs: { type: 'Long', description: 'Delay between saves; must be between 1,000 ms and 86,400,000 ms (one day).', default: '30_000' },
+  }}
+/>
+
+`StorageStateAutosave`:
+
+| Member | Type | Meaning |
+|---|---|---|
+| `stop()` | `suspend` | Stops saving. No write happens after it returns. |
+| `isActive` | `Boolean` | Whether the autosave is still running. |
+| `lastSavedAt` | `StateFlow<Long?>` | Epoch milliseconds of the last successful save. |
+| `error` | `StateFlow<String?>` | The failure that stopped the autosave, or null. |
+
+- The first save happens before `autosaveStorageState` returns. If it fails, the call throws and nothing keeps running.
+- A failed periodic save stops the autosave and sets `error`. It does not retry.
+- The autosave runs in the page's scope, so closing the page also stops it.
+- `StorageStateAutosaveOptions.toString()` masks the password.
+
+## Logging in with an AuthProfile
+
+`page.login(profile)` fills and submits a username/password form. It mirrors agent-browser `auth login`.
+
+```kotlin
+val profile = AuthProfile(
+    name = "staging",
+    url = "https://staging.example.com/login",
+    username = "qa@example.com",
+    password = System.getenv("STAGING_PASSWORD"),
+)
+val result = page.login(profile)                 // navigates to profile.url, fills, submits
+page.waitForURL("**/dashboard")                 // confirm the login yourself
+```
+
+<TypeTable
+  type={{
+    name: { type: 'String', description: 'Profile name (also the file name used by AuthManager).' },
+    url: { type: 'String', description: 'Login page. Must be HTTP(S).' },
+    username: { type: 'String', description: 'Value for the username field.' },
+    password: { type: 'String', description: 'Value for the password field. Masked in toString().' },
+    usernameSelector: { type: 'String?', description: 'CSS selector for the username input. null auto-detects.', default: 'null' },
+    passwordSelector: { type: 'String?', description: 'CSS selector for the password input. null auto-detects.', default: 'null' },
+    submitSelector: { type: 'String?', description: 'CSS selector for the submit control. null auto-detects.', default: 'null' },
+    createdAt: { type: 'Long', description: 'Epoch milliseconds.', default: 'now' },
+    lastUsedAt: { type: 'Long?', description: 'Epoch milliseconds. Not updated by login().', default: 'null' },
+  }}
+/>
+
+<TypeTable
+  type={{
+    navigate: { type: 'Boolean', description: 'Navigate to profile.url first. false fills the login document that is already open.', default: 'true' },
+    submit: { type: 'Boolean', description: 'Click the submit control after filling.', default: 'true' },
+  }}
+/>
+
+`login` returns `AuthLoginResult(url, submitted)`. `submitted = true` only means the submit control was clicked. It does not mean the login worked, so wait for a URL or element that proves it.
+
+How targets are chosen and checked:
+
+- The current page's origin must match the profile URL's origin, both before and while filling. Otherwise it throws.
+- A selector you provide must match exactly one usable control (connected, enabled, not read-only, visible, non-zero size).
+- Without a selector, the password field must be the only usable `input[type=password]`. The username field is picked from `text`, `email` or `tel` inputs in the same form, preferring `autocomplete="username"`/`"email"` or a name/id containing `user`, `email` or `login`. The submit control must be the only usable `button[type=submit]`, `input[type=submit]` or untyped `<button>` in the form.
+- Before each field is written, the targets are checked again. If the document, URL, form, field types or identities changed, or the form or submit action points to another origin, it throws before the remaining credential is written.
+- Values are set through the native value setter and followed by synthetic `input` and `change` events, so React-controlled inputs see them.
+
+### Storing profiles with AuthManager
+
+`AuthManager` saves profiles to disk, encrypted with the same format as `StorageState`.
+
+```kotlin
+AuthManager.save(profile, password = secret)            // encrypt = true by default
+val loaded: AuthProfile? = AuthManager.load("staging", password = secret)
+val names: List<String> = AuthManager.list()
+AuthManager.delete("staging")
+```
+
+- `save(profile, encrypt = true, password = null)` throws `KmpwrightException` when `encrypt` is true and the password is null or blank. Pass `encrypt = false` to store plaintext on purpose.
+- `load(name, password)` returns null when the file is missing, the password is wrong, or the content is invalid. Unlike `StorageState.load`, it does not throw.
+- These functions are not `suspend` and do blocking file I/O. Call them off the main thread.
+
+| Platform | Profile directory |
+|---|---|
+| Android | `<app filesDir>/kmpwright/auth` |
+| iOS | `<Application Support>/.kmpwright/auth` |
+| JVM | `<user.home>/.kmpwright/auth` |
+
+## Isolation per backend
+
+Playwright gives every `BrowserContext` its own cookies and storage. Whether you get that in KMPwright depends on the backend. `PageCapability.BrowserContexts` reports it.
+
+| Backend | `browserContexts` | What `browser.newContext()` gives you | Default `Browser` storage |
+|---|---|---|---|
+| Android WebView | Unsupported | Throws `UnsupportedOperationException`. `BrowserContext.newPage()`, `clearCookies()` and `clearData()` throw too. | All pages share the app's WebView profile: one `CookieManager` and shared web storage. |
+| iOS WKWebView | Partial | A context backed by a fresh non-persistent `WKWebsiteDataStore`. Isolated data, but not a separate browser process. | The data store of the `WKWebView` you passed, or of `IOSPlatformContext.websiteDataStore`. If neither is given, a non-persistent store that is cleared on `dispose()`. |
+| JVM (CDP) | Supported | A Chromium context from `Target.createBrowserContext` with its own cookies and storage. It is disposed on `close()`. | The default context of the Chromium you connected to. |
+
+On Android, use separate processes or devices when you need isolated sessions. Use `StorageState` to move a session between pages, and `page.clearCookies()` plus `page.localStorage.clear()` to reset one.
+
+`BrowserContext.clearCookies()` removes every cookie of the context. `BrowserContext.clearData()` also clears storage and caches. On iOS this covers every website data type in the store. On the JVM, every storage type is cleared for each origin loaded in the context's pages.
+
+## Policies
+
+These APIs go through the page's [action policy](/docs/security):
+
+| Calls | `ActionType` |
+|---|---|
+| `cookies()`, `storageState()`, `WebStorage.get` / `entries` | `ReadContent` |
+| `addCookies` | `SetCookie` |
+| `clearCookies` | `DeleteCookie` |
+| `WebStorage.set` / `remove` / `clear`, storage restore in `setStorageState` | `Storage` |
+| `clipboard.readText` / `writeText` | `Clipboard` |
+
+## Related
+
+- [Capabilities](/docs/platforms/capabilities): `BrowserContexts` and per-backend notes
+- [Security](/docs/security): action policies, allowed domains, secrets
+- [Page reference](/docs/reference/page)

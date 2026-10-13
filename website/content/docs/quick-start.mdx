@@ -1,0 +1,222 @@
+---
+title: Quick start
+description: Attach KMPwright to an Android WebView or iOS WKWebView, or launch Chromium on the JVM, then click, assert, screenshot and run your first agent loop.
+---
+
+Every backend gives you the same `Page`. Pick your platform, get a page, then the rest of the code is shared.
+
+This page assumes you added the dependency ([Installation](/docs/installation)) and imported `com.bernaferrari.kmpwright.core.*`.
+
+## Get a page
+
+<Tabs items={['Android', 'Android (Compose)', 'iOS', 'JVM']}>
+<Tab value="Android">
+
+Attach to a `WebView` your app already displays with `AndroidPlatformContext`. Create the `Browser` on the main thread.
+
+```kotlin
+import android.os.Bundle
+import android.webkit.WebView
+import androidx.activity.ComponentActivity
+import androidx.lifecycle.lifecycleScope
+import com.bernaferrari.kmpwright.core.*
+import kotlinx.coroutines.launch
+
+class MainActivity : ComponentActivity() {
+    private lateinit var browser: Browser
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val webView = WebView(this).apply {
+            settings.javaScriptEnabled = true   // KMPwright automates through page scripts
+            settings.domStorageEnabled = true
+        }
+        setContentView(webView)
+
+        browser = Browser(AndroidPlatformContext(this, webView)) // main thread
+        lifecycleScope.launch {
+            val shot = checkExample(browser.page())
+            // shot.bytes is a PNG
+        }
+    }
+
+    override fun onDestroy() {
+        browser.dispose() // non-suspending teardown for lifecycle callbacks
+        super.onDestroy()
+    }
+}
+```
+
+`AndroidPlatformContext(context, webView, delegateWebViewClient, delegateWebChromeClient)`:
+
+| Parameter | Meaning |
+| --- | --- |
+| `context` | Any `Context`; the app's files directory is remembered for saved state. |
+| `webView` | Your `WebView`. When `null`, KMPwright creates and owns a detached `WebView` (not on screen). |
+| `delegateWebViewClient`, `delegateWebChromeClient` | Receive every callback. When `null`, the clients already installed on `webView` keep receiving them; they are restored when the page is disposed. |
+
+Enable JavaScript on a `WebView` you supply. A `WebView` KMPwright creates itself has JavaScript and DOM storage enabled, file and content access disabled, and mixed content blocked.
+
+</Tab>
+<Tab value="Android (Compose)">
+
+`kmpwright-compose` wraps the same setup in a composable. The controller attaches a `Browser` when the `WebView` is created and disposes it when the composable leaves.
+
+```kotlin
+import com.bernaferrari.kmpwright.compose.KmpwrightWebView
+import com.bernaferrari.kmpwright.compose.rememberKmpwrightController
+import com.bernaferrari.kmpwright.core.*
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Modifier
+
+@Composable
+fun AutomatedWebView() {
+    val controller = rememberKmpwrightController()
+    KmpwrightWebView(controller, Modifier.fillMaxSize())
+
+    val page = controller.page
+    LaunchedEffect(page) {
+        if (page != null) checkExample(page)
+    }
+}
+```
+
+| API | Meaning |
+| --- | --- |
+| `KmpwrightWebView(controller, modifier, startUrl = null, captureBackPresses = true, onCreated = {})` | `startUrl` loads once per attached WebView. `captureBackPresses` routes system back to WebView history. `onCreated` receives the new `WebView` before KMPwright attaches; clients installed there keep receiving callbacks. |
+| `rememberKmpwrightController(config = KmpwrightConfig())` | Remembers a controller; `config` is read once. |
+| `controller.page` | The attached `Page`, or `null` until the WebView exists. |
+| `controller.url`, `title`, `isLoading`, `canGoBack`, `canGoForward`, `lastError` | Compose state for your UI. |
+| `controller.goto(url)`, `evaluate(script)` | Suspending. |
+| `controller.loadUrl(url)`, `reload()`, `goBack()`, `goForward()`, `clearError()` | Fire-and-forget; failures land in `lastError`. |
+
+If the WebView renderer crashes, the controller sets `lastError` and recreates the `WebView`; `controller.page` changes to the new page. Use controller members on the main thread.
+
+</Tab>
+<Tab value="iOS">
+
+From `iosMain`, attach to your app's `WKWebView` with `IOSPlatformContext`:
+
+```kotlin
+import com.bernaferrari.kmpwright.core.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import platform.WebKit.WKWebView
+
+fun automate(webView: WKWebView, scope: CoroutineScope): Browser {
+    val browser = Browser(IOSPlatformContext(webView = webView)) // create on the main thread
+    scope.launch(Dispatchers.Main) {
+        checkExample(browser.page())
+    }
+    return browser
+}
+```
+
+`IOSPlatformContext(webView = null, websiteDataStore = null)`: with `webView = null`, KMPwright creates its own `WKWebView`. Your app keeps ownership of a `WKWebView` you pass in; closing the browser only releases KMPwright's automation resources.
+
+</Tab>
+<Tab value="JVM">
+
+Launch a local Chrome or Chromium. KMPwright starts it headless, owns the process and a temporary profile, and connects over CDP:
+
+```kotlin
+import com.bernaferrari.kmpwright.core.*
+import kotlinx.coroutines.runBlocking
+import java.io.File
+
+fun main() = runBlocking {
+    val launched = launchBrowser(BrowserLaunchOptions(executablePath = "/path/to/chrome"))
+    try {
+        val page = launched.browser.newPage()
+        val shot = checkExample(page)
+        File("example.png").writeBytes(shot.bytes)
+    } finally {
+        launched.close() // closes pages, the process and the temporary profile
+    }
+}
+```
+
+Pass `headless = false` for a visible window. To use a browser that is already running, use `Browser(JvmPlatformContext(), KmpwrightConfig(cdp = CdpConfig(websocketUrl = "ws://localhost:9222/devtools/browser/<id>")))`. See the [JVM platform page](/docs/platforms/jvm) for launch options, profiles and cloud providers.
+
+</Tab>
+</Tabs>
+
+## Act, assert, screenshot
+
+This function is the `checkExample` used above. It is plain `commonMain` code and supplies its own HTML, so your first workflow needs no external website or demo server. The screenshot is returned after the form displays **Subscribed**.
+
+```kotlin
+suspend fun checkExample(page: Page): ScreenshotResult {
+    page.setContent("""
+        <label>Email <input id="email" type="email"></label>
+        <button onclick="document.querySelector('#status').textContent = 'Subscribed'">
+            Subscribe
+        </button>
+        <p id="status" role="status">Ready</p>
+    """.trimIndent())
+
+    page.getByLabel("Email").fill("ada@example.com")
+    page.getByRole("button", name = "Subscribe").click()
+    expect(page.locator("#status")).toHaveText("Subscribed")
+    return page.screenshot()
+}
+```
+
+- `locator` / `getBy*` return lazy locators. Actions wait until the element is attached, visible, enabled, stable and hit-testable, and retry until the action timeout (30 s by default).
+- `expect(...)` assertions retry until they hold or `TimeoutConfig.waitForSelector` passes, then throw `KmpwrightTimeoutException`.
+- `ScreenshotResult` has `bytes`, `width`, `height` (and `annotations` for annotated screenshots).
+
+## Your first agent loop
+
+`page.runCommand` takes one agent-browser style command line and returns text for a model. A minimal loop: snapshot, let the model pick a ref, act, repeat.
+
+```kotlin
+suspend fun agentStep(page: Page, askModel: suspend (String) -> String): String {
+    val observation = page.runCommand("snapshot -i").output
+    // @e1 [heading] "Example Domain" [level=1]
+    // @e2 [link] "Learn more"
+    val command = askModel(observation)            // e.g. "click @e2"
+    return try {
+        page.runCommand(command).output            // "Clicked @e2"
+    } catch (error: KmpwrightException) {
+        "Error: ${error.message}"                  // return failures to the model too
+    }
+}
+```
+
+- Refs such as `@e2` come from the latest snapshot and stay valid until the next one. Take a new snapshot after the page changes.
+- Targets can also be any selector: `click "role=button[name=\"Save\"]"`, `fill label=Email "a@b.co"`.
+- `runCommand("help")` returns the command reference (`AgentCommands.HELP`), which you can put in the tool description.
+- The result also carries structured data: `result.snapshot` for `snapshot`, `result.screenshot` for `screenshot`.
+
+Wrap page text for the model in a content boundary so it can tell page content from instructions: see [Security](/docs/security#content-boundaries). The [Agents](/docs/agents) section covers tool wiring in depth.
+
+## Close what you open
+
+| Call | Kind | Use it when |
+| --- | --- | --- |
+| `page.close()` | `suspend` | You are in a coroutine and want to wait until the page's resources are released. Idempotent. |
+| `browser.close()` | `suspend` | Closes every page and disconnects, waiting for teardown. Idempotent. |
+| `launched.close()` | `suspend` | JVM: also stops the launched Chromium and deletes its temporary profile (caller-provided profile directories are kept). |
+| `page.dispose()`, `browser.dispose()` | non-suspending | Lifecycle callbacks such as `Activity.onDestroy` or Compose `onDispose`. Returns immediately, best effort, idempotent. |
+
+On Android and iOS, closing a page you attached to your own `WebView`/`WKWebView` detaches automation (and restores your original Android clients); the view stays yours. A page backed by a WebView KMPwright created is destroyed.
+
+`Browser.use` runs a block on a fresh page and always closes it:
+
+```kotlin
+browser.use("https://example.com") {
+    getByText("Learn more").click()
+}
+```
+
+## Next
+
+<Cards>
+  <Card href="/docs/guides/locators" title="Locators" description="Selector engines, getBy*, filters and refs." />
+  <Card href="/docs/agents" title="Agents" description="Snapshots, commands and LLM tools." />
+  <Card href="/docs/platforms/capabilities" title="Capabilities" description="Check what the current backend supports." />
+</Cards>

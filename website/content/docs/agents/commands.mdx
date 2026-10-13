@@ -1,0 +1,358 @@
+---
+title: Commands
+description: Complete reference for page.runCommand, the agent-browser command line that runs in-process against a WebView or Chromium page.
+---
+
+`page.runCommand(command)` parses one agent-browser style command line, runs it on the page and returns an `AgentCommandResult`. It is the smallest surface you can hand to an LLM: one string in, one string out.
+
+```kotlin
+val result = page.runCommand("snapshot -i")
+result.output     // text for the model
+result.snapshot   // the Snapshot, for snapshot commands
+result.screenshot // the ScreenshotResult, for screenshot commands
+```
+
+agent-browser: the same command names and ref syntax as the `agent-browser` CLI, minus the CLI's session and daemon commands. The [unsupported commands](#not-available-in-runcommand) section maps each missing one to the typed API.
+
+## AgentCommandResult
+
+<TypeTable type={{
+  command: { type: 'String', description: 'The command line exactly as passed to runCommand.' },
+  output: { type: 'String', description: 'Plain text for a person or a model. Every command sets it.' },
+  snapshot: { type: 'Snapshot?', description: 'Set by `snapshot`: the full Snapshot (tree, refs, nodes).', default: 'null' },
+  screenshot: { type: 'ScreenshotResult?', description: 'Set by `screenshot`: PNG bytes, width, height and annotations.', default: 'null' },
+}} />
+
+`runCommand` is a suspending extension on `Page`. It throws `KmpwrightException` for unknown or malformed commands and propagates the exception of the underlying call (for example `KmpwrightTimeoutException` when a target never becomes actionable). Return `e.message` to the model; see [Errors are written for the model](/docs/agents#errors-are-written-for-the-model).
+
+## Syntax
+
+```
+<command> [arguments...] [flags...]
+```
+
+- The command name is case-insensitive (`CLICK` works). Sub-arguments such as `get TEXT`, `is Visible`, `scroll Down`, `cookies Clear` and `storage Local` are case-insensitive too.
+- Flags are case-sensitive and must match exactly: `-c` is compact, `-C` is cursor. They can appear anywhere after the command name. Unknown flags and extra arguments are ignored.
+- **Targets** are a snapshot ref (`@e3`, `e3` or `ref=e3`) or any selector [`page.locator`](/docs/guides/locators) understands: CSS (`#email`), `text=Save`, `role=button[name="Save"]`, `label=Email`, `placeholder=…`, `testid=…`, `xpath=…`, and `>>` chains.
+- Commands that take free text (`fill`, `type`, `select`, `eval`) join all remaining arguments with a single space, so `fill @e2 hello world` fills `hello world`. Quote the text to keep repeated spaces.
+- Flag values are a single argument. Quote values with spaces: `wait --text "Welcome back"`, `wait --fn "document.readyState === 'complete'"`, `snapshot -s "#cart .items"`. Unquoted, `wait --text Welcome back` waits for `Welcome` only.
+
+### Quoting and escaping
+
+`AgentCommands.tokenize(command)` splits the line. It is public, so you can use it to pre-parse commands yourself.
+
+| Rule | Example | Arguments |
+|---|---|---|
+| Whitespace separates arguments | `click  @e3` | `click`, `@e3` |
+| Double or single quotes group words | `fill @e2 "hello  world"` | `fill`, `@e2`, `hello  world` |
+| The other quote is literal inside quotes | `fill #q 'say "hi"'` | `fill`, `#q`, `say "hi"` |
+| Backslash escapes the next character, inside or outside quotes | `press a\ b` | `press`, `a b` |
+| Empty quotes give an empty argument | `fill #q ""` | `fill`, `#q`, (empty) |
+| Quotes can start mid-word | `fill #q a"b c"` | `fill`, `#q`, `ab c` |
+| An unterminated quote fails | `fill #q "oops` | throws ``Unterminated " quote in command`` |
+
+<Callout type="warn">
+
+Backslash is an escape character even inside single quotes, unlike a POSIX shell. JavaScript passed to `eval` or `wait --fn` must double its backslashes: write `eval "/\\d+/.test(document.title)"` to evaluate `/\d+/.test(document.title)`.
+
+</Callout>
+
+### Errors
+
+| Situation | Exception message |
+|---|---|
+| Blank command | ``Empty command. Run `help` to list commands.`` |
+| Unknown command | ``Unknown command `teleport`. Run `help` to list commands.`` |
+| Missing required argument | `Usage: <usage of that command>`, for example `Usage: click <target>` |
+| Unknown `get` field | ``Unknown `get foo`. Try text, html, value, attr, count, box, title or url.`` |
+| Unknown `is` state | ``Unknown `is foo`. Try visible, enabled, checked, focused or editable.`` |
+| Unknown load state | ``Unknown load state `foo`. Try load, domcontentloaded or networkidle.`` |
+
+## Help
+
+| Command | Output |
+|---|---|
+| `help` | `AgentCommands.HELP` |
+
+`AgentCommands.HELP` is a compact reference meant to be used verbatim as a tool description or in a system prompt:
+
+```text
+Navigation   open <url> · back · forward · reload
+Observe      snapshot [-i interactive] [-u urls] [-c compact] [-d depth] [-s selector]
+             screenshot [--full] [--annotate]
+Act          click|dblclick|tap|hover|focus|check|uncheck|highlight <target>
+             fill <target> <text> · type <target> <text> · press <key> [target]
+             select <target> <value> · drag <source> <target>
+             scroll <up|down|left|right|top|bottom> [px] · scrollintoview <target>
+Query        get <text|html|value|count|box|title|url> [target] · get attr <target> <name>
+             is <visible|enabled|checked|focused|editable> <target>
+Wait         wait <ms|target> · wait --text <text> · wait --load <load|domcontentloaded|networkidle>
+             wait --fn <js>  (all accept --timeout <ms>)
+Page         eval <js> · console · errors · cookies [clear] · storage <local|session> [clear]
+
+Targets are snapshot refs such as @e3, or any selector: css, text=Save, role=button, label=Email.
+```
+
+## Navigation
+
+| Command | Aliases | Kotlin | Output |
+|---|---|---|---|
+| `open <url>` | `goto`, `navigate` | `page.goto(AgentCommands.normalizeUrl(url))` | `Opened <final url> — <title>` |
+| `back` | | `page.goBack()` | `Went back to <url>` |
+| `forward` | | `page.goForward()` | `Went forward to <url>` |
+| `reload` | | `page.reload()` | `Reloaded <url>` |
+
+- `open` waits for the `load` state with `TimeoutConfig.navigation`. The output uses the URL after redirects and adds ` — <title>` only when the title is not blank. A failed navigation (`NavigationResult.ok == false`) throws with the backend's error, or `Navigation to <url> failed`.
+- `back` and `forward` report the current URL even when there is no history entry (the typed calls return `null` in that case).
+
+### URL normalization
+
+`open` passes its argument through `AgentCommands.normalizeUrl`, which is public:
+
+| Input | Result |
+|---|---|
+| Contains `://` (`https://a.com`, `file:///x`) | unchanged |
+| Starts with `about:` or `data:` | unchanged |
+| Starts with `localhost`, `127.0.0.1` or `10.0.2.2` | `http://` prepended (`localhost:3000` → `http://localhost:3000`) |
+| Anything else | `https://` prepended (`example.com` → `https://example.com`) |
+
+The input is trimmed first. `10.0.2.2` is the Android emulator's alias for the host machine, so `open 10.0.2.2:8080` reaches a dev server on your computer.
+
+## Snapshot
+
+| Command | Kotlin | Output |
+|---|---|---|
+| `snapshot [flags]` | `page.snapshot(SnapshotOptions(...))` | `Snapshot.tree`; when the tree is empty, `(no interactive elements)` with `-i`, otherwise `(empty page)` |
+
+| Flag | Long form | `SnapshotOptions` field | Meaning |
+|---|---|---|---|
+| `-i` | `--interactive` | `interactive = true` | Only elements with refs, as a flat list |
+| `-u` | `--urls` | `urls = true` | Append `url="…"` (the resolved `href`) to links |
+| `-c` | `--compact` | `compact = true` | Drop structural lines that contain no refs or values |
+| `-d <n>` | `--depth <n>` | `maxDepth = n` | Limit tree depth; a non-numeric value is ignored |
+| `-s <css>` | `--selector <css>` | `selector = "…"` | Snapshot only the subtree of the first element matching this CSS selector (refs and `text=` are not accepted here) |
+| `-C` | `--cursor` | `cursor = true` | Also include elements that are clickable only through `cursor: pointer` or `onclick` |
+
+```kotlin
+page.runCommand("snapshot -i").output
+// @e1 [heading] "Example Domain" [level=1]
+// @e2 [input type="email"] placeholder="Email"
+// @e3 [checkbox] "Remember me" [checked]
+// @e4 [button] "Later" [disabled]
+// @e5 [button] "Submit"
+// @e6 [link] "Learn more"
+
+page.runCommand("snapshot -i -s #checkout")
+// same as
+page.snapshot(SnapshotOptions(interactive = true, selector = "#checkout"))
+```
+
+`includeHidden` has no flag; use the typed API. `-C` is accepted but not listed in `AgentCommands.HELP`. `result.snapshot` carries the full `Snapshot`, and the refs it contains replace the previous snapshot's refs. The format is described in [Snapshots and refs](/docs/agents/snapshots).
+
+## Interaction
+
+Every action resolves its target, waits until it is attached, visible, enabled, stable and receives the pointer (fill: editable), and retries until `TimeoutConfig.action` (30 s by default). `runCommand` has no per-command timeout for actions; set it in `KmpwrightConfig(timeouts = TimeoutConfig(action = …))`.
+
+| Command | Kotlin | Output |
+|---|---|---|
+| `click <target>` | `page.locator(target).click()` | `Clicked <target>` |
+| `dblclick <target>` | `page.locator(target).dblclick()` | `Double-clicked <target>` |
+| `tap <target>` | `page.locator(target).tap()` | `Tapped <target>` |
+| `hover <target>` | `page.locator(target).hover()` | `Hovered <target>` |
+| `focus <target>` | `page.locator(target).focus()` | `Focused <target>` |
+| `check <target>` | `page.locator(target).check()` | `Checked <target>` |
+| `uncheck <target>` | `page.locator(target).uncheck()` | `Unchecked <target>` |
+| `highlight <target>` | `page.locator(target).highlight()` | `Highlighted <target>` |
+| `fill <target> [text]` | `page.locator(target).fill(text)` | `Filled <target>` |
+| `type <target> <text>` | `page.locator(target).pressSequentially(text)` | `Typed into <target>` |
+| `press <key> [target]` | `page.locator(target).press(key)`, or `page.keyboard.press(key)` without a target | `Pressed <key>` |
+| `select <target> <value>` | `page.locator(target).selectOption(value)` | `Selected <value> in <target>` |
+| `drag <source> <target>` | `page.locator(source).dragTo(page.locator(target))` | `Dragged <source> to <target>` |
+| `scrollintoview <target>` | `page.locator(target).scrollIntoViewIfNeeded()` | `Scrolled <target> into view` |
+
+Aliases: `key` for `press`, `scrollinto` for `scrollintoview`.
+
+- `fill` replaces the value. With no text it fills an empty string, which clears the field. `type` requires text and sends key events one character at a time (Playwright `pressSequentially`), for inputs that react to each keystroke.
+- `press` takes key names and combinations such as `Enter`, `Tab`, `Escape`, `ArrowDown`, `Control+A` or `Shift+Tab`. Without a target the key goes to the focused element. Note the argument order: key first, target second (`press Enter @e2`).
+- `select` picks the `<option>` whose value or label equals the text. It selects one option; use `selectOption(listOf(...))` for multi-selects.
+- `highlight` draws a red overlay on the element for 3 seconds (`HighlightOptions()` defaults). It is for a person watching the screen.
+
+### Scroll
+
+| Command | Kotlin | Output |
+|---|---|---|
+| `scroll down [px]` | `page.scroll(ScrollDirection.Down, px)` | `Scrolled down` |
+| `scroll up [px]` | `page.scroll(ScrollDirection.Up, px)` | `Scrolled up` |
+| `scroll left [px]` | `page.scroll(ScrollDirection.Left, px)` | `Scrolled left` |
+| `scroll right [px]` | `page.scroll(ScrollDirection.Right, px)` | `Scrolled right` |
+| `scroll top` | `page.scrollToTop()` | `Scrolled top` |
+| `scroll bottom` | `page.scrollToBottom()` | `Scrolled bottom` |
+
+`px` defaults to `300` and scrolls exactly that many CSS pixels. A non-numeric `px` falls back to 300. `top` and `bottom` ignore it. Any other direction throws `Usage: scroll <up|down|left|right|top|bottom> [pixels]`.
+
+## Queries
+
+| Command | Kotlin | Output |
+|---|---|---|
+| `get text <target>` | `page.locator(target).innerText()` | The rendered text |
+| `get html <target>` | `page.locator(target).innerHTML()` | The inner HTML |
+| `get value <target>` | `page.locator(target).inputValue()` | The value, or empty |
+| `get attr <target> <name>` | `page.locator(target).getAttribute(name)` | The value, or `null` |
+| `get count <selector>` | `page.locator(selector).count()` | A number, `0` when nothing matches |
+| `get box <target>` | `page.locator(target).boundingBox()` | `x=… y=… width=… height=…` in CSS pixels, or `null` |
+| `get title` | `page.title.value` | The title |
+| `get url` | `page.url.value` | The committed URL |
+| `is visible <target>` | `page.locator(target).isVisible()` | `true` or `false` |
+| `is enabled <target>` | `page.locator(target).isEnabled()` | `true` or `false` |
+| `is checked <target>` | `page.locator(target).isChecked()` | `true` or `false` |
+| `is focused <target>` | `page.locator(target).isFocused()` | `true` or `false` |
+| `is editable <target>` | `page.locator(target).isEditable()` | `true` or `false` |
+
+`get title` reads `Page.title`, the title as of the last navigation. If the page changes `document.title` later, use `eval document.title`.
+
+Queries do not wait for the target. When it does not exist (including a stale ref) they answer immediately:
+
+| Command | Missing target |
+|---|---|
+| `get text`, `get html`, `get value` | empty output |
+| `get attr`, `get box` | `null` |
+| `get count` | `0` |
+| `is visible`, `is focused` | `false` |
+| `is enabled`, `is checked`, `is editable` | throws ``No element found for '<target>'. Refresh the snapshot if this is a stale reference.`` |
+
+`is checked` on an element that is not a checkbox or radio throws `Element <target> is not a checkbox or radio button`. A selector matching several elements throws a strict-mode error for every query except `get count`. Use `wait <target>` first when the element may still be loading.
+
+## Wait
+
+| Command | Kotlin | Output |
+|---|---|---|
+| `wait <ms>` | `page.waitForTimeout(ms)` | `Waited <ms>ms` |
+| `wait <target>` | `page.locator(target).waitFor(SelectorState.Visible, timeout)` | `<target> is visible` |
+| `wait --text <text>` | `page.waitForText(text, timeout)` | `Found text "<text>"` |
+| `wait --load <state>` | `page.waitForLoadState(state, timeout)` | `Reached <state>` |
+| `wait --fn <js>` | `page.waitForFunction(js, timeout)` | `Condition is true` |
+
+- `--timeout <ms>` applies to every form except `wait <ms>`. **It defaults to 10 000 ms**, not to `TimeoutConfig`.
+- Load states: `load`, `domcontentloaded` (or `dom`), `networkidle` (or `idle`). These map to `LoadState.Load`, `LoadState.DOMContentLoaded` and `LoadState.NetworkIdle`.
+- When several flags are given, the first match wins in this order: `--text`, `--fn`, `--load`, then a numeric first argument, then a target.
+- Put the target first: `wait @e3 --timeout 5000`. In `wait --timeout 5000 @e3`, the first argument `--timeout` is taken as the target.
+- `--text` matches a substring of `document.body.innerText`. `--fn` needs `allowEval`.
+- On timeout these throw `KmpwrightTimeoutException`, for example `Timeout 10000ms exceeded waiting for text "Welcome"`.
+
+## Screenshot
+
+| Command | Kotlin | Output |
+|---|---|---|
+| `screenshot` | `page.screenshot()` | `Screenshot <width>×<height>` |
+| `screenshot --full` | `page.screenshot(ScreenshotOptions(fullPage = true))` | `Screenshot <width>×<height>` |
+| `screenshot --annotate` | `page.screenshot(ScreenshotOptions(annotate = true))` | `Screenshot <width>×<height>` and one legend line per ref |
+
+Short flags: `-f` for `--full`, `-a` for `--annotate`; they combine. The image is a PNG in `result.screenshot.bytes`; the command takes no file path. Send the bytes to the model as an image (see [LLM tools](/docs/agents/llm-tools#screenshots)).
+
+`--annotate` takes a fresh default snapshot first (which replaces the current refs), draws each ref's label on the page, captures, and removes the labels. The legend lists one line per labelled element; the same data is in `result.screenshot.annotations` (`ref`, `role`, `name`, `box`).
+
+```text
+Screenshot 756×469
+[1] @e1 heading "Example Domain"
+[2] @e2 textbox "Email"
+[3] @e3 checkbox "Remember me"
+[4] @e4 button "Submit"
+[5] @e5 link "Learn more"
+```
+
+Each legend line is `[N] @eN <role> "<name>"`: the label drawn on the image is the ref number `N`. The role comes from the snapshot's `RefEntry.role`, so a text input shows as `textbox` here even when the tree prints `[input type="email"]`. Names are JSON-quoted and truncated like snapshot names; an empty name is omitted.
+
+## Page state and debugging
+
+| Command | Kotlin | Output |
+|---|---|---|
+| `eval <js>` | `page.evaluate(js).value` | Strings verbatim, other values as JSON, `null` for null/undefined |
+| `console` | `page.consoleMessages()` | `[<type>] <text>` per line, or `No console messages` |
+| `errors` | `page.pageErrors()` | One error per line, or `No page errors` |
+| `cookies` | `page.cookies()` | `name=value  (domain/path)` per line, or `No cookies` |
+| `cookies clear` | `page.clearCookies()` | `Cleared cookies` |
+| `storage local` | `page.localStorage.entries()` | `key=value` per line, or `No local storage` |
+| `storage session` | `page.sessionStorage.entries()` | `key=value` per line, or `No session storage` |
+| `storage local clear` | `page.localStorage.clear()` | `Cleared local storage` |
+| `storage session clear` | `page.sessionStorage.clear()` | `Cleared session storage` |
+
+- `cookies get` and `cookies list` are the same as `cookies`. Any other sub-command throws `Usage: cookies [list|clear]`.
+- `eval` awaits Promises. It fails when `KmpwrightConfig.allowEval` is `false` or an `ActionPolicy` denies `ActionType.Evaluate`.
+- `console` and `errors` cover messages since the last navigation.
+
+## Not available in runCommand
+
+These agent-browser commands have no `runCommand` form. Most have a typed equivalent you can call from your own code, or expose as an extra tool. Backend support follows [PageCapabilities](/docs/platforms/capabilities).
+
+| agent-browser | KMPwright typed API |
+|---|---|
+| `upload <target> <files>` | `page.locator(target).setInputFiles(listOf(path))` (JVM; not supported on mobile WebViews) |
+| `pdf` | `page.pdf(PdfOptions())` |
+| `read [url]` | `page.read(url)` |
+| `keyboard type` / `keyboard inserttext` | `page.keyboard.type(text)` / `page.keyboard.insertText(text)` |
+| `find role/text/label …` | `page.getByRole("button", name = "Save")`, `getByText`, `getByLabel`, `getByPlaceholder`, `getByTestId`, then `.click()` etc. |
+| `mouse move/down/up/wheel` | `page.mouse.move(x, y)`, `down()`, `up()`, `wheel(dx, dy)` |
+| `clipboard read/write` | `page.clipboard.readText()` / `writeText(text)` |
+| `set viewport` | `page.setViewportSize(width, height)` |
+| `set device` | `page.emulateDevice(Devices.iPhone15)` |
+| `set geo` | `page.setGeolocation(Geolocation(latitude, longitude))` |
+| `set offline` | `page.setOffline(true)` |
+| `set headers` | `page.setExtraHTTPHeaders(mapOf("X-Test" to "1"))` |
+| `set credentials` | `page.setHTTPCredentials(HttpCredentials(user, password))` |
+| `set media` | `page.emulateMedia(ColorScheme.Dark)` |
+| `cookies set` | `page.addCookies(listOf(Cookie(name, value, domain)))` |
+| `storage local <key>` / `storage local set` | `page.localStorage.get(key)` / `page.localStorage.set(key, value)` |
+| `wait --url` | `page.waitForURL("**/done")` |
+| `network route` | `page.route(url) { route -> route.abort() }` |
+| `network requests` | `page.network.requests()` |
+| `network har` | `page.network.startHar()` / `page.network.stopHar()` |
+| `tab` | `browser.newPage()`, `browser.pages()`, `page.openNewTab(url)`, `page.close()` |
+| `window new` | `browser.newWindow()` (CDP only) |
+| `frame` | `page.frameLocator("iframe").locator(selector)` |
+| `dialog accept/dismiss` | `page.onDialog { DialogResponse.Accept }`, `page.acceptDialogs()`, `page.dismissDialogs()` |
+| `diff snapshot` | `page.diffSnapshot(before, after)` or `page.diffSnapshot(name)` |
+| `diff url` | `page.diffUrls(url1, url2)` |
+| `diff screenshot` | `VisualDiff` over image bytes |
+| `pushstate` | `page.pushState(url)` |
+| `addinitscript` / `removeinitscript` | `page.addInitScript(script)` / `page.removeInitScript(id)` |
+| `trace` | `page.tracing.start()` / `page.tracing.stop()` (CDP only) |
+| `profiler` | `page.profiler.start()` / `page.profiler.stop()` (CDP only) |
+| `record` | `page.video.start(RecordingOptions(path))` / `page.video.stop()` (CDP only) |
+| `stream` | `page.screencast()` (CDP only) |
+| `react` | `page.react.tree()`, `page.react.inspect(id)` |
+| `vitals` | `page.webVitals()` |
+| `a11y` | `page.accessibilityAudit()` |
+| `webmcp` | `page.webMcp.discover()`, `page.webMcp.invoke(name)` |
+| `auth login` | `page.login(profile)` |
+| `state save/load` | `page.storageState().save(path, password)` / `page.setStorageState(StorageState.load(path, password))` |
+| `batch` | Call `runCommand` once per command |
+| `get cdp-url`, `session`, `profile`, `install`, `upgrade`, `doctor`, `skills`, `mcp`, `chat`, `plugin` | No equivalent; these manage the agent-browser CLI and daemon |
+
+To give a model one of these, add a separate tool for it, or extend your tool function: check the first token with `AgentCommands.tokenize(command)` and handle your own commands before falling back to `runCommand`.
+
+```kotlin
+suspend fun Page.browserTool(command: String): String {
+    return try {
+        val args = AgentCommands.tokenize(command)
+        when (args.firstOrNull()?.lowercase()) {
+            "upload" -> {
+                val target = args.getOrNull(1) ?: return "Error: Usage: upload <target> <file>..."
+                locator(target).setInputFiles(args.drop(2))
+                "Uploaded ${args.size - 2} file(s) to $target"
+            }
+            "waiturl" -> {
+                val pattern = args.getOrNull(1) ?: return "Error: Usage: waiturl <glob>"
+                waitForURL(pattern)
+                "URL matches $pattern"
+            }
+            else -> runCommand(command).output
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        "Error: ${e.message ?: e.toString()}"
+    }
+}
+```
+
+If you add commands, append their usage to the tool description after `AgentCommands.HELP`.

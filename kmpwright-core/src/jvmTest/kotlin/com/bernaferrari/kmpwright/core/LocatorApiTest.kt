@@ -82,23 +82,21 @@ class LocatorApiTest {
 
     @Test
     fun `type executes without error`() = testBlocking {
-        locator.type("abc")
+        locator.pressSequentially("abc")
     }
 
     @Test
     fun `zero-delay type batches characters in one bridge evaluation`() = testBlocking {
-        BaseLocator.injectedControllers = persistentSetOf()
-        locator.type("a'b")
+        locator.pressSequentially("a'b")
 
-        val typeScripts = controller.executedScripts.filter { it.contains("new InputEvent") }
+        val typeScripts = controller.executedScripts.filter { it.contains("H.perform(el, 'type'") }
         assertEquals(1, typeScripts.size)
-        assertTrue(typeScripts.single().contains("dispatchEvent(new Event('change'"))
-        assertTrue(typeScripts.single().contains("a\\'b"))
+        assertTrue(typeScripts.single().contains("\"text\":\"'\""))
     }
 
     @Test
-    fun `type with delay`() = testBlocking {
-        locator.type("xyz", TypeOptions(delayMs = 10))
+    fun `pressSequentially with delay`() = testBlocking {
+        locator.pressSequentially("xyz", PressSequentiallyOptions(delayMs = 10))
     }
 
     @Test
@@ -129,48 +127,67 @@ class LocatorApiTest {
     }
 
     @Test
-    fun `scrollDown executes without error`() = testBlocking {
-        locator.scrollDown(100.0)
-    }
-
-    @Test
-    fun `scrollDown with zero distance`() = testBlocking {
-        locator.scrollDown(0.0)
-    }
-
-    @Test
-    fun `scrollUp executes without error`() = testBlocking {
-        locator.scrollUp(100.0)
-    }
-
-    @Test
-    fun `scrollUp with zero distance`() = testBlocking {
-        locator.scrollUp(0.0)
-    }
-
-    @Test
     fun `focus executes without error`() = testBlocking {
         locator.focus()
     }
 
+
+    private fun checkbox(initial: Boolean) {
+        var checked = initial
+        controller.evalHandler = { script ->
+            when {
+                script.contains("/*kmpwright:waitFor*/") -> "true"
+                script.contains("H.checkedState") -> checked.toString()
+                script.contains("'radio'") -> "false"
+                script.contains("H.perform(el, 'click'") -> { checked = !checked; null }
+                else -> null
+            }
+        }
+    }
+
     @Test
-    fun `check executes without error`() = testBlocking {
+    fun `check clicks an unchecked box and verifies the new state`() = testBlocking {
+        checkbox(initial = false)
         locator.check()
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'click'") })
     }
 
     @Test
     fun `check with custom options`() = testBlocking {
+        checkbox(initial = false)
         locator.check(CheckOptions(timeoutMs = 5000, force = true))
     }
 
     @Test
+    fun `check is a no-op when already checked`() = testBlocking {
+        checkbox(initial = true)
+        locator.check()
+        assertFalse(controller.executedScripts.any { it.contains("H.perform(el, 'click'") })
+    }
+
+    @Test
     fun `uncheck executes without error`() = testBlocking {
+        checkbox(initial = true)
         locator.uncheck()
     }
 
     @Test
     fun `uncheck with custom options`() = testBlocking {
+        checkbox(initial = true)
         locator.uncheck(CheckOptions(timeoutMs = 5000, force = true))
+    }
+
+    @Test
+    fun `check fails when the click does not change the state`() {
+        controller.evalHandler = { script ->
+            when {
+                script.contains("/*kmpwright:waitFor*/") -> "true"
+                script.contains("H.checkedState") -> "false"
+                else -> null
+            }
+        }
+        val error = org.junit.Assert.assertThrows(KmpwrightException::class.java) { kotlinx.coroutines.runBlocking { locator.check() } }
+        assertTrue(error.message!!.contains("did not check"))
     }
 
     @Test
@@ -195,17 +212,19 @@ class LocatorApiTest {
 
     @Test
     fun `clearInputFiles executes without error`() = testBlocking {
-        locator.clearInputFiles()
+        locator.setInputFiles(emptyList())
     }
 
     @Test
     fun `dragTo executes without error`() = testBlocking {
+        controller.waitResultOverride = "true"
         val target = TestLocator("div.target", controller)
         locator.dragTo(target)
     }
 
     @Test
     fun `dragTo with custom options`() = testBlocking {
+        controller.waitResultOverride = "true"
         val target = TestLocator("div.target", controller)
         locator.dragTo(target, DragOptions(timeoutMs = 10000))
     }
@@ -241,12 +260,6 @@ class LocatorApiTest {
     }
 
     @Test
-    fun `computedStyles returns empty map for mock`() = testBlocking {
-        val styles = locator.computedStyles()
-        assertTrue(styles.isEmpty())
-    }
-
-    @Test
     fun `count returns integer`() = testBlocking {
         val count = locator.count()
         assertEquals(0, count)
@@ -260,6 +273,7 @@ class LocatorApiTest {
 
     @Test
     fun `isEnabled returns boolean`() = testBlocking {
+        controller.evalHandler = { script -> if (script.contains("H.isDisabled")) "true" else null }
         val enabled = locator.isEnabled()
         assertTrue(enabled)
     }
@@ -343,7 +357,7 @@ class LocatorApiTest {
 
     @Test
     fun `filter returns a Locator`() {
-        val filtered = locator.filter(FilterOptions(hasText = "hello"))
+        val filtered = locator.filter(hasText = "hello")
         assertNotNull(filtered)
         assertTrue(filtered is TestLocator)
     }
@@ -355,8 +369,8 @@ class LocatorApiTest {
     }
 
     @Test
-    fun `expect returns KmpwrightExpect`() {
-        val expect = locator.expect()
+    fun `expect returns LocatorAssertions`() {
+        val expect = expect(locator)
         assertNotNull(expect)
     }
 }

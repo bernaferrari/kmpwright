@@ -13,25 +13,23 @@ class PageLifecycleTest {
         val controller = MockWebViewController()
         val page = TestPage(controller)
 
-        page.close()
+        page.dispose()
 
         assertTrue(controller.disposed)
     }
 
     @Test
-    fun `page close is exhaustive and idempotent`() {
+    fun `page close is exhaustive and idempotent`() = testBlocking {
         val controller = MockWebViewController()
         val page = TestPage(controller)
-        page.route("*") { RouteHandler.Fallthrough }
+        page.route("*") { it.fallback() }
         page.onDialog { DialogResponse.Dismiss }
-        BaseLocator.injectedControllers = persistentSetOf<WebViewScriptController>(controller)
         val routeSyncCount = controller.removeAllRouteHandlersCount
 
-        page.close()
-        page.close()
+        page.dispose()
+        page.dispose()
 
         assertTrue(controller.disposed)
-        assertTrue(controller !in BaseLocator.injectedControllers)
         assertEquals(1, controller.disposeCount)
         assertEquals(2, controller.navigationCallbackSetCount)
         assertEquals(1, controller.removeRequestListenerCount)
@@ -40,22 +38,19 @@ class PageLifecycleTest {
     }
 
     @Test
-    fun `page close releases every owner when controller cleanup throws`() {
+    fun `page close releases every owner when controller cleanup throws`() = testBlocking {
         val controller = MockWebViewController()
         var registryRemovalCount = 0
         val runtime = object : PageTabRuntime {
             override suspend fun openTab(source: Page, url: String?): NavigationResult =
                 NavigationResult(url ?: "about:blank", 200, true)
 
-            override suspend fun closeTab(page: Page): Boolean = true
-
             override fun pageClosed(page: Page) {
                 registryRemovalCount += 1
             }
         }
         val page = TestPage(controller, runtime)
-        page.route("*") { RouteHandler.Fallthrough }
-        BaseLocator.injectedControllers = persistentSetOf<WebViewScriptController>(controller)
+        page.route("*") { it.fallback() }
         val routeSyncCount = controller.removeAllRouteHandlersCount
         controller.apply {
             throwOnNavigationCallback = true
@@ -65,11 +60,10 @@ class PageLifecycleTest {
             throwOnDispose = true
         }
 
-        page.close()
-        page.close()
+        page.dispose()
+        page.dispose()
 
         assertTrue(controller.disposed)
-        assertTrue(controller !in BaseLocator.injectedControllers)
         assertEquals(2, controller.navigationCallbackSetCount)
         assertEquals(1, controller.removeRequestListenerCount)
         assertEquals(1, controller.removeDialogListenerCount)
@@ -84,7 +78,7 @@ class PageLifecycleTest {
         val navigation = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             runCatching { page.goto("https://example.com", GotoOptions(timeoutMs = 60_000)) }
         }
-        page.close()
+        page.dispose()
         val result = kotlinx.coroutines.withTimeout(1_000) { navigation.await() }
         assertTrue(result.exceptionOrNull() is KmpwrightException)
         assertTrue(result.exceptionOrNull()!!.message!!.contains("closed"))
@@ -105,6 +99,6 @@ class PageLifecycleTest {
         controller.completeNavigationImmediately = true
         controller.loadUrl("https://example.com/later")
         assertEquals("https://example.com/later", page.url.value)
-        page.close()
+        page.dispose()
     }
 }

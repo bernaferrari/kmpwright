@@ -1,0 +1,230 @@
+---
+title: Android
+description: Drive an Android WebView with KMPwright, including attaching to your own WebView, threading, client forwarding, renderer crashes, screenshots and the limits of WebView interception.
+---
+
+On Android, KMPwright drives an `android.webkit.WebView` in your app's process. It either attaches to a WebView you already show or creates and owns a detached one.
+
+```kotlin
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val webView = WebView(this)
+        setContentView(webView)
+
+        // Main thread: the constructor checks it.
+        val browser = Browser(AndroidPlatformContext(this, webView = webView))
+        val page = browser.page()
+
+        lifecycleScope.launch {
+            page.goto("https://example.com")
+            page.getByRole("link", name = "Learn more").click()
+        }
+    }
+}
+```
+
+## `AndroidPlatformContext`
+
+```kotlin
+public class AndroidPlatformContext(
+    public val context: Context,
+    public val webView: WebView? = null,
+    public val delegateWebViewClient: WebViewClient? = null,
+    public val delegateWebChromeClient: WebChromeClient? = null
+) : PlatformContext
+```
+
+<TypeTable
+  type={{
+    context: { type: 'Context', description: 'Any Context. KMPwright keeps its applicationContext.filesDir for saved auth profiles, and uses it to create WebViews.' },
+    webView: { type: 'WebView?', description: 'Your WebView. The browser\'s default page drives it. When null, KMPwright creates and owns a detached WebView.', default: 'null' },
+    delegateWebViewClient: { type: 'WebViewClient?', description: 'Receives every WebViewClient callback. When null, the client already installed on webView keeps receiving them.', default: 'null' },
+    delegateWebChromeClient: { type: 'WebChromeClient?', description: 'Receives every WebChromeClient callback. When null, the chrome client already installed on webView keeps receiving them.', default: 'null' },
+  }}
+/>
+
+### Your WebView vs a KMPwright-created one
+
+| | `webView = yourWebView` | `webView = null` |
+|---|---|---|
+| Default page (`browser.page()`) | Drives your WebView | Drives a new WebView KMPwright creates |
+| WebView settings | Yours, except `javaScriptEnabled` is set to `true` (every locator, wait and assertion runs page JavaScript) | `javaScriptEnabled`, `domStorageEnabled`, no file or content access, `MIXED_CONTENT_NEVER_ALLOW`, `useWideViewPort`, `loadWithOverviewMode` |
+| `KmpwrightConfig.userAgent` | Replaces the WebView's user agent | Applied at creation |
+| `KmpwrightConfig.viewport` | Not applied: your layout sizes the WebView | Applied at creation, in CSS pixels |
+| On `page.close()` | Clients restored, init scripts removed, loading stopped. The WebView stays alive. | WebView removed from its parent and destroyed |
+| Visible on screen | Yes | No: it is not attached to a window |
+
+`browser.newPage()` always creates a new KMPwright-owned WebView (on the main thread). There is no public API to get that WebView, so use `webView = yourWebView` (or [kmpwright-compose](/docs/guides/compose)) when the user should see the page.
+
+## Initialization and storage
+
+Creating a `Browser` with an `AndroidPlatformContext` records `context.applicationContext.filesDir`. Saved auth profiles (`AuthManager`) live in `filesDir/kmpwright/auth`. If you use `AuthManager` before creating any `Browser`, call this first:
+
+```kotlin
+KmpwrightAndroid.initialize(applicationContext)
+```
+
+Otherwise `AuthManager` throws `KmpwrightException`: "Kmpwright storage is not initialized on Android. Create a Browser with AndroidPlatformContext or call KmpwrightAndroid.initialize(context) before using auth profiles or saved state."
+
+`StorageState.save(path, password)` and `StorageStateAutosaveOptions(path, ...)` write to the path you pass. Use a path under `context.filesDir`.
+
+## Threading
+
+WebView is single-threaded. KMPwright confines all WebView work to the main looper internally, so:
+
+- **Create the `Browser` on the main thread.** The constructor throws `IllegalStateException` otherwise: "Browser(AndroidPlatformContext) must be called on the Android main thread (WebView is single-threaded). Create it from Activity/Fragment/Compose code or wrap it in withContext(Dispatchers.Main)."
+- **Every other API can be called from any dispatcher.** `newPage()`, navigation, evaluation, cookies, screenshots and input switch to the main thread themselves.
+- **Route handlers run on `Dispatchers.Default`,** not on the main thread, so a busy UI cannot stall network interception.
+
+## Your clients keep working
+
+KMPwright installs its own `WebViewClient` and `WebChromeClient` on the WebView and forwards every non-deprecated callback to a delegate:
+
+1. `delegateWebViewClient` / `delegateWebChromeClient` if you passed them,
+2. otherwise the clients that were on the WebView when the `Browser` attached.
+
+On `page.close()` the original clients are put back. Two exceptions run before your client:
+
+- `shouldInterceptRequest`: the domain filter runs first (it is a security boundary), then your client. If your client returns a response, KMPwright routes do not see that request.
+- `onRenderProcessGone`: your client is called, then KMPwright always returns `true` so the renderer crash does not kill your app.
+
+<Callout type="warn">
+Do not assign `webView.webViewClient = …` after creating the `Browser`. That replaces KMPwright's client and disables navigation tracking, routing and the domain filter. Pass your client as `delegateWebViewClient` instead.
+</Callout>
+
+## Coordinates
+
+All public coordinates are CSS pixels, the same as `getBoundingClientRect()`: `page.mouse`, `page.touchscreen`, `ClickOptions.position`, `ScreenshotOptions.clip`, `Locator.boundingBox()` and `setViewportSize`. KMPwright converts them to WebView pixels with `devicePixelRatio` times the visual-viewport (pinch-zoom) scale, falling back to the display density.
+
+Screenshot **output** is in device pixels times `ScreenshotOptions.scale`, so a 400×800 CSS viewport on a 2.625x display produces a 1050×2100 image.
+
+## Renderer crashes
+
+When the renderer process dies (crash or killed by the system):
+
+- pending navigations finish with `ok = false` and `error` "Page crashed: the Android WebView renderer process crashed" (or "was killed by the system"),
+- pending and later evaluations throw `KmpwrightException`: "Page crashed: the Android WebView renderer process is gone",
+- `AndroidWebViewState.rendererGone` becomes `true`,
+- a KMPwright-owned WebView is removed and destroyed (unless your delegate's `onRenderProcessGone` returned `true`),
+- **your** WebView is not touched: remove and destroy it yourself, then create a new `Browser`.
+
+```kotlin
+val state = page.androidWebViewState() ?: return  // null on iOS and JVM
+lifecycleScope.launch {
+    state.collect { s ->
+        if (s.rendererGone) {
+            (webView.parent as? ViewGroup)?.removeView(webView)
+            webView.destroy()
+            // recreate the WebView and the Browser
+        }
+    }
+}
+```
+
+### `Page.androidWebViewState()`
+
+```kotlin
+public fun Page.androidWebViewState(): StateFlow<AndroidWebViewState>?
+```
+
+Android-only extension. Returns the observable state of a page created by an Android `Browser`, or null for other pages. Updated on the main thread from WebView callbacks.
+
+<TypeTable
+  type={{
+    url: { type: 'String?', description: 'WebView.url as of the last callback.', default: 'null' },
+    title: { type: 'String?', description: 'WebView.title as of the last callback.', default: 'null' },
+    isLoading: { type: 'Boolean', description: 'Between onPageStarted and onPageFinished.', default: 'false' },
+    progress: { type: 'Int', description: 'Last onProgressChanged value (0 to 100).', default: '0' },
+    canGoBack: { type: 'Boolean', description: 'WebView.canGoBack().', default: 'false' },
+    canGoForward: { type: 'Boolean', description: 'WebView.canGoForward().', default: 'false' },
+    rendererGone: { type: 'Boolean', description: 'The renderer crashed or was killed; this WebView can no longer be used.', default: 'false' },
+  }}
+/>
+
+## Dialogs
+
+Dialogs reach automation only while a `page.onDialog` handler (including `acceptDialogs()` / `dismissDialogs()`) or a `waitForDialog` is active. Otherwise WebView hands them to your `WebChromeClient` or its native dialog UI, and no `DialogEvent` is emitted on `page.events.dialog`.
+
+While automation handles them, KMPwright answers `alert`, `confirm`, `prompt` and `beforeunload` with the newest handler; with only a `waitForDialog` pending, the dialog is dismissed. A handler that throws or does not answer within `TimeoutConfig.handler` (30 s by default) dismisses the dialog.
+
+This differs from iOS and JVM, which dismiss dialogs when nothing handles them, like Playwright.
+
+## Route interception limits
+
+`page.route` works through `shouldInterceptRequest` (capability `RouteInterception` = Partial):
+
+- `route.fulfill(...)` and `route.abort(...)` work for every request WebView passes to `shouldInterceptRequest` (documents, subresources, fetch, XHR).
+- `route.resume(...)` without overrides lets WebView load the request normally. With overrides (`url`, `method`, `headers`, `postData`) KMPwright re-issues the request itself with `HttpURLConnection`, copying cookies from `CookieManager` and writing `Set-Cookie` back. Only `http(s)` targets are allowed; a 3xx response fails with "Route continue received an unfollowable redirect".
+- `shouldInterceptRequest` does not expose request bodies, so `route.request.postData` is null on Android.
+- A handler that does not decide within `TimeoutConfig.handler` (30 s by default) aborts the request with error code `timedout`; WebView's network thread waits for it meanwhile. A handler that throws aborts it with `failed`.
+- Requests your own `WebViewClient.shouldInterceptRequest` answered never reach KMPwright routes.
+
+See [Network](/docs/guides/network).
+
+## Domain filter
+
+`page.setAllowedDomains(listOf("example.com", "*.example.com"))` is enforced natively (capability `DomainFiltering` = Partial):
+
+- requests to other hosts fail as network errors in `shouldInterceptRequest` (fetch, XHR, images, iframes),
+- navigations, including main-frame server redirects, are cancelled; `goto` returns `ok = false` with "Blocked by KMPwright domain filter: host".
+
+It is Partial because WebView has no hook for:
+
+- server redirects of **subresource** requests (an open redirect on an allowed host reaches its target),
+- WebSocket connections,
+- requests made by service workers.
+
+## Screenshots and PDF
+
+- **Viewport:** `PixelCopy` of the WebView's window region when the WebView is attached to an `Activity` window. KMPwright copies until two consecutive frames match, so half-rasterized tiles are not captured. Otherwise (detached WebView, PixelCopy failure or 500 ms timeout) it draws the view into a bitmap.
+- **Full page:** scroll and stitch. KMPwright measures the document, hides the scrollbars, scrolls tile by tile, copies each viewport, stitches them into one bitmap and restores the original scroll position. Bitmaps are capped at 128 MiB.
+- **Format:** PNG, JPEG and WEBP (`quality` applies to JPEG and WEBP). `omitBackground = true` throws `KmpwrightUnsupportedException`: "ScreenshotOptions.omitBackground is not supported on Android WebView: it always paints an opaque page background".
+- **PDF** (`Pdf` = Partial): paginated from rendered viewport tiles. Paper size (`format`, default Letter; `width`, `height`), `landscape` and `margin` work. `displayHeaderFooter`, header/footer templates, `scale != 1.0`, `printBackground = false` and `pageRanges` throw `KmpwrightUnsupportedException`. Documents over 16 megapixels or 128 pages are rejected.
+
+## Other differences
+
+| Feature | Android behavior |
+|---|---|
+| `browser.newContext()` / `BrowserContext` | Unsupported. Throws `KmpwrightUnsupportedException`: "Android WebView cannot provide isolated BrowserContext semantics in-process. Use Browser pages directly or separate device/browser instances." All WebViews in a process share cookies and storage. |
+| Browser farm leases (`browserFarmSlot`) | Rejected: independent leases need isolated contexts. Use a separate host process per owner. |
+| `setExtraHTTPHeaders` | Only an empty map is accepted. Any header throws "This backend cannot apply extra HTTP headers securely without exposing them to page JavaScript." |
+| `setHTTPCredentials` | Bound to one host: the page's host when you set them, or the first host you then navigate to. KMPwright sends them as a Basic `Authorization` header on `goto` requests to that origin and answers `onReceivedHttpAuthRequest` challenges from that host (once per host and realm per load). |
+| `addInitScript` | Uses `WebViewCompat.addDocumentStartJavaScript` (`InitScripts` = Partial). Throws "This Android WebView does not support document-start scripts" when the WebView provider lacks `DOCUMENT_START_SCRIPT`. Scripts are limited to `KmpwrightConfig.allowedOriginRules` when set. |
+| `evaluate` | WebView's `evaluateJavascript` does not await Promises; KMPwright polls a Promise bridge instead. Results over 4 MiB fail. |
+| Locator actions | Synthesized in the page by the KMPwright runtime (DOM events). `page.touchscreen` and `page.keyboard` dispatch native `MotionEvent`/`KeyEvent`s. |
+| `page.mouse` / `page.keyboard` | Require `InputMode.Hybrid` (the default). `page.touchscreen` is unavailable with `InputMode.JsOnly` (`KmpwrightUnsupportedException`). |
+| `emulateMedia(colorScheme)` | JavaScript fallback only (`matchMedia` and the root `color-scheme`). CSS `@media (prefers-color-scheme)` rules keep following the app theme. |
+| `setGeolocation` | JavaScript patch of `navigator.geolocation`. |
+| `emulateNetworkConditions` | Only `offline`. Latency or throughput throw `KmpwrightUnsupportedException`. |
+| `setDeviceScaleFactor` | Throws `KmpwrightUnsupportedException`: "Android WebView device scale is determined by the host display". |
+| `emulateDevice(device)` | Applies the viewport size and user agent. The scale factor, mobile layout and touch support come from the device. |
+| `frameLocator` | Same-origin frames only (`CrossOriginFrames` = Unsupported): page JavaScript cannot enter cross-origin iframes. |
+| Network history | WebView reports no response for requests it loads itself. The main-frame document gets its status when the page finishes; 4xx/5xx responses get status and headers from `onReceivedHttpError`; other subresources finish without a response. `resourceType` is `"document"` or `"other"`. Response bodies are unavailable. |
+| `pageErrors()` / `events.pageError` | Collected by a document-start hook when the WebView supports `DOCUMENT_START_SCRIPT`; otherwise from Chromium's "Uncaught …" console messages. |
+| `cookies()` | Limited to origins this WebView has loaded. Full attributes need the `GET_COOKIE_INFO` WebView feature. |
+| Downloads, file chooser | Unsupported (`waitForDownload`, `waitForFileChooser`, `setDownloadPath`, `setDownloadBehavior` throw). `setInputFiles` with a non-empty list throws "setInputFiles is not supported in mobile WebView"; an empty list (clear) works. |
+| Tracing, profiler, video, screencast, CDP targets | Unsupported (CDP only). |
+| `browser.version()` | `product = "Android WebView"`, the installed WebView provider version, and the user agent. |
+
+The full list is on [Capabilities](/docs/platforms/capabilities).
+
+## R8 and ProGuard
+
+`kmpwright-core` ships no consumer ProGuard rules. It does not register JavaScript interfaces (`addJavascriptInterface`) or use reflection on its own classes. Its `@Serializable` classes rely on the rules that `kotlinx-serialization` ships with its artifact. The repository's sample app builds with `isMinifyEnabled = false`, so a minified build is not exercised there; run your release build's tests if you minify.
+
+## Debugging the WebView
+
+Enable remote debugging in debug builds and open `chrome://inspect` on your computer:
+
+```kotlin
+if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
+```
+
+KMPwright does not call this for you. The sample app enables it in `MainActivity`.
+
+## Related
+
+- [Capabilities](/docs/platforms/capabilities) for the full support matrix.
+- [Compose](/docs/guides/compose) for the `KmpwrightWebView` composable.
+- [Errors](/docs/reference/errors) for message meanings.

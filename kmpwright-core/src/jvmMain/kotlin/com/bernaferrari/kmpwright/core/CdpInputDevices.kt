@@ -51,7 +51,8 @@ private data class CdpKeyInfo(
 )
 
 internal class CdpMouse(
-    private val bridge: CdpInputBridge
+    private val bridge: CdpInputBridge,
+    private val config: KmpwrightConfig = KmpwrightConfig()
 ) : Mouse {
     private var currentX = 0.0
     private var currentY = 0.0
@@ -77,12 +78,20 @@ internal class CdpMouse(
 
     override suspend fun click(x: Double, y: Double, options: MouseClickOptions) {
         move(x, y, MoveOptions(timeoutMs = options.timeoutMs))
-        val acquired = pressedButtons and buttonMask(options.button) == 0
-        try {
-            if (acquired) down(MouseDownOptions(button = options.button, clickCount = options.clickCount))
-            if (options.delayMs > 0) delay(options.delayMs)
-        } finally {
-            if (acquired) release(options.button, options.clickCount)
+        // Like Playwright, a click with clickCount=N dispatches N press/release
+        // pairs with increasing clickCount so the page observes N `click`
+        // events followed by `dblclick` (N >= 2), instead of a single click.
+        // delayMs is the time between mousedown and mouseup (and between clicks).
+        val clicks = options.clickCount.coerceAtLeast(1)
+        for (count in 1..clicks) {
+            val acquired = pressedButtons and buttonMask(options.button) == 0
+            try {
+                if (acquired) down(MouseDownOptions(button = options.button, clickCount = count))
+                if (options.delayMs > 0) delay(options.delayMs)
+            } finally {
+                if (acquired) release(options.button, count)
+            }
+            if (count < clicks && options.delayMs > 0) delay(options.delayMs)
         }
     }
 
@@ -97,10 +106,6 @@ internal class CdpMouse(
 
     override suspend fun dblclick(x: Double, y: Double, options: MouseClickOptions) {
         click(x, y, options.copy(clickCount = 2))
-    }
-
-    override suspend fun tripleclick(x: Double, y: Double, options: MouseClickOptions) {
-        click(x, y, options.copy(clickCount = 3))
     }
 
     override suspend fun down(options: MouseDownOptions) {
@@ -143,7 +148,7 @@ internal class CdpMouse(
         )
     }
 
-    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions) {
+    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions): Unit = config.inputAction(options.timeoutMs, "mouse drag") {
         move(startX, startY, MoveOptions())
         val acquired = pressedButtons and buttonMask(MouseButton.LEFT) == 0
         try {
@@ -211,7 +216,8 @@ internal class CdpMouse(
 }
 
 internal class CdpKeyboard(
-    private val bridge: CdpInputBridge
+    private val bridge: CdpInputBridge,
+    private val config: KmpwrightConfig = KmpwrightConfig()
 ) : Keyboard {
     private val pressedKeys get() = bridge.inputState.pressedModifiers
 
@@ -219,7 +225,7 @@ internal class CdpKeyboard(
         bridge.sendOrThrow(CdpMethods.INPUT_INSERT_TEXT, mapOf("text" to text))
     }
 
-    override suspend fun type(text: String, options: TypeOptions) {
+    override suspend fun type(text: String, options: TypeOptions): Unit = config.inputAction(options.timeoutMs, "keyboard type") {
         for (textUnit in text.toUnicodeTextUnits()) {
             val keyInfo = textUnit.toSingleCharCdpKeyInfo()
             if (keyInfo.code.isEmpty() || keyInfo.keyCode == 0) {
@@ -245,8 +251,32 @@ internal class CdpKeyboard(
             type = "keyDown",
             keyInfo = keyInfo,
             modifiers = modifierMask(),
-            text = keyInfo.text.takeUnless { modifierMaskExcludesText() }
+            text = keyInfo.text.takeUnless { modifierMaskExcludesText() },
+            commands = macEditingCommands(keyInfo.code)
         )
+    }
+
+    /**
+     * macOS Chromium runs Cmd shortcuts through menu commands, which synthetic key events never reach;
+     * like Playwright, name the editing command explicitly (`ControlOrMeta+A` selects all on every OS).
+     */
+    private fun macEditingCommands(code: String): List<String>? {
+        if (controlOrMetaModifier() != KeyboardModifiers.META || KeyboardModifiers.META !in pressedKeys) return null
+        val shift = KeyboardModifiers.SHIFT in pressedKeys
+        val command = when (code) {
+            "KeyA" -> "selectAll"
+            "KeyC" -> "copy"
+            "KeyX" -> "cut"
+            "KeyV" -> "paste"
+            "KeyZ" -> if (shift) "redo" else "undo"
+            "ArrowLeft" -> if (shift) "moveToLeftEndOfLineAndModifySelection" else "moveToLeftEndOfLine"
+            "ArrowRight" -> if (shift) "moveToRightEndOfLineAndModifySelection" else "moveToRightEndOfLine"
+            "ArrowUp" -> if (shift) "moveToBeginningOfDocumentAndModifySelection" else "moveToBeginningOfDocument"
+            "ArrowDown" -> if (shift) "moveToEndOfDocumentAndModifySelection" else "moveToEndOfDocument"
+            "Backspace" -> "deleteToBeginningOfLine"
+            else -> return null
+        }
+        return listOf(command)
     }
 
     override suspend fun up(key: String) {
@@ -258,24 +288,16 @@ internal class CdpKeyboard(
         }
     }
 
-    override suspend fun press(key: String, options: PressOptions) {
-        require(key.isNotEmpty()) { "Key must not be empty" }
-        val parts = if (key == "+") listOf(key) else key.split('+').toMutableList().also {
-            if (key.endsWith("++")) { it.removeAt(it.lastIndex); it[it.lastIndex] = "+" }
-        }
-        val modifiers = parts.dropLast(1).map {
-            if (it.equals("ControlOrMeta", ignoreCase = true)) {
-                if (System.getProperty("os.name").contains("Mac", ignoreCase = true)) "Meta" else "Control"
-            } else canonicalModifierKey(it)
-        }
-        require(modifiers.all { it.isModifierKey() }) { "Unknown keyboard chord: $key" }
+    override suspend fun press(key: String, options: PressOptions): Unit = config.inputAction(options.timeoutMs, "keyboard press") {
+        // Playwright: modifiers down in order, key down, delayMs, key up, modifiers up in reverse order.
+        val (mainKey, modifiers) = parseKeyCombination(key)
         val acquired = mutableListOf<String>()
         try {
             for (modifier in modifiers) {
                 if (!isModifierPressed(modifier)) { down(modifier); acquired += modifier }
             }
-            down(parts.last())
-            acquired += parts.last()
+            down(mainKey)
+            acquired += mainKey
             if (options.delayMs > 0) delay(options.delayMs)
         } finally {
             withContext(NonCancellable) {
@@ -284,25 +306,16 @@ internal class CdpKeyboard(
         }
     }
 
-    override suspend fun downAndUp(key: String, options: TypeOptions) {
-        val acquired = !isModifierPressed(key)
-        try {
-            if (acquired) down(key)
-            if (options.delayMs > 0) delay(options.delayMs)
-        } finally {
-            if (acquired) withContext(NonCancellable) { withTimeout(1_000) { up(key) } }
-        }
-    }
+    internal fun isModifierPressed(key: String): Boolean = pressedKeys.contains(canonicalModifierKey(key))
 
-    override fun isModifierPressed(key: String): Boolean = pressedKeys.contains(canonicalModifierKey(key))
-
-    override fun modifiers(): Set<String> = pressedKeys.toSet()
+    internal fun modifiers(): Set<String> = pressedKeys.toSet()
 
     private suspend fun dispatchKeyEvent(
         type: String,
         keyInfo: CdpKeyInfo,
         modifiers: Int,
-        text: String? = null
+        text: String? = null,
+        commands: List<String>? = null
     ) {
         bridge.sendOrThrow(
             CdpMethods.INPUT_DISPATCH_KEY_EVENT,
@@ -310,11 +323,13 @@ internal class CdpKeyboard(
                 "type" to type,
                 "key" to keyInfo.key,
                 "code" to keyInfo.code,
+                // Like Playwright, no nativeVirtualKeyCode: Windows key codes are different native keys on
+                // macOS (49 is Space there), which made Chromium run unrelated native shortcuts.
                 "windowsVirtualKeyCode" to keyInfo.keyCode,
-                "nativeVirtualKeyCode" to keyInfo.keyCode,
                 "modifiers" to modifiers,
                 "text" to text,
-                "unmodifiedText" to text
+                "unmodifiedText" to text,
+                "commands" to commands
             ).filterValues { it != null }
         )
     }
@@ -345,10 +360,11 @@ internal class CdpKeyboard(
 }
 
 internal class CdpTouch(
-    private val bridge: CdpInputBridge
-) : Touch {
+    private val bridge: CdpInputBridge,
+    private val config: KmpwrightConfig = KmpwrightConfig()
+) : Touchscreen {
 
-    override suspend fun tap(x: Double, y: Double, options: TapOptions) {
+    override suspend fun tap(x: Double, y: Double, options: TapOptions): Unit = config.inputAction(options.timeoutMs, "tap") {
         ensureTouchEmulation(maxTouchPoints = 1)
         sendTouchEvent("touchStart", listOf(touchPoint(0, x, y)), options.modifiers)
         try {
@@ -472,22 +488,6 @@ internal class CdpTouch(
         "force" to 1,
         "id" to id
     )
-}
-
-private fun canonicalModifierKey(key: String): String = when (key.lowercase()) {
-    "shift" -> KeyboardModifiers.SHIFT
-    "control", "ctrl" -> KeyboardModifiers.CONTROL
-    "alt", "option" -> KeyboardModifiers.ALT
-    "meta", "cmd", "command" -> KeyboardModifiers.META
-    else -> key
-}
-
-private fun String.isModifierKey(): Boolean = when (this) {
-    KeyboardModifiers.SHIFT,
-    KeyboardModifiers.CONTROL,
-    KeyboardModifiers.ALT,
-    KeyboardModifiers.META -> true
-    else -> false
 }
 
 private fun Char.toCdpKeyInfo(): CdpKeyInfo = when (this) {

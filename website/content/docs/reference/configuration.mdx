@@ -1,0 +1,207 @@
+---
+title: Configuration
+description: Every field of KmpwrightConfig and its nested types (TimeoutConfig, DebugConfig, CdpConfig, ProxyConfig, Viewport, IosSchemeInterceptionConfig) and the per-page ActionPolicy, with defaults and what each one actually changes.
+---
+
+`KmpwrightConfig` is passed once, when you create a `Browser` (or `launchBrowser`). Every page of that browser uses it.
+
+```kotlin
+val config = KmpwrightConfig(
+    timeouts = TimeoutConfig(default = 15_000, navigation = 45_000),
+    allowedOriginRules = setOf("https://example.com", "https://*.example.com"),
+    allowEval = false,
+)
+val browser = Browser(AndroidPlatformContext(context, webView), config)
+```
+
+All types are immutable data classes; use `copy(...)` to derive variants. Source: [KmpwrightConfig.kt](https://github.com/bernaferrari/kmpwright/blob/main/kmpwright-core/src/commonMain/kotlin/com/bernaferrari/kmpwright/core/KmpwrightConfig.kt).
+
+## `KmpwrightConfig`
+
+<TypeTable
+  type={{
+    allowedOriginRules: { type: 'Set<String>', description: 'Origins pages may navigate to. Empty allows every origin. See "allowedOriginRules" below.', default: 'emptySet()' },
+    installMode: { type: 'InstallMode', description: 'Whether KMPwright may install its in-page runtime (selector engines, actionability checks). Only Disabled changes behavior; see below.', default: 'InstallMode.DocumentStartPreferred' },
+    inputMode: { type: 'InputMode', description: 'How input is delivered: JsOnly, TouchOnly or Hybrid. See below.', default: 'InputMode.Hybrid' },
+    timeouts: { type: 'TimeoutConfig', description: 'Defaults used whenever a per-call timeoutMs is null.', default: 'TimeoutConfig()' },
+    debug: { type: 'DebugConfig', description: 'Debug switches; only debug.enabled is enforced by the core.', default: 'DebugConfig()' },
+    productionMode: { type: 'Boolean', description: 'When true, debug.enabled must be false: creating a page throws IllegalArgumentException "Debug mode cannot be enabled when KmpwrightConfig.productionMode is true".', default: 'false' },
+    strictSelectors: { type: 'Boolean', description: 'Single-element locator operations fail when the selector matches more than one element ("Strict mode violation"), like Playwright. Set false to act on the first match.', default: 'true' },
+    allowEval: { type: 'Boolean', description: 'When false, page.evaluate, waitForFunction, locator.evaluate, addScriptTag and other arbitrary-script APIs throw "JavaScript evaluation is disabled…".', default: 'true' },
+    allowDomExtraction: { type: 'Boolean', description: 'When false, APIs that return page content throw "DOM extraction is disabled…": content(), snapshots, HAR capture, response bodies, page.read and HttpReader, WebMCP context.', default: 'true' },
+    enableTraceExport: { type: 'Boolean', description: 'When false, page.tracing.start(TracingOptions(path = …)) throws "Trace export is disabled by KmpwrightConfig.enableTraceExport". Traces returned in memory by stop() are still allowed. JVM only.', default: 'true' },
+    viewport: { type: 'Viewport?', description: 'Applied to pages KMPwright creates. Android: size of managed WebViews in CSS pixels. iOS: frame of created WKWebViews (1280x800 when null). JVM: full device metrics (size, scale factor, mobile, touch) of new pages, windows and context pages. Never applied to a host-provided web view or an attached CDP tab.', default: 'null' },
+    userAgent: { type: 'String?', description: 'User agent applied when a page is created: every Android WebView and iOS WKWebView KMPwright drives (including a host-provided one), and new JVM pages. Use page.setUserAgent to change it later.', default: 'null' },
+    iosSchemeInterception: { type: 'IosSchemeInterceptionConfig?', description: 'Registers a custom URL scheme handler on WKWebViews KMPwright creates, so documents and subresources under that scheme go through page.route. Ignored for host-provided web views.', default: 'null' },
+    cdp: { type: 'CdpConfig?', description: 'How the JVM backend connects to Chromium. Required on the JVM unless you use launchBrowser, which sets it.', default: 'null' },
+    proxy: { type: 'ProxyConfig?', description: 'JVM only: HTTP proxy for KMPwright\'s own CDP WebSocket connection. It does not proxy the browser\'s traffic.', default: 'null' },
+  }}
+/>
+
+### `allowedOriginRules`
+
+Each rule is either an exact origin (`"https://example.com"`, compared after normalization) or a glob matched against the origin string (`"https://*.example.com"`). With a non-empty set:
+
+- `goto` to any other origin throws `KmpwrightException`: "Navigation origin is not allowed by KmpwrightConfig: url" (`about:blank` is always allowed),
+- a navigation that commits to another origin (for example after a redirect or a link click) returns or emits `ok = false` with "Committed navigation origin is not allowed by KmpwrightConfig: url",
+- `page.read(url)` and `HttpReader` refuse other origins ("HTTP read origin is not allowed"),
+- on Android, init scripts are registered only for these origins.
+
+This is a configuration-time origin allowlist. For agent-browser's `--allowed-domains` host filter that also blocks subresources, use `page.setAllowedDomains(...)` (see [Network](/docs/guides/network)).
+
+### `InstallMode`
+
+| Value | Effect |
+|---|---|
+| `DocumentStartPreferred` (default) | The runtime is installed on demand. |
+| `AlwaysEvaluate` | Same as `DocumentStartPreferred` in the current implementation. |
+| `Disabled` | Locators, `getBy*`, snapshots and other APIs that need the runtime throw "Selector helpers are disabled by KmpwrightConfig.installMode". |
+
+### `InputMode`
+
+| Value | Locator actions | `page.touchscreen` | `page.mouse`, `page.keyboard` |
+|---|---|---|---|
+| `Hybrid` (default) | JVM: native CDP `Input` events. Android/iOS: DOM events from the page runtime. | Available | Available |
+| `TouchOnly` | JVM: clicks become CDP touch taps; other actions use DOM events. Android/iOS: DOM events. | Available | Throw `KmpwrightUnsupportedException` ("Native mouse requires InputMode.Hybrid" / "Native keyboard requires InputMode.Hybrid") |
+| `JsOnly` | DOM events from the page runtime on every backend. | Throws "Native touch is disabled by InputMode.JsOnly" | Throw (as above) |
+
+## `TimeoutConfig`
+
+Every `timeoutMs: Long? = null` parameter in the API resolves against these values. A timeout that expires throws `KmpwrightTimeoutException` (assertions throw `KmpwrightAssertionError`).
+
+<TypeTable
+  type={{
+    default: { type: 'Long', description: 'Script evaluation, waitForFunction, waitForText, waitForEvent, waitForRequest/Response, waitForDownload, waitForDialog, screenshots, PDF, and other page operations.', default: '30_000' },
+    navigation: { type: 'Long', description: 'goto, reload, goBack, goForward, setContent, waitForNavigation, waitForURL, waitForLoadState, pushState.', default: '30_000' },
+    action: { type: 'Long', description: 'Locator actions (click, fill, press, check…) and native input (page.mouse, page.keyboard, page.touchscreen).', default: '30_000' },
+    waitForSelector: { type: 'Long', description: 'expect(locator) and expect(page) assertions, locator.waitFor, page.waitForSelector, and the attach wait of selector queries such as page.textContent(selector).', default: '30_000' },
+    handler: { type: 'Long', description: 'Bounds your callbacks that block the page, on every backend: an onDialog handler that does not answer in time dismisses the dialog, and a route handler that does not decide in time aborts the request with error code timedout. Must be positive.', default: '30_000' },
+  }}
+/>
+
+```kotlin
+// Fail fast in tests, allow slow page loads.
+KmpwrightConfig(timeouts = TimeoutConfig(default = 5_000, action = 5_000, waitForSelector = 5_000, navigation = 60_000))
+```
+
+Playwright: `page.setDefaultTimeout` / `setDefaultNavigationTimeout` are per page and mutable. KMPwright sets the defaults once per `Browser`, has a separate bucket for assertions, and bounds dialog and route handlers (`handler`), which Playwright does not.
+
+## `DebugConfig`
+
+Only `enabled` is enforced by the core (it is rejected when `productionMode = true`). The other flags are hints for UI integrations.
+
+<TypeTable
+  type={{
+    enabled: { type: 'Boolean', description: 'Marks the configuration as a debug configuration. Must be false when productionMode is true.', default: 'false' },
+    showHighlight: { type: 'Boolean', description: 'Hint for UI integrations.', default: 'false' },
+    logJsCommands: { type: 'Boolean', description: 'Hint for UI integrations.', default: 'false' },
+    exportTraceOnFailure: { type: 'Boolean', description: 'Hint for UI integrations.', default: 'true' },
+    showDebugOverlay: { type: 'Boolean', description: 'Hint for UI integrations.', default: 'true' },
+  }}
+/>
+
+## `CdpConfig`
+
+JVM only. See [JVM](/docs/platforms/jvm) for connection details.
+
+<TypeTable
+  type={{
+    websocketUrl: { type: 'String?', description: 'A ws:// or wss:// CDP endpoint, or an http(s):// DevTools endpoint that KMPwright resolves through /json/version or /json/list (the query string is kept). Takes precedence over provider.', default: 'null' },
+    provider: { type: 'CloudProvider?', description: 'Create a session with a cloud provider, or AutoConnect to a local Chrome. Credentials come from environment variables.', default: 'null' },
+    connectionTimeoutMs: { type: 'Long', description: 'Connect timeout of the CDP WebSocket (and its HTTP client).', default: '30_000' },
+    browserArgs: { type: 'List<String>', description: 'Not passed to any browser. KMPwright only checks it for --show-scrollbars, which disables scrollbar hiding. Use BrowserLaunchOptions.arguments to pass Chromium flags.', default: 'emptyList()' },
+    headless: { type: 'Boolean', description: 'Tells KMPwright the remote browser is headless. It does not launch or reconfigure anything; it only enables hideScrollbars.', default: 'true' },
+    hideScrollbars: { type: 'Boolean', description: 'Hide native scrollbars in screenshots when headless is true, for stable images.', default: 'true' },
+    remoteBrowserSharesFileSystem: { type: 'Boolean', description: 'Allow file uploads through an explicit CDP endpoint or cloud provider only when Chromium can read the same absolute paths as the JVM. launchBrowser enables this for its local process. This does not transfer files.', default: 'false' },
+  }}
+/>
+
+### `CloudProvider`
+
+| Value | Service | Required environment variable |
+|---|---|---|
+| `Browserbase` | browserbase.com | `BROWSERBASE_API_KEY` (optional `BROWSERBASE_PROJECT_ID`) |
+| `Browserless` | browserless.io | `BROWSERLESS_API_KEY` |
+| `BrowserUse` | browser-use.com | `BROWSER_USE_API_KEY` |
+| `Kernel` | onkernel.com | `KERNEL_API_KEY` |
+| `AutoConnect` | A Chrome already running on this machine with remote debugging | none |
+
+Every optional variable is listed on the [JVM page](/docs/platforms/jvm#cloud-providers).
+
+## `ProxyConfig`
+
+JVM only. KMPwright uses `host` and `port` as the HTTP proxy for its own WebSocket connection to the CDP endpoint (useful when a cloud provider is only reachable through a proxy). It does not configure the browser's proxy; pass `--proxy-server=…` in `BrowserLaunchOptions.arguments` for that.
+
+<TypeTable
+  type={{
+    url: { type: 'String', description: 'Proxy URL, for example "http://proxy.example.com:8080".', required: true },
+    bypass: { type: 'List<String>', description: 'Not used by the current implementation.', default: 'emptyList()' },
+    username: { type: 'String?', description: 'Not used by the current implementation.', default: 'null' },
+    password: { type: 'String?', description: 'Not used by the current implementation. Never printed by toString().', default: 'null' },
+  }}
+/>
+
+Derived properties: `host` (the URL's host), `port` (default 8080), `scheme` (default `"http"`). `toString()` masks the password and credentials embedded in the URL.
+
+## `Viewport`
+
+Used by `KmpwrightConfig.viewport` and `DeviceDescriptor.viewport` (for `page.emulateDevice`).
+
+<TypeTable
+  type={{
+    width: { type: 'Int', description: 'Width in CSS pixels.', required: true },
+    height: { type: 'Int', description: 'Height in CSS pixels.', required: true },
+    deviceScaleFactor: { type: 'Double', description: 'Device pixel ratio. Applied on the JVM; Android and iOS keep the display\'s ratio.', default: '1.0' },
+    isMobile: { type: 'Boolean', description: 'Mobile layout (meta viewport). Applied on the JVM only.', default: 'false' },
+    hasTouch: { type: 'Boolean', description: 'Touch emulation with 5 touch points. Applied on the JVM only.', default: 'false' },
+    isLandscape: { type: 'Boolean', description: 'Descriptive; not applied by any backend.', default: 'true' },
+  }}
+/>
+
+Presets: `Viewport.DEFAULT` (1280×800), `Viewport.MOBILE` (390×844, mobile, touch), `Viewport.TABLET` (768×1024, mobile, touch). Device presets live in `Devices` (`iPhone15`, `iPhone15ProMax`, `iPhone14`, `iPhoneSE`, `iPadAir`, `iPadPro11`, `iPadPro12_9`, `Pixel7`, `Pixel7Pro`, `GalaxyS23`, `MacBook14`, `DesktopHD`, `DesktopLaptop`, and `Devices.all` keyed by name).
+
+## `IosSchemeInterceptionConfig`
+
+iOS only. See [iOS network interception](/docs/platforms/ios#network-interception).
+
+<TypeTable
+  type={{
+    scheme: { type: 'String', description: 'URL scheme KMPwright handles with a WKURLSchemeHandler.', default: '"kmpwright"' },
+    fallbackScheme: { type: 'String', description: 'Scheme the URL is rewritten to before routing: kmpwright://host/path becomes https://host/path.', default: '"https"' },
+  }}
+/>
+
+## `ActionPolicy`
+
+Not part of `KmpwrightConfig`: an action policy is set per page with `page.setActionPolicy(policy)`, like agent-browser's `--action-policy`. Every page action checks it first.
+
+```kotlin
+page.setActionPolicy(ActionPolicy(
+    deniedActions = setOf(ActionType.Evaluate),
+    confirmActions = setOf(ActionType.Navigate),
+    allowedDomains = setOf("example.com"),
+))
+page.setPolicyConfirmCallback { action, url -> askUser("Allow $action on $url?") }
+```
+
+<TypeTable
+  type={{
+    defaultAction: { type: 'PolicyResult', description: 'Decision when no other rule applies: Allow, Deny or Confirm.', default: 'PolicyResult.Allow' },
+    allowedActions: { type: 'Set<ActionType>', description: 'When non-empty, every other action is denied.', default: 'emptySet()' },
+    deniedActions: { type: 'Set<ActionType>', description: 'Always denied.', default: 'emptySet()' },
+    confirmActions: { type: 'Set<ActionType>', description: 'Require the confirm callback to return true.', default: 'emptySet()' },
+    allowedDomains: { type: 'Set<String>', description: 'When non-empty, actions on other hosts are denied. A domain matches itself and its subdomains.', default: 'emptySet()' },
+    deniedDomains: { type: 'Set<String>', description: 'Actions on these hosts and their subdomains are denied.', default: 'emptySet()' },
+  }}
+/>
+
+`policy.check(action, url)` evaluates the rules in this order: when any domain list is set and the URL has no http(s) host, Deny; denied domains; allowed domains; denied actions; confirm actions; allowed actions; `defaultAction`.
+
+`ActionType` values: `Click`, `Type`, `Press`, `Navigate`, `Fill`, `Screenshot`, `Evaluate`, `Scroll`, `Drag`, `Hover`, `SetCookie`, `DeleteCookie`, `SetContent`, `AddScriptTag`, `AddStyleTag`, `Focus`, `Select`, `ReadContent` (HTML, text, snapshots, cookies and storage reads), `Storage` (writing or clearing local/session storage), `Clipboard`, `Network` (request headers, HTTP credentials), `Emulation`.
+
+Failures throw `KmpwrightException`: "Action denied by policy: Click", "Action Navigate requires confirmation but no confirm callback is set", or "Action denied by user confirmation: Navigate".
+
+## Related
+
+- [Errors](/docs/reference/errors)
+- [JVM](/docs/platforms/jvm) for `BrowserLaunchOptions`.

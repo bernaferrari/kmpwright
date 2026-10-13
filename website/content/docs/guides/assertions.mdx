@@ -1,0 +1,178 @@
+---
+title: Assertions
+description: Web-first expect(locator) and expect(page) assertions that retry until they pass or time out with a KmpwrightTimeoutException.
+---
+
+```kotlin
+page.goto("https://example.com/login")
+page.getByLabel("Email").fill("ada@example.com")
+page.getByRole("button", name = "Sign in").click()
+
+expect(page).toHaveURL(Regex("/dashboard$"))
+expect(page.getByRole("heading", level = 1)).toHaveText("Welcome back")
+expect(page.getByText("Loading")).not.toBeVisible()
+expect(page.locator("li.todo")).toHaveCount(3)
+```
+
+`expect` is a top-level function in `com.bernaferrari.kmpwright.core`. It takes a `Locator` or a `Page` and returns `LocatorAssertions` or `PageAssertions`. Every matcher is a `suspend` function that re-checks the live page until the expectation holds or the timeout expires.
+
+Playwright: same names and semantics as `@playwright/test`'s `expect`, with two differences: a failure throws `KmpwrightTimeoutException` (not an assertion error), and there are no options objects; each matcher takes a trailing `timeoutMs: Long? = null`.
+
+## How retrying works
+
+1. The condition is checked immediately.
+2. If it doesn't hold, KMPwright waits and checks again. The delays between attempts are 20, 50, 100, 100 ms, then 250 ms for every later attempt.
+3. If the condition throws a `KmpwrightException` (for example a strict-mode violation, or `isChecked()` on an element that isn't a checkbox), that attempt counts as "not yet" and is retried. Any other exception propagates immediately.
+4. When the elapsed time reaches the timeout, the assertion throws `KmpwrightTimeoutException`.
+
+The timeout is checked between attempts, so a single slow attempt can run past it.
+
+Locators are resolved on every attempt, so an assertion keeps working when the element is re-rendered or appears later.
+
+### Timeouts
+
+`timeoutMs = null` (the default) uses `TimeoutConfig.waitForSelector` from the `KmpwrightConfig` the page was created with. The default is 30 000 ms.
+
+```kotlin
+// One assertion
+expect(page.getByText("Saved")).toBeVisible(timeoutMs = 5_000)
+
+// Every assertion (and every waitForSelector) for pages from this browser
+val config = KmpwrightConfig(timeouts = TimeoutConfig(waitForSelector = 10_000))
+```
+
+There is no `setDefaultTimeout` on `Page`; set defaults through `KmpwrightConfig.timeouts`. See [Configuration](/docs/reference/configuration).
+
+### Failure message
+
+A failed assertion throws `KmpwrightTimeoutException` with this message shape:
+
+```text
+Expected Locator(#status) to have text "Saved", but it did not happen within 30000ms
+Expected Locator(#status) not to be visible, but it did not happen within 30000ms
+Expected page to have URL matching /\/dashboard$/, but it did not happen within 30000ms
+```
+
+When the last attempt threw, the message ends with `(last error: …)` and that exception is the `cause`. This is how strict-mode violations surface:
+
+```text
+Expected Locator(.item) to have text "One", but it did not happen within 30000ms (last error: Strict mode violation: '.item' resolved to 3 elements (…). Use first(), last(), nth() or a more specific selector.)
+```
+
+`KmpwrightTimeoutException` extends `KmpwrightException`, which extends `Exception`. Test frameworks report it as an error rather than an assertion failure. See [Errors](/docs/reference/errors).
+
+## Negation
+
+`.not` returns the same assertions with the expectation inverted. The negated assertion also retries: it passes as soon as the condition is false.
+
+```kotlin
+expect(page.locator("#spinner")).not.toBeVisible()
+expect(page.locator("#submit")).not.toBeDisabled()
+expect(page.locator("a.docs")).not.toHaveAttribute("target")   // attribute is absent
+expect(page).not.toHaveURL(Regex("/login"))
+```
+
+A condition that throws holds neither way. For example, `.not.toBeChecked()` on a `<div>` keeps failing until the timeout, because `isChecked()` throws for non-checkboxes.
+
+## Whitespace and matching rules
+
+- **Whitespace normalization.** `toHaveText(String)`, `toContainText(String)`, `toHaveClass(String)` and `toHaveTitle(String)` collapse every run of whitespace to one space and trim both ends, on both the expected and the actual value.
+- **Regex variants search.** Every `Regex` overload uses `containsMatchIn`, so `Regex("Saved")` matches `"Draft Saved!"`. Anchor with `^…$` for a full match. The regex is applied to normalized text for `toHaveText` and `toContainText`, and to the raw value for `toHaveValue`, `toHaveAttribute`, `toHaveClass`, `toHaveURL` and `toHaveTitle`.
+- **Text source.** Text matchers read `innerText` (rendered text, so hidden descendants and CSS text-transform affect it).
+- **Case.** Every string comparison is case-sensitive. There is no `ignoreCase` option; use `Regex("…", RegexOption.IGNORE_CASE)`.
+- **Strict mode.** Matchers that read one element (`toHaveText`, `toBeVisible`, `toHaveValue`, …) fail with a strict-mode violation when the locator matches more than one element and `KmpwrightConfig.strictSelectors` is `true` (the default). `toHaveCount` and `toBeAttached` count matches and are not strict.
+
+## Locator assertions
+
+All matchers have the signature `suspend fun matcher(…, timeoutMs: Long? = null)`.
+
+### State
+
+| Matcher | Passes when |
+|---|---|
+| `toBeVisible()` | The element exists and is visible. |
+| `toBeHidden()` | No element matches, or it is not visible. |
+| `toBeAttached()` | At least one element matches (`count() > 0`). |
+| `toBeEnabled()` | The element is enabled. Retries while no element matches. |
+| `toBeDisabled()` | The element is disabled. Retries while no element matches. |
+| `toBeChecked()` | The checkbox, radio or `aria-checked` element is checked. Indeterminate checkboxes and `aria-checked="mixed"` also count as checked. Retries while the element isn't checkable. |
+| `toBeFocused()` | The element has keyboard focus. |
+| `toBeEditable()` | The element is editable. |
+| `toBeEmpty()` | An element with a `value` property (except `<button>`) has an empty value; any other element has no text after trimming `textContent`. |
+
+There is no `toBeChecked(checked = false)` form; use `.not.toBeChecked()`. There is no `toBeAttached(attached = false)`; use `.not.toBeAttached()`.
+
+### Content
+
+| Matcher | Passes when |
+|---|---|
+| `toHaveText(text: String)` | Normalized `innerText` equals normalized `text`. |
+| `toHaveText(text: Regex)` | `text` is found in normalized `innerText`. |
+| `toContainText(text: String)` | Normalized `innerText` contains normalized `text`. |
+| `toContainText(text: Regex)` | `text` is found in normalized `innerText`. |
+| `toHaveValue(value: String)` | The input's `value` equals `value` exactly (no normalization). |
+| `toHaveValue(value: Regex)` | `value` is found in the input's `value`. |
+| `toHaveCount(count: Int)` | Exactly `count` elements match. |
+
+### Attributes
+
+| Matcher | Passes when |
+|---|---|
+| `toHaveAttribute(name: String)` | The attribute is present, with any value. |
+| `toHaveAttribute(name: String, value: String)` | The attribute equals `value` exactly. |
+| `toHaveAttribute(name: String, value: Regex)` | The attribute is present and `value` is found in it. |
+| `toHaveClass(className: String)` | The normalized `class` attribute equals `className` (the full list, in order). |
+| `toHaveClass(className: Regex)` | `className` is found in the raw `class` attribute. |
+
+To check that one class is present among others, use a regex with word boundaries:
+
+```kotlin
+expect(page.locator("#tab-2")).toHaveClass(Regex("(^|\\s)active(\\s|$)"))
+```
+
+To check that an attribute is absent, negate the one-argument form: `expect(link).not.toHaveAttribute("rel")`.
+
+## Page assertions
+
+| Matcher | Passes when |
+|---|---|
+| `toHaveURL(url: String)` | `location.href` equals `url` exactly. No globs, no base URL. |
+| `toHaveURL(url: Regex)` | `url` is found in `location.href`. |
+| `toHaveTitle(title: String)` | Normalized `document.title` equals normalized `title`. |
+| `toHaveTitle(title: Regex)` | `title` is found in `document.title`. |
+
+Page assertions read the live `location.href` and `document.title` from the document on every attempt, so they see client-side route changes and title updates that the [`page.url` and `page.title` StateFlows](/docs/guides/navigation#url-and-title) don't track.
+
+```kotlin
+page.getByRole("link", name = "Pricing").click()
+expect(page).toHaveURL("https://example.com/pricing")
+expect(page).toHaveTitle(Regex("Pricing"))
+```
+
+To wait for a URL without asserting, use [`waitForURL`](/docs/guides/navigation#waitforurl), which accepts globs.
+
+## Frames
+
+Locators from a [frame locator](/docs/guides/dialogs-and-frames#frames) work with `expect` like any other locator:
+
+```kotlin
+val checkout = page.frameLocator("iframe#checkout")
+expect(checkout.getByRole("button", name = "Pay")).toBeEnabled()
+```
+
+## Not available
+
+These `@playwright/test` features have no KMPwright equivalent:
+
+- Matchers: `toBeInViewport`, `toHaveCSS`, `toHaveId`, `toHaveJSProperty`, `toHaveAccessibleName`, `toHaveAccessibleDescription`, `toHaveRole`, `toHaveValues`, `toContainClass`, `toHaveScreenshot`, `toMatchAriaSnapshot`.
+- Options: `ignoreCase`, `useInnerText`, array arguments to `toHaveText` and `toContainText`.
+- `expect.soft`, `expect.poll`, `expect(...).toPass()`, and custom messages.
+
+For an arbitrary condition, poll with [`page.waitForFunction`](/docs/guides/navigation#waitforfunction) or read a value and use your test framework's assertions.
+
+## Related
+
+- [Locators](/docs/guides/locators): building the locators you assert on.
+- [Actions](/docs/guides/actions): actions auto-wait for actionability before acting.
+- [Assertions reference](/docs/reference/assertions)
+- [Errors](/docs/reference/errors)

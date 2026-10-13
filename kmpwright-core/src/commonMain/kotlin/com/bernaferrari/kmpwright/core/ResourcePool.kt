@@ -9,11 +9,15 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-typealias BrowserFarm = ResourcePool<Browser>
-typealias BrowserFarmSlot = PooledResource<Browser>
-typealias BrowserLease = ResourceLease<Browser>
+/** A pool of browsers. */
+public typealias BrowserFarm = ResourcePool<Browser>
+/** A pooled browser. */
+public typealias BrowserFarmSlot = PooledResource<Browser>
+/** A leased browser. */
+public typealias BrowserLease = ResourceLease<Browser>
 
-data class PooledResource<T>(
+/** A resource with its connect, prepare and close hooks. */
+public data class PooledResource<T>(
     val id: String,
     val metadata: Map<String, String> = emptyMap(),
     val connect: suspend () -> T,
@@ -22,7 +26,8 @@ data class PooledResource<T>(
     val close: suspend (T) -> Unit = {}
 )
 
-data class ResourcePoolSnapshot(
+/** The state of one pooled resource. */
+public data class ResourcePoolSnapshot(
     val id: String,
     val metadata: Map<String, String>,
     val busy: Boolean,
@@ -31,35 +36,51 @@ data class ResourcePoolSnapshot(
     val lastError: String? = null
 )
 
-class ResourceLease<T> internal constructor(
-    val id: String,
-    val metadata: Map<String, String>,
-    val resource: T,
+/** Exclusive use of a pooled resource until [release]. */
+public class ResourceLease<T> internal constructor(
+    public val id: String,
+    public val metadata: Map<String, String>,
+    public val resource: T,
     private val releaseAction: suspend (Boolean, String?) -> Unit
 ) {
     private val released = atomic(false)
-    val isReleased: Boolean
+    /** Whether the lease was returned. */
+    public val isReleased: Boolean
         get() = released.value
 
-    suspend fun release() {
+    /** Returns the resource to the pool. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun release() {
         if (!released.compareAndSet(expect = false, update = true)) return
         releaseAction(false, null)
     }
 
-    suspend fun markBroken(reason: String? = null) {
+    /** Removes the resource from rotation. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun markBroken(reason: String? = null) {
         if (!released.compareAndSet(expect = false, update = true)) return
         releaseAction(true, reason)
     }
 }
 
-class ResourcePool<T>(
-    resources: List<PooledResource<T>>
+/**
+ * A fixed set of lazily connected resources handed out as exclusive leases.
+ *
+ * A slot whose connect/prepare/cleanup fails is quarantined with [ResourcePoolSnapshot.lastError] and
+ * becomes eligible again after [transientFailureCooldownMs] (a fresh connection is made). Slots
+ * quarantined explicitly ([ResourceLease.markBroken], [quarantine]) stay out until [restore].
+ */
+public class ResourcePool<T>(
+    resources: List<PooledResource<T>>,
+    private val transientFailureCooldownMs: Long = 30_000
 ) {
     private val mutex = Mutex()
     private val slots = resources.map { ResourceSlot(it) }
     private var closed = false
 
-    suspend fun acquire(
+    /** Leases a resource, waiting up to [timeoutMs]. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun acquire(
         timeoutMs: Long = 30_000,
         predicate: (ResourcePoolSnapshot) -> Boolean = { !it.broken }
     ): ResourceLease<T> {
@@ -76,7 +97,7 @@ class ResourcePool<T>(
                     ConnectedResource(ensureConnected(slot))
                 }
             } catch (e: CancellationException) {
-                abortSlot(slot, e.message ?: "Pooled resource acquisition was cancelled")
+                abortSlot(slot, e.message ?: "Pooled resource acquisition was cancelled", quarantine = false)
                 throw e
             } catch (e: Exception) {
                 abortSlot(slot, e.message ?: "Failed to connect pooled resource")
@@ -94,7 +115,7 @@ class ResourcePool<T>(
                     true
                 }
             } catch (e: CancellationException) {
-                abortSlot(slot, e.message ?: "Pooled resource preparation was cancelled")
+                abortSlot(slot, e.message ?: "Pooled resource preparation was cancelled", quarantine = false)
                 throw e
             } catch (e: Exception) {
                 abortSlot(slot, e.message ?: "Failed to prepare pooled resource")
@@ -124,7 +145,7 @@ class ResourcePool<T>(
                     }
                 }
             } catch (e: CancellationException) {
-                abortSlot(slot, e.message ?: "Pooled resource acquisition was cancelled")
+                abortSlot(slot, e.message ?: "Pooled resource acquisition was cancelled", quarantine = false)
                 throw e
             }
             if (prepareResult.first) {
@@ -146,7 +167,13 @@ class ResourcePool<T>(
         throw KmpwrightException("Timed out waiting for an available pooled resource.")
     }
 
-    suspend fun <R> withLease(
+    /**
+     * Runs [block] with a lease. A failure marks the slot broken when [markBrokenOnException] is set;
+     * cancellation of the caller is not a resource failure, so the lease is released and the
+     * cancellation rethrown.
+     */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun <R> withLease(
         timeoutMs: Long = 30_000,
         predicate: (ResourcePoolSnapshot) -> Boolean = { !it.broken },
         markBrokenOnException: Boolean = true,
@@ -157,6 +184,9 @@ class ResourcePool<T>(
             val result = block(lease)
             lease.release()
             result
+        } catch (cancelled: CancellationException) {
+            lease.release()
+            throw cancelled
         } catch (t: Throwable) {
             if (markBrokenOnException) {
                 lease.markBroken(t.message)
@@ -167,7 +197,23 @@ class ResourcePool<T>(
         }
     }
 
-    fun snapshots(): List<ResourcePoolSnapshot> {
+    /**
+     * Returns a quarantined idle slot to service; it reconnects on its next lease.
+     * @return false when the slot is unknown, busy, or not quarantined.
+     */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun restore(id: String): Boolean = mutex.withLock {
+        if (closed) return@withLock false
+        val slot = slots.firstOrNull { it.definition.id == id } ?: return@withLock false
+        if (slot.busy || !slot.broken) return@withLock false
+        slot.broken = false
+        slot.brokenUntil = null
+        slot.publishSnapshot()
+        true
+    }
+
+    /** State of every pooled resource. */
+    public fun snapshots(): List<ResourcePoolSnapshot> {
         return slots.map { it.snapshot() }
     }
 
@@ -178,7 +224,8 @@ class ResourcePool<T>(
      * which keeps ownership of the resource with the lease until its caller
      * has finished using it.
      */
-    suspend fun quarantine(id: String, reason: String? = null): Boolean {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun quarantine(id: String, reason: String? = null): Boolean {
         var resourceToClose: T? = null
         var closeAction: (suspend (T) -> Unit)? = null
         val quarantined = mutex.withLock {
@@ -187,6 +234,7 @@ class ResourcePool<T>(
             if (slot.busy || slot.broken) return@withLock false
 
             slot.broken = true
+            slot.brokenUntil = null
             slot.lastError = reason
             resourceToClose = slot.resource
             closeAction = slot.definition.close
@@ -204,7 +252,8 @@ class ResourcePool<T>(
      * busy resources owned by their leases. Busy resources close exactly once
      * when the lease is released or marked broken.
      */
-    suspend fun close() {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun close() {
         val toClose = withContext(NonCancellable) {
             mutex.withLock {
                 if (closed) return@withLock null
@@ -233,6 +282,15 @@ class ResourcePool<T>(
         return mutex.withLock {
             if (closed) {
                 throw KmpwrightException("Resource pool is closed.")
+            }
+            val now = currentTimeMillis()
+            slots.forEach { candidate ->
+                val until = candidate.brokenUntil
+                if (candidate.broken && !candidate.busy && until != null && now >= until) {
+                    candidate.broken = false
+                    candidate.brokenUntil = null
+                    candidate.publishSnapshot()
+                }
             }
             val slot = slots.firstOrNull { candidate ->
                 !candidate.busy &&
@@ -288,6 +346,7 @@ class ResourcePool<T>(
                     slot.closeWhenReleased = false
                     if (broken) {
                         slot.broken = true
+                        slot.brokenUntil = null
                         slot.lastError = reason
                     }
                     slot.publishSnapshot()
@@ -296,7 +355,7 @@ class ResourcePool<T>(
             }
 
             if (broken) {
-                abortSlot(slot, reason ?: "Marked broken by lease")
+                abortSlot(slot, reason ?: "Marked broken by lease", permanent = true)
                 return@withContext
             }
 
@@ -328,12 +387,20 @@ class ResourcePool<T>(
             }
         }
 
-    private suspend fun abortSlot(slot: ResourceSlot<T>, reason: String) =
+    /**
+     * Frees the slot and closes its resource. With [quarantine] the slot is marked broken (until
+     * [restore] when [permanent], otherwise for [transientFailureCooldownMs]); a cancelled caller
+     * passes false because cancellation says nothing about the resource's health.
+     */
+    private suspend fun abortSlot(slot: ResourceSlot<T>, reason: String, permanent: Boolean = false, quarantine: Boolean = true) =
         withContext(NonCancellable) {
             val resource = mutex.withLock {
                 slot.busy = false
-                slot.broken = true
-                slot.lastError = reason
+                if (quarantine) {
+                    slot.broken = true
+                    slot.brokenUntil = if (permanent) null else currentTimeMillis() + transientFailureCooldownMs
+                    slot.lastError = reason
+                }
                 slot.closeWhenReleased = false
                 slot.resource.also { slot.resource = null }
                     .also { slot.publishSnapshot() }
@@ -368,7 +435,9 @@ class ResourcePool<T>(
         var busy: Boolean = false,
         var broken: Boolean = false,
         var lastError: String? = null,
-        var closeWhenReleased: Boolean = false
+        var closeWhenReleased: Boolean = false,
+        /** End of a transient quarantine; null while healthy or when quarantined until [restore]. */
+        var brokenUntil: Long? = null
     ) {
         private val published = atomic(
             ResourcePoolSnapshot(

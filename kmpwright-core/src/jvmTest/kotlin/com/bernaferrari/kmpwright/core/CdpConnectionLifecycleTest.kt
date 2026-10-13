@@ -97,7 +97,7 @@ class CdpConnectionLifecycleTest {
         browser.pageFactoryOverride = { _, _ -> TestPage() }
         try {
             coroutineScope {
-                (1..32).map { async { browser.newPageAsync() } }.awaitAll()
+                (1..32).map { async { browser.newPage() } }.awaitAll()
             }
             assertEquals(1, bootstraps.get())
             assertEquals(32, browser.pages().size)

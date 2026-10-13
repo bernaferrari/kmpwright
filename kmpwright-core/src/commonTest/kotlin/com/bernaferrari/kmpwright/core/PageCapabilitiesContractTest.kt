@@ -50,7 +50,7 @@ class PageCapabilitiesContractTest {
         val capabilities = PageCapabilities(backend = BackendKind.AndroidWebView)
         var workflowStarted = false
 
-        val error = assertFailsWith<KmpwrightException> {
+        val error = assertFailsWith<KmpwrightUnsupportedException> {
             capabilities.require(
                 PageCapability.RouteInterception.require(SupportLevel.Supported, "needs fulfill"),
                 PageCapability.Cdp.require()
@@ -64,4 +64,31 @@ class PageCapabilitiesContractTest {
         assertTrue(error.message.orEmpty().contains("needs fulfill"))
     }
 
+
+    @Test
+    fun `supports level evaluates every capability of the receiver`() {
+        val none = PageCapabilities()
+        val all = PageCapabilities(
+            routeInterception = SupportLevel.Supported, touchInput = SupportLevel.Supported, mouseInput = SupportLevel.Supported,
+            keyboardInput = SupportLevel.Supported, pdf = SupportLevel.Supported, browserContexts = SupportLevel.Supported,
+            serviceWorkers = SupportLevel.Supported, domainFiltering = SupportLevel.Supported, networkEmulation = SupportLevel.Supported,
+            harRecording = SupportLevel.Supported, downloads = SupportLevel.Supported, fileChooser = SupportLevel.Supported,
+            tracing = SupportLevel.Supported, profiling = SupportLevel.Supported, tabs = SupportLevel.Supported,
+            cdp = SupportLevel.Supported, initScripts = SupportLevel.Supported, webMcp = SupportLevel.Supported,
+            accessibilityAudit = SupportLevel.Supported, webVitals = SupportLevel.Supported, reactInspection = SupportLevel.Supported,
+            httpRead = SupportLevel.Supported, networkHistory = SupportLevel.Supported, screencast = SupportLevel.Supported,
+            videoRecording = SupportLevel.Supported, crossOriginFrames = SupportLevel.Supported
+        )
+        assertTrue(none.supports(SupportLevel.Unsupported))
+        assertTrue(!none.supports(SupportLevel.Partial))
+        assertTrue(all.supports(SupportLevel.Supported))
+        assertTrue(!all.copy(pdf = SupportLevel.Partial).supports(SupportLevel.Supported))
+        assertTrue(all.copy(pdf = SupportLevel.Partial).supports(SupportLevel.Partial))
+    }
+
+    @Test
+    fun `missing capabilities raise the dedicated unsupported exception`() {
+        val error = assertFailsWith<KmpwrightUnsupportedException> { PageCapabilities().require(PageCapability.CrossOriginFrames) }
+        assertTrue(error.message.orEmpty().contains("CrossOriginFrames"))
+    }
 }

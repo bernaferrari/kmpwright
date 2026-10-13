@@ -11,6 +11,6 @@ result="$(mktemp "${TMPDIR:-/tmp}/kmpwright-android-tests.XXXXXX")"
 trap 'rm -f "$result"' EXIT
 # Direct adb invocation must carry the same activity-lifetime argument as Gradle.
 adb -s "$serial" shell am instrument -w -e waitForActivitiesToComplete false \
-  -e class com.bernaferrari.kmpwright.test.KmpwrightInstrumentedTest \
+  -e package com.bernaferrari.kmpwright.test \
   com.bernaferrari.kmpwright.test.test/androidx.test.runner.AndroidJUnitRunner | tee "$result"
 rg -q '^OK \([0-9]+ tests\)' "$result" || { echo "Android instrumentation did not pass" >&2; exit 1; }

@@ -44,24 +44,6 @@ class TabManagementTest {
         }
     }
 
-    @Test
-    fun `closeTab delegates to runtime`() {
-        runBlocking {
-            val closed = page.closeTab()
-            assertTrue(closed)
-            assertEquals(page, runtime.closedPage)
-        }
-    }
-
-    @Test
-    fun `closeTab returns false on failure`() {
-        runBlocking {
-            runtime.closeResult = false
-            val closed = page.closeTab()
-            assertFalse(closed)
-        }
-    }
-
     private class RecordingTabRuntime : PageTabRuntime {
         var openSource: Page? = null
         var openUrl: String? = null
@@ -74,9 +56,8 @@ class TabManagementTest {
             return NavigationResult(url ?: "about:blank", 200, true)
         }
 
-        override suspend fun closeTab(page: Page): Boolean {
+        override fun pageClosed(page: Page) {
             closedPage = page
-            return closeResult
         }
     }
 }

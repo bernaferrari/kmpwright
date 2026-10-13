@@ -7,26 +7,34 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
-/** Rule tags such as wcag2a/wcag2aa. An empty set runs all enabled rules. */
+/**
+ * Options for [Page.accessibilityAudit]. [tags] are axe rule tags such as wcag2a/wcag2aa (empty runs all
+ * enabled rules); a null [timeoutMs] uses [TimeoutConfig.default].
+ */
 @Serializable
-data class AccessibilityAuditOptions(val tags: Set<String> = emptySet(), val selector: String? = null,
-    val timeoutMs: Long = 30_000, val maxNodesPerRule: Int = 10)
+public data class AccessibilityAuditOptions(val tags: Set<String> = emptySet(), val selector: String? = null,
+    val timeoutMs: Long? = null, val maxNodesPerRule: Int = 10)
 
+/** An element that failed an audit rule. */
 @Serializable
-data class AccessibilityAuditNode(val target: JsonArray, val html: String, val failureSummary: String)
+public data class AccessibilityAuditNode(val target: JsonArray, val html: String, val failureSummary: String)
 
+/** An audit rule result with its affected nodes. */
 @Serializable
-data class AccessibilityAuditIssue(val id: String, val impact: String, val help: String,
+public data class AccessibilityAuditIssue(val id: String, val impact: String, val help: String,
     val helpUrl: String, val tags: List<String>, val nodeCount: Int, val nodes: List<AccessibilityAuditNode>)
 
+/** Number of rules per outcome. */
 @Serializable
-data class AccessibilityAuditCounts(val violations: Int, val incomplete: Int, val passes: Int, val inapplicable: Int)
+public data class AccessibilityAuditCounts(val violations: Int, val incomplete: Int, val passes: Int, val inapplicable: Int)
 
+/** Which frames the audit covered. */
 @Serializable
-data class AccessibilityAuditCoverage(val auditedFrames: Int, val skippedFrames: List<String> = emptyList())
+public data class AccessibilityAuditCoverage(val auditedFrames: Int, val skippedFrames: List<String> = emptyList())
 
+/** Result of [Page.accessibilityAudit]. */
 @Serializable
-data class AccessibilityAuditReport(val url: String, val axeVersion: String, val counts: AccessibilityAuditCounts,
+public data class AccessibilityAuditReport(val url: String, val axeVersion: String, val counts: AccessibilityAuditCounts,
     val violations: List<AccessibilityAuditIssue>, val incomplete: List<AccessibilityAuditIssue>,
     val coverage: AccessibilityAuditCoverage)
 
@@ -96,17 +104,18 @@ internal class PageAccessibilityAudit(private val controller: WebViewScriptContr
     private val mutex = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
     suspend fun run(options: AccessibilityAuditOptions): AccessibilityAuditReport {
-        require(options.timeoutMs > 0) { "Accessibility audit timeout must be positive" }
+        val timeoutMs = options.timeoutMs ?: TimeoutConfig().default
+        require(timeoutMs > 0) { "Accessibility audit timeout must be positive" }
         require(options.maxNodesPerRule in 1..100) { "maxNodesPerRule must be between 1 and 100" }
         return try {
-            withTimeout(options.timeoutMs) { mutex.withLock {
+            withTimeout(timeoutMs) { mutex.withLock {
                 val raw = controller.runAccessibilityAudit(options)
                 if (raw.encodeToByteArray().size > 4 * 1024 * 1024) throw KmpwrightException("Accessibility report exceeds 4 MiB")
                 json.decodeFromString<AccessibilityAuditReport>(raw)
             } }
         } catch (_: TimeoutCancellationException) {
             currentCoroutineContext().ensureActive()
-            throw KmpwrightException("Timeout running accessibility audit")
+            throw KmpwrightTimeoutException("Timeout running accessibility audit")
         }
     }
 }

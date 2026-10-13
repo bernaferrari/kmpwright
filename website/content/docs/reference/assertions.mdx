@@ -1,0 +1,95 @@
+---
+title: Assertions
+description: Complete reference of expect(locator) and expect(page) - every LocatorAssertions and PageAssertions matcher, how each one compares, the retry schedule, negation and failure messages.
+---
+
+```kotlin
+expect(page.getByRole("heading")).toHaveText("Welcome back")
+expect(page.locator("li.todo")).toHaveCount(3)
+expect(page.getByText("Loading")).not.toBeVisible()
+expect(page).toHaveURL(Regex("/dashboard$"))
+```
+
+| Function | Returns |
+|---|---|
+| `fun expect(locator: Locator): LocatorAssertions` | Web-first assertions on a locator. |
+| `fun expect(page: Page): PageAssertions` | Web-first assertions on a page. |
+
+Both are top-level, non-suspending functions in `com.bernaferrari.kmpwright.core`. Every matcher is `suspend`, takes a trailing `timeoutMs: Long? = null` (null uses [`TimeoutConfig.waitForSelector`](/docs/reference/configuration#timeoutconfig) of the page's browser), and returns `Unit`. For a guided introduction see the [Assertions guide](/docs/guides/assertions). Source: [Expect.kt](https://github.com/bernaferrari/kmpwright/blob/main/kmpwright-core/src/commonMain/kotlin/com/bernaferrari/kmpwright/core/Expect.kt).
+
+## Retry behavior
+
+- The condition is evaluated immediately, then after 20, 50, 100 and 100 ms, then every 250 ms.
+- A condition that throws `KmpwrightException` (for example a strict-mode violation or "is not a checkbox") counts as not holding and is retried. Other exceptions propagate.
+- After the timeout, the matcher throws `KmpwrightAssertionError`, a Kotlin `AssertionError` (not a `KmpwrightException`), so test runners report a failed assertion. Its `cause` is the last `KmpwrightException`, if any. Waits that are not assertions (`waitFor`, `waitForURL`…) keep throwing `KmpwrightTimeoutException`.
+- The timeout is checked between attempts, so one slow attempt can overrun it.
+
+Failure message format:
+
+```text
+Expected Locator(#status) to have text "Saved", but it did not happen within 30000ms (last error: …)
+Expected page not to have URL "https://example.com/login", but it did not happen within 5000ms
+```
+
+## Negation
+
+`not` is a property on both classes that returns the same assertions with the expectation inverted:
+
+```kotlin
+expect(page.locator(".spinner")).not.toBeVisible()
+expect(page).not.toHaveURL(Regex("/login"))
+```
+
+A negated matcher holds when the condition is false. A condition that throws satisfies neither the plain nor the negated form.
+
+## `LocatorAssertions`
+
+Text comparisons normalize whitespace: runs of whitespace become one space and the result is trimmed. Text and emptiness matchers never pass on a missing element (so `.not.toHaveText("x")` keeps failing until an element exists).
+
+| Matcher | Holds when |
+|---|---|
+| `toBeVisible(timeoutMs: Long? = null)` | `locator.isVisible()` is true. |
+| `toBeHidden(timeoutMs: Long? = null)` | `locator.isHidden()` is true (missing or not visible). |
+| `toBeAttached(timeoutMs: Long? = null)` | `locator.count() > 0`. |
+| `toBeEnabled(timeoutMs: Long? = null)` | `locator.isEnabled()`. |
+| `toBeDisabled(timeoutMs: Long? = null)` | `locator.isDisabled()`. |
+| `toBeChecked(timeoutMs: Long? = null)` | `locator.isChecked()`. |
+| `toBeFocused(timeoutMs: Long? = null)` | `locator.isFocused()`. |
+| `toBeEditable(timeoutMs: Long? = null)` | `locator.isEditable()` (enabled and not read-only). |
+| `toBeEmpty(timeoutMs: Long? = null)` | An element with a `value` (except `<button>`) has `value == ""`; any other element has blank `textContent`. A missing element is not empty. |
+| `toHaveText(text: String, timeoutMs: Long? = null)` | Normalized `innerText` equals normalized `text`. |
+| `toHaveText(text: Regex, timeoutMs: Long? = null)` | `text` is found in the normalized `innerText` (`containsMatchIn`). |
+| `toContainText(text: String, timeoutMs: Long? = null)` | Normalized `innerText` contains normalized `text`. |
+| `toContainText(text: Regex, timeoutMs: Long? = null)` | `text` is found in the normalized `innerText`. |
+| `toHaveValue(value: String, timeoutMs: Long? = null)` | `locator.inputValue() == value` (exact, not normalized). |
+| `toHaveValue(value: Regex, timeoutMs: Long? = null)` | `value` is found in `inputValue()` (null treated as `""`). |
+| `toHaveAttribute(name: String, timeoutMs: Long? = null)` | The attribute exists. Use `.not.toHaveAttribute(name)` for absence. |
+| `toHaveAttribute(name: String, value: String, timeoutMs: Long? = null)` | The attribute equals `value` exactly. |
+| `toHaveAttribute(name: String, value: Regex, timeoutMs: Long? = null)` | The attribute exists and `value` is found in it. |
+| `toHaveClass(className: String, timeoutMs: Long? = null)` | The normalized `class` attribute equals the normalized `className` (the whole attribute, in order). |
+| `toHaveClass(className: Regex, timeoutMs: Long? = null)` | `className` is found in the `class` attribute. Use `Regex("\\bactive\\b")` to test for one class. |
+| `toHaveCount(count: Int, timeoutMs: Long? = null)` | `locator.count() == count`. |
+
+Differences from Playwright:
+
+- `toHaveText` and `toContainText` compare against `innerText` (rendered text), not `textContent`, and take one string, not an array.
+- There are no options objects (`ignoreCase`, `useInnerText`); use a `Regex` with `RegexOption.IGNORE_CASE` for case-insensitive checks.
+- Matchers that read a single element are subject to strict mode: a locator matching several elements keeps failing with a strict-mode violation until the timeout. Use `first()`, `nth()` or `toHaveCount`.
+
+## `PageAssertions`
+
+| Matcher | Holds when |
+|---|---|
+| `toHaveURL(url: String, timeoutMs: Long? = null)` | `location.href` matches `url` with Playwright's URL glob rules (see [Page](/docs/reference/page)): a string without glob characters must equal the URL; `*`, `**` and `{a,b}` are globs. |
+| `toHaveURL(url: Regex, timeoutMs: Long? = null)` | `url` is found in `location.href`. |
+| `toHaveURL(timeoutMs: Long? = null, predicate: (String) -> Boolean)` | `predicate` accepts `location.href`. |
+| `toHaveTitle(title: String, timeoutMs: Long? = null)` | Normalized `document.title` equals normalized `title`. |
+| `toHaveTitle(title: Regex, timeoutMs: Long? = null)` | `title` is found in `document.title`. |
+
+The URL and title are read from the live document on every attempt (falling back to `page.url` / `page.title` when evaluation fails). Relative URL patterns are not resolved, because KMPwright has no `baseURL`.
+
+## Related
+
+- [Assertions guide](/docs/guides/assertions)
+- [Locator](/docs/reference/locator) for the underlying state queries.
+- [Errors](/docs/reference/errors)

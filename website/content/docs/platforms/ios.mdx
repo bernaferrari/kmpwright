@@ -1,0 +1,194 @@
+---
+title: iOS
+description: Drive a WKWebView with KMPwright on iOS, including IOSPlatformContext, threading, calling from Swift, delegate ownership, network interception limits, the domain filter and screenshots.
+---
+
+On iOS, KMPwright drives a `WKWebView` in your app. It either attaches to a web view you already show or creates its own, off screen.
+
+```kotlin
+// iosMain
+fun startAutomation(webView: WKWebView, scope: CoroutineScope) {
+    val browser = Browser(IOSPlatformContext(webView = webView))
+    val page = browser.page()
+    scope.launch(Dispatchers.Main) {
+        page.goto("https://example.com")
+        page.getByRole("link", name = "Learn more").click()
+    }
+}
+```
+
+Requirements: iOS 15.0 or later, `arm64` devices and `arm64` simulators (no Intel simulator slice). See [Installation](/docs/installation).
+
+## `IOSPlatformContext`
+
+```kotlin
+public class IOSPlatformContext(
+    public val webView: WKWebView? = null,
+    public val websiteDataStore: WKWebsiteDataStore? = null
+) : PlatformContext
+```
+
+<TypeTable
+  type={{
+    webView: { type: 'WKWebView?', description: 'Your web view. The browser\'s default page drives it. When null, KMPwright creates a WKWebView sized from KmpwrightConfig.viewport (1280x800 when unset) that is not in any window.', default: 'null' },
+    websiteDataStore: { type: 'WKWebsiteDataStore?', description: 'Data store for web views KMPwright creates. Ignored when webView is set: its own configuration.websiteDataStore is used.', default: 'null' },
+  }}
+/>
+
+Which data store a `Browser` uses:
+
+1. the `webView`'s own `configuration.websiteDataStore`, if you passed a web view,
+2. otherwise `websiteDataStore`, if you passed one,
+3. otherwise a new `WKWebsiteDataStore.nonPersistentDataStore()` that the `Browser` owns and clears on `close()`/`dispose()`.
+
+`browser.newPage()` creates a new `WKWebView` that shares that data store. KMPwright-created web views are never added to a window; add your own web view to the hierarchy when the user should see the page.
+
+## Threading
+
+WebKit objects may only be touched on the main thread. KMPwright's suspend APIs switch to `Dispatchers.Main` themselves. Its synchronous entry points (the `Browser` constructor, `page.dispose()`, and a few getters) run inline on the main thread, or hop to the main queue with `dispatch_sync` and wait.
+
+- Create the `Browser` on the main thread.
+- Never block the main thread (for example with `runBlocking`) while a background coroutine waits on a KMPwright call. That deadlocks.
+
+## Calling from Swift
+
+The release ships a static `KmpwrightCore.xcframework`; the Swift module is `KmpwrightCore`. See [`docs/releasing.md`](https://github.com/bernaferrari/kmpwright/blob/main/docs/releasing.md) and [Installation](/docs/installation) for adding it to Xcode.
+
+KMPwright's API is plain Kotlin exported through Kotlin/Native's Objective-C interop, so the usual Kotlin-to-Swift rules apply:
+
+| Kotlin | In Swift |
+|---|---|
+| `Browser(context, config)` | `Browser(context:config:)` |
+| `IOSPlatformContext(webView, websiteDataStore)` | `IOSPlatformContext(webView:websiteDataStore:)` |
+| `interface Page`, `interface Locator` | Protocols `Page`, `Locator` |
+| `suspend fun goto(...)` | `async` function taking a completion handler; call with `try await` |
+| Functions whose name starts with `new` (`newPage`, `newContext`, `newWindow`) | Prefixed with `do`: `doNewPage()`, `doNewContext()`, `doNewWindow()` |
+| Extension and top-level functions in `PageConvenience.kt`, `PageWaits.kt`, `Expect.kt`... | Static methods on `PageConvenienceKt`, `PageWaitsKt`, `ExpectKt`..., receiver as the first argument |
+| Default arguments | Not available. Pass every parameter, including every field of option data classes such as `KmpwrightConfig` (15 parameters) |
+| `Long?` | `KotlinLong?` |
+
+<Callout type="error">
+KMPwright does not annotate its API with `@Throws`. In Kotlin/Native, a `suspend` function called from Swift only turns `CancellationException` into a Swift error; **any other Kotlin exception, including `KmpwrightException`, `KmpwrightTimeoutException` and `KmpwrightAssertionError`, terminates the app.** A failed assertion or a locator timeout called directly from Swift is a crash.
+</Callout>
+
+The practical pattern is a small Kotlin facade in your own shared module that catches exceptions and exposes the few operations Swift needs:
+
+```kotlin
+// iosMain of your shared module
+class WebAutomation(webView: WKWebView) {
+    private val browser = Browser(IOSPlatformContext(webView = webView))
+    private val page = browser.page()
+
+    @Throws(Exception::class)
+    suspend fun open(url: String): Boolean = page.goto(url).ok
+
+    suspend fun clickText(text: String): String? = try {
+        page.getByText(text).click(); null
+    } catch (error: KmpwrightException) {
+        error.message
+    }
+
+    fun close() = browser.dispose()
+}
+```
+
+```swift
+let automation = WebAutomation(webView: webView)
+let ok = try await automation.open(url: "https://example.com")
+```
+
+Your facade's `@Throws(Exception::class)` makes Kotlin exceptions arrive as Swift errors.
+
+## Web view ownership and retention
+
+- KMPwright holds the `WKWebView` strongly while its page is open.
+- WebKit strongly retains URL-scheme handlers (through the configuration) and script-message handlers (through the user content controller). KMPwright registers small proxies that hold the page **weakly**, so a closed page can be collected even if your app keeps the web view alive.
+- When attached, KMPwright sets the web view's `navigationDelegate` and `UIDelegate` to its own. Your previous delegates are **not** called while KMPwright is attached; they are restored when the page closes.
+- On `page.close()` (or `dispose()`), KMPwright stops loading, restores your delegates, removes its script-message handler, its content rule list and its own user scripts (your user scripts stay), and fails in-flight custom-scheme loads. It does not remove your web view from the view hierarchy.
+
+## JavaScript evaluation
+
+`WKWebView.callAsyncJavaScript` awaits Promises natively. `page.evaluate(expression)` tries, in order, without running side effects twice:
+
+1. the source as an awaited expression (a leading `return ` is tolerated),
+2. if that does not parse but the source is a classic program, the program's completion value (`var x = 1; x + 1` returns `2`),
+3. otherwise an async function body, so top-level `return` and `await` work.
+
+Values are JSON-serialized in the page. When the page's Content Security Policy blocks `eval`, step 2 falls back to WebKit's native evaluation, which returns the completion value but reports Promises and non-serializable values as null.
+
+## Network interception
+
+WKWebView has no request-interception hook like Chromium's Fetch domain, so `page.route` (capability `RouteInterception` = Partial) works through:
+
+- **A fetch/XHR bridge.** A document-start script patches `fetch` and `XMLHttpRequest` in the main frame and forwards each request to native code over a nonce-protected message channel. Handlers can fulfill, abort or resume. Requests the bridge does not see are not routed: images, scripts, stylesheets, iframes, the document itself, and fetch/XHR inside iframes. A route handler that throws aborts the request with `failed`; one that does not decide within `TimeoutConfig.handler` aborts it with `timedout`. Independently, the page side of the bridge fails a request that gets no native answer within 10 seconds ("KMPwright network bridge timed out"), so on iOS a fetch/XHR handler effectively has 10 seconds.
+- **Custom-scheme interception (optional).** With `KmpwrightConfig(iosSchemeInterception = IosSchemeInterceptionConfig())`, KMPwright registers a `WKURLSchemeHandler` for the `kmpwright` scheme on the web views it creates. Every request to `kmpwright://host/path` (including documents and subresources) goes through your routes with the URL mapped to `https://host/path` (`fallbackScheme`). This only works for web views KMPwright creates: WebKit registers scheme handlers at creation time, so for a host-provided web view the setting is ignored and a warning is logged.
+
+<TypeTable
+  type={{
+    scheme: { type: 'String', description: 'Custom URL scheme handled by KMPwright.', default: '"kmpwright"' },
+    fallbackScheme: { type: 'String', description: 'Scheme the URL is rewritten to before routing (kmpwright://a.test/x becomes https://a.test/x).', default: '"https"' },
+  }}
+/>
+
+See [Network](/docs/guides/network).
+
+## Domain filter
+
+`page.setAllowedDomains(...)` is fully supported (`DomainFiltering` = Supported):
+
+- main-frame navigations, including server redirects, are cancelled in the navigation policy; `goto` returns `ok = false` with "Blocked by KMPwright domain filter: host",
+- every subresource (fetch, XHR, images, iframes, WebSockets, redirects) is blocked by a `WKContentRuleList` that KMPwright compiles from your list and installs on the web view. `setAllowedDomains` returns once WebKit enforces it.
+
+An entry that is not a host name or a `*.` wildcard throws "Domain filter entry '…' is not a host name or '*.' wildcard".
+
+## Color scheme emulation
+
+`page.emulateMedia(ColorScheme.Dark)` sets `overrideUserInterfaceStyle` on the web view, which drives the CSS `prefers-color-scheme` media feature. WebKit only forwards the appearance of a view **that is in a window**, so KMPwright verifies the change with `matchMedia` for up to one second. If it did not apply (window-less web view) or for `ColorScheme.NoPreference`, it falls back to JavaScript: `matchMedia` and the root `color-scheme` property only, not your stylesheet's `@media` rules.
+
+## Storage and file protection
+
+- Saved auth profiles (`AuthManager`) live in the app's Application Support directory, under `.kmpwright/auth`.
+- On iOS, every state file KMPwright writes (auth profiles, `StorageState.save`, autosave) is written atomically with `NSDataWritingFileProtectionComplete`, and directories it creates get `NSFileProtectionComplete`. The files are unreadable while the device is locked, so autosave and loads fail during that time.
+
+## Screenshots and PDF
+
+- Captured with `WKWebView.takeSnapshot`. WebKit renders content outside the visible viewport for snapshot requests, so full-page screenshots need no scroll-and-stitch.
+- `ScreenshotResult.width`/`height` are the real pixel dimensions of the PNG: the logical size times `ScreenshotOptions.scale` times the screen scale (the window's screen, or the main screen). `ScreenshotOptions.clip` and annotation boxes are in CSS points.
+- PNG and JPEG. `format = WEBP` throws `KmpwrightUnsupportedException` ("WEBP screenshots are not supported on iOS (ImageIO cannot encode WebP); use PNG or JPEG"), and so does `omitBackground = true` ("ScreenshotOptions.omitBackground is not supported on iOS WKWebView: …").
+- PDF (`Pdf` = Partial) uses `createPDF`, which produces one unpaginated canvas. `page.pdf()` with default options uses it (`format = null` means `PdfFormat.Content` on iOS). A paper format, `landscape`, `width`/`height`, non-zero margins, `scale`, `pageRanges`, header/footer templates or `printBackground = false` throw `KmpwrightUnsupportedException`: "WKWebView PDF export supports only the content canvas (format null or Content) with zero margins, …".
+
+## `BrowserContext`
+
+`browser.newContext()` creates a context backed by a new `WKWebsiteDataStore.nonPersistentDataStore()` (`BrowserContexts` = Partial). Cookies and storage are isolated from other contexts, but all contexts share the app's WebKit processes. `clearCookies()` deletes the store's cookies; `clearData()` removes all website data; `close()` closes its pages and clears the store.
+
+## Other differences
+
+| Feature | iOS behavior |
+|---|---|
+| Dialogs | Without a `page.onDialog` handler, dialogs are dismissed. A handler that throws or does not answer within `TimeoutConfig.handler` (30 s by default) dismisses. `DialogType.BeforeUnload` is never reported: `WKUIDelegate` has no `beforeunload` callback, so WebKit leaves the page without asking. |
+| `setExtraHTTPHeaders` | Only an empty map is accepted; anything else throws "This backend cannot apply extra HTTP headers securely without exposing them to page JavaScript." |
+| `setHTTPCredentials` | Sent as a Basic `Authorization` header on `goto` requests to one origin: the page's origin when you set them, or the first origin you then navigate to. Subresource requests and other origins never receive them. |
+| Input | `page.touchscreen`, `page.mouse` and `page.keyboard` synthesize touch-first events with DOM text-input fallbacks (all Partial). `touchscreen.pinch` throws `KmpwrightUnsupportedException`: "WKWebView cannot synthesize a trusted native pinch gesture". Mouse and keyboard require `InputMode.Hybrid`. |
+| `emulateNetworkConditions` | Only `offline`, in JavaScript. Latency or throughput throw `KmpwrightUnsupportedException`. |
+| `setGeolocation` | JavaScript patch of `navigator.geolocation`. |
+| `setDeviceScaleFactor` | Throws `KmpwrightUnsupportedException`: "WKWebView device scale is determined by the host screen". |
+| `emulateDevice(device)` | Applies the viewport size and user agent. The scale factor, mobile layout and touch support come from the device. |
+| `frameLocator` | Same-origin frames only (`CrossOriginFrames` = Unsupported). |
+| Network history | Covers fetch/XHR requests (`resourceType` `"fetch"`/`"xhr"`) and custom-scheme loads (`"document"` or `"other"`). Other page loads are not observed; response bodies are unavailable. |
+| `setViewportSize` | Sets the web view's frame (in points). |
+| Downloads, file chooser | Unsupported. `setInputFiles` with a non-empty list throws "setInputFiles is not supported in mobile WebView". |
+| Tracing, profiler, video, screencast, CDP targets | Unsupported (CDP only). |
+| `launchBrowser`, `ChromeProfiles` | Throw `KmpwrightUnsupportedException`. |
+| `HttpReader` / `page.read` | Uses the Darwin (URLSession) engine. `ReadOptions.caCertificatePath` (PEM) adds trust anchors to the system roots, or replaces them with `useSystemCa = false`; `useSystemCa = false` without a certificate path throws. |
+| `browser.version()` | Returns a fixed `BrowserVersion("Kmpwright", "1.3.0", …)`, not the WebKit version. |
+
+The full list is on [Capabilities](/docs/platforms/capabilities).
+
+## Sample app and Liquid Glass
+
+The repository's [`example-ios`](https://github.com/bernaferrari/kmpwright/tree/main/example-ios) is a SwiftUI host for the shared Compose Multiplatform sample. On iOS 26 and later it uses native SwiftUI `TabView` and `NavigationStack`, so the system draws the Liquid Glass tab and navigation bars while Compose renders each screen. On iOS 15 to 25 Compose draws everything. One `WKWebView`, `Browser` and page are shared by every tab; the visible screen adopts the web view. See its [README](https://github.com/bernaferrari/kmpwright/blob/main/example-ios/README.md) to run it.
+
+## Related
+
+- [Capabilities](/docs/platforms/capabilities) for the full support matrix.
+- [Errors](/docs/reference/errors) for message meanings.

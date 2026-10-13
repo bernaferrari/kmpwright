@@ -2,13 +2,16 @@ package com.bernaferrari.kmpwright.core
 
 import kotlinx.serialization.Serializable
 import kotlin.math.sqrt
+import kotlin.coroutines.cancellation.CancellationException
 
-data class DiffOptions(
+/** Options for [VisualDiff] pixel comparison. */
+public data class DiffOptions(
     val threshold: Double = 0.1,
     val generateDiffImage: Boolean = true
 )
 
-data class DiffResult(
+/** Outcome of a pixel comparison. */
+public data class DiffResult(
     val match: Boolean,
     val mismatchPercentage: Double,
     val differentPixels: Long,
@@ -41,15 +44,17 @@ data class DiffResult(
     }
 }
 
+/** The compared images had different sizes. */
 @Serializable
-data class DimensionMismatch(
+public data class DimensionMismatch(
     val expectedWidth: Int,
     val expectedHeight: Int,
     val actualWidth: Int,
     val actualHeight: Int
 )
 
-data class RgbaImage(
+/** Decoded RGBA pixels. */
+public data class RgbaImage @Throws(IllegalArgumentException::class) public constructor(
     val width: Int,
     val height: Int,
     val pixels: ByteArray
@@ -74,30 +79,54 @@ data class RgbaImage(
     }
 }
 
-suspend fun Page.visualDiff(
+/**
+ * Compares two already-captured images pixel by pixel (agent-browser `diff screenshot`); it takes
+ * no screenshot itself. Capture both with [Page.screenshot] or [Locator.screenshot] (PNG is the
+ * portable choice). Images of different sizes report a [DiffResult.dimensionMismatch].
+ *
+ * @throws KmpwrightException when an image cannot be decoded on this platform, for example WEBP on
+ *   the JVM (ImageIO has no WebP reader), or when the bytes are empty or corrupt.
+ */
+@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+public suspend fun Page.visualDiff(
     expected: ScreenshotResult,
     actual: ScreenshotResult,
     options: DiffOptions = DiffOptions()
 ): DiffResult {
-    val expectedRgba = expected.toRgbaImage()
-    val actualRgba = actual.toRgbaImage()
-    if (expectedRgba == null || actualRgba == null) {
-        return DiffResult(
-            match = false,
-            mismatchPercentage = 100.0,
-            differentPixels = 0,
-            totalPixels = 0,
-            diffImage = null
-        )
-    }
+    val expectedRgba = expected.toRgbaImage() ?: throw undecodableImage("expected", expected.bytes)
+    val actualRgba = actual.toRgbaImage() ?: throw undecodableImage("actual", actual.bytes)
     return VisualDiff.compareRgba(expectedRgba, actualRgba, options)
 }
 
-object VisualDiff {
+/** The container format of encoded image bytes, from their magic number. */
+internal fun imageFormatOf(bytes: ByteArray): String? {
+    fun at(index: Int) = bytes.getOrNull(index)?.toInt()?.and(0xFF)
+    return when {
+        at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E && at(3) == 0x47 -> "PNG"
+        at(0) == 0xFF && at(1) == 0xD8 -> "JPEG"
+        bytes.size >= 12 && bytes.copyOfRange(0, 4).decodeToString() == "RIFF" &&
+            bytes.copyOfRange(8, 12).decodeToString() == "WEBP" -> "WEBP"
+        else -> null
+    }
+}
+
+private fun undecodableImage(which: String, bytes: ByteArray): KmpwrightException {
+    val format = imageFormatOf(bytes)
+    val reason = when {
+        bytes.isEmpty() -> "it is empty"
+        format == "WEBP" -> "WEBP cannot be decoded on this platform (the JVM's ImageIO has no WebP reader); capture PNG or JPEG for visual diffs"
+        format == null -> "it is not a PNG, JPEG or WEBP image"
+        else -> "the $format data is corrupt"
+    }
+    return KmpwrightException("Cannot decode the $which image for visualDiff: $reason")
+}
+
+/** Pixel-level image comparison. */
+public object VisualDiff {
 
     private val MAX_DISTANCE = 255.0 * sqrt(3.0)
 
-    fun compareRgba(expected: RgbaImage, actual: RgbaImage, options: DiffOptions = DiffOptions()): DiffResult {
+    public fun compareRgba(expected: RgbaImage, actual: RgbaImage, options: DiffOptions = DiffOptions()): DiffResult {
         if (expected.width != actual.width || expected.height != actual.height) {
             return DiffResult(
                 match = false,

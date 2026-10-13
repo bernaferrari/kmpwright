@@ -5,7 +5,7 @@ import kotlin.test.*
 
 class NetworkHistoryContractTest {
     private fun history(capacity: Int = 500, byteBudget: Int = 4 * 1024 * 1024) =
-        PageNetworkHistory({ id, bytes -> NetworkResponseBody("$id:$bytes") }, {}, capacity, byteBudget)
+        PageNetworkHistory({ id, bytes -> NetworkResponseBody("$id:$bytes") }, {}, capacity = capacity, byteBudget = byteBudget)
 
     @Test fun redirects_have_stable_ids_and_only_latest_hop_has_a_body() = runBlocking {
         val history = history()

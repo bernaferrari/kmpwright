@@ -12,7 +12,7 @@ class CdpWebViewControllerLifecycleTest {
         val controller = CdpWebViewController(transport)
 
         controller.addRequestListener(NoOpRequestListener)
-        controller.addRouteHandler(".*") { RouteHandler.Fallthrough }
+        controller.addRouteHandler(".*") { it.fallback() }
 
         val installed = transport.subscriptionCount
         check(installed > 0)

@@ -6,12 +6,18 @@ plugins {
 
 kotlin {
     compilerOptions {
-        freeCompilerArgs.add("-Xexpect-actual-classes")
+        // The sample showcases Material 3 Expressive, which is still experimental.
+        optIn.addAll(
+            "androidx.compose.material3.ExperimentalMaterial3Api",
+            "androidx.compose.material3.ExperimentalMaterial3ExpressiveApi",
+        )
     }
 
     android {
         namespace = "com.bernaferrari.kmpwright.example.shared"
-        compileSdk = 37
+        compileSdk {
+            version = release(37) { minorApiLevel = 2 }
+        }
         minSdk = 26
         withHostTest {}
     }
@@ -56,6 +62,8 @@ kotlin {
                 implementation(libs.androidx.core.ktx)
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.kotlinx.coroutines.android)
+                // Newest Material 3 Expressive on Android; overrides the JetBrains redirect.
+                implementation(libs.androidx.material3.expressive)
             }
         }
 

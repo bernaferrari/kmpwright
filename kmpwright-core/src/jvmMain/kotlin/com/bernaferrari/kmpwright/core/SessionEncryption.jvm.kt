@@ -11,7 +11,7 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
-private const val FORMAT_PREFIX = "WW2:"
+private const val FORMAT_PREFIX = ENCRYPTION_FORMAT_PREFIX
 private const val SALT_SIZE = 16
 private const val IV_SIZE = 16
 private const val TAG_SIZE = 32
@@ -43,7 +43,8 @@ internal actual fun platformDecrypt(cipherText: String, password: String): Strin
         cipher.init(Cipher.DECRYPT_MODE, keys.first, IvParameterSpec(iv))
         String(cipher.doFinal(encrypted), StandardCharsets.UTF_8)
     } else {
-        decryptLegacy(cipherText, password)
+        // Only the shared WW2 format is accepted, so a file decrypts identically on every platform.
+        null
     }
 }.getOrNull()
 
@@ -56,15 +57,3 @@ private fun deriveKeys(password: String, salt: ByteArray): Pair<SecretKeySpec, S
 
 private fun hmac(key: SecretKeySpec, data: ByteArray): ByteArray =
     Mac.getInstance("HmacSHA256").run { init(key); doFinal(data) }
-
-private fun decryptLegacy(cipherText: String, password: String): String {
-    val combined = Base64.getDecoder().decode(cipherText)
-    require(combined.size > 12 + 16)
-    val key = SecretKeySpec(
-        MessageDigest.getInstance("SHA-256").digest(password.toByteArray(StandardCharsets.UTF_8)),
-        "AES"
-    )
-    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-    cipher.init(Cipher.DECRYPT_MODE, key, javax.crypto.spec.GCMParameterSpec(128, combined.copyOfRange(0, 12)))
-    return String(cipher.doFinal(combined.copyOfRange(12, combined.size)), StandardCharsets.UTF_8)
-}

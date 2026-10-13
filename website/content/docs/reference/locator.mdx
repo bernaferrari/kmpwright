@@ -1,0 +1,255 @@
+---
+title: Locator
+description: Complete reference of Locator, FrameLocator and ElementFinder (locator, frameLocator, getBy*), the selector engines, actionability checks, and every action option class.
+---
+
+A `Locator` is a lazy reference to the elements matching a selector, like Playwright's `Locator`. It resolves again on every call, so it survives re-renders. Create one from a `Page`, `Locator` or `FrameLocator`.
+
+```kotlin
+val row = page.getByRole("row").filter(hasText = "Invoice 42")
+row.getByRole("button", name = "Pay").click()
+expect(row.locator(".status")).toHaveText("Paid")
+
+page.snapshot(SnapshotOptions(interactive = true))
+page.locator("@e3").fill("hello")                 // snapshot ref
+page.frameLocator("#checkout").getByLabel("Card number").fill("4242 4242 4242 4242")
+```
+
+Every action is `suspend`. `timeoutMs = null` uses [`TimeoutConfig.action`](/docs/reference/configuration#timeoutconfig) for actions and `TimeoutConfig.waitForSelector` for `waitFor`. Source: [Locator.kt](https://github.com/bernaferrari/kmpwright/blob/main/kmpwright-core/src/commonMain/kotlin/com/bernaferrari/kmpwright/core/Locator.kt).
+
+## Selector engines
+
+`locator(selector)` accepts:
+
+| Syntax | Matches |
+|---|---|
+| `button.primary`, `#id` (default) | CSS; pierces open shadow roots. |
+| `text=Save` | Elements whose text contains "Save", case-insensitive. |
+| `text="Save"` | Exact text. |
+| `text=/save/i` | Regular expression on the text. |
+| `role=button[name="Save"]` | ARIA role with accessible-name and state filters. |
+| `label=Email`, `placeholder=Search`, `alt=Logo`, `title=Close`, `testid=submit` | The same matching as the `getBy*` methods. |
+| `xpath=//button` | XPath. |
+| `@e3`, `e3`, `ref=e3` | A ref from the latest `page.snapshot()`. Refs are cleared on navigation and replaced by the next snapshot. Refs never auto-wait: an unknown or detached ref fails immediately ("Unknown ref @e3 — run snapshot again", "Ref @e3 is no longer attached — run snapshot again"); only `waitFor` treats it as no match. |
+| `css=.list` | Explicit CSS. |
+| `.list >> text=Item` | `>>` chains selectors: each part searches inside the previous matches. |
+
+An unparsable selector fails with an "Invalid selector …" message.
+
+## Actionability
+
+Actions wait until the element is ready and retry until their timeout, like Playwright:
+
+| Action | Attached | Visible | Enabled | Editable | Stable | Receives events |
+|---|---|---|---|---|---|---|
+| `click`, `dblclick`, `tap`, `check`, `uncheck`, `setChecked` | ✓ | ✓ | ✓ | | ✓ | ✓ |
+| `fill`, `clear` | ✓ | ✓ | ✓ | ✓ | | |
+| `pressSequentially` | ✓ | ✓ | ✓ | | | |
+| `selectOption` | ✓ | ✓ | ✓ | | | |
+| `setInputFiles` | ✓ | | ✓ | | | |
+| `hover` | ✓ | ✓ | | | ✓ | ✓ |
+| `dragTo` (source) | ✓ | ✓ | | | ✓ | ✓ |
+| `scrollIntoViewIfNeeded` | ✓ | ✓ | | | ✓ | |
+| `press`, `focus` | ✓ | | | | | |
+| `blur`, `dispatchEvent`, `evaluate` | ✓ | | | | | |
+
+`force = true` skips the visible, enabled, stable and hit-target checks. When the timeout expires, the `KmpwrightTimeoutException` names the last failing check, for example `Element #save is not enabled after 30000ms while trying to click: <button id="save" disabled>`. See [Errors](/docs/reference/errors#actionability).
+
+With `KmpwrightConfig.strictSelectors = true` (default), single-element operations fail when the selector matches more than one element: "Strict mode violation: '.item' resolved to 3 elements (…). Use first(), last(), nth() or a more specific selector." Multi-element methods (`count`, `all`, `allTextContents`, `allInnerTexts`) never are strict.
+
+On Android and iOS, locator actions run as DOM events inside the page. On the JVM with `InputMode.Hybrid`, `click`, `dblclick`, `tap`, `hover`, `fill`, `pressSequentially`, `press` and `dragTo` use native CDP input. See [InputMode](/docs/reference/configuration#inputmode).
+
+## `Locator` actions
+
+| Member | Description |
+|---|---|
+| `click(options: ClickOptions = ClickOptions())` | Clicks the element. |
+| `dblclick(options: ClickOptions = ClickOptions())` | Double-clicks. |
+| `tap(options: TapOptions = TapOptions())` | Taps with a touch sequence. |
+| `fill(value: String, options: FillOptions = FillOptions())` | Replaces the value of an input, textarea, select or `[contenteditable]`. Input types that cannot be filled (for example checkbox) fail immediately. |
+| `clear(options: FillOptions = FillOptions())` | Same as `fill("")`. |
+| `press(key: String, options: PressOptions = PressOptions())` | Presses a key or combination such as `"Enter"` or `"Control+A"` on the element. |
+| `pressSequentially(text: String, options: PressSequentiallyOptions = PressSequentiallyOptions())` | Types `text` one key at a time. Playwright: `pressSequentially` (formerly `type`). |
+| `hover(options: HoverOptions = HoverOptions())` | Moves the pointer over the element. |
+| `focus(timeoutMs: Long? = null)` | Focuses the element. |
+| `blur(timeoutMs: Long? = null)` | Removes keyboard focus. |
+| `check(options: CheckOptions = CheckOptions())` | Checks a checkbox or radio button; no-op when already checked. |
+| `uncheck(options: CheckOptions = CheckOptions())` | Unchecks a checkbox. Radio buttons throw "Cannot uncheck radio button …". |
+| `setChecked(checked: Boolean, options: CheckOptions = CheckOptions())` | Checks or unchecks. Non-checkable elements throw "Element … is not a checkbox or radio button". |
+| `selectOption(value: String, options: ActionOptions = ActionOptions())` | Selects the `<option>` whose value or label is `value`; waits for it to exist. |
+| `selectOption(values: List<String>, options: ActionOptions = ActionOptions())` | Selects every matching option; an empty list deselects all. |
+| `setInputFiles(files: List<String>, options: ActionOptions = ActionOptions())` | Sets the files of `<input type=file>`; an empty list clears. Non-empty lists work on the JVM only ("setInputFiles is not supported in mobile WebView"). |
+| `dragTo(target: Locator, options: DragOptions = DragOptions())` | Drags onto `target`, which must come from the same page. |
+| `scrollIntoViewIfNeeded(options: ScrollIntoViewOptions = ScrollIntoViewOptions())` | Scrolls into view when not already visible. |
+| `dispatchEvent(type: String, timeoutMs: Long? = null)` | Dispatches a DOM event (`"click"`, `"input"`…) with the matching event class; bubbles, cancelable, composed. |
+| `evaluate(expression: String, timeoutMs: Long? = null): JsResult` | Calls a JavaScript function with the element, for example `"el => el.value"`. Runs synchronously: a returned Promise is not awaited. Needs `allowEval`. |
+| `highlight(options: HighlightOptions = HighlightOptions())` | Draws an overlay for visual debugging (agent-browser `highlight`). |
+| `screenshot(options: ScreenshotOptions = ScreenshotOptions()): ScreenshotResult` | Captures the element's bounding box. `annotate = true` throws (page screenshots only). |
+| `waitFor(state: SelectorState = SelectorState.Visible, timeoutMs: Long? = null)` | Waits for `Attached`, `Detached`, `Visible` or `Hidden`. |
+
+## `Locator` queries
+
+These read the current state and do **not** wait for the element. Playwright's `locator.textContent()` and friends wait for an element first; in KMPwright use `waitFor()` first, the `Page.textContent(selector)` extensions (which wait for `Attached`), or a web-first [assertion](/docs/reference/assertions).
+
+| Member | Returns | When nothing matches |
+|---|---|---|
+| `textContent()` | `String?` | null |
+| `innerText()` | `String` | `""` |
+| `innerHTML()` | `String` | `""` |
+| `getAttribute(name: String)` | `String?` (null when absent) | null |
+| `inputValue()` | `String?` | null |
+| `boundingBox()` | `Rectangle?` in CSS pixels | null |
+| `count()` | `Int` | 0 |
+| `all()` | `List<Locator>`, one `nth(i)` per current match | empty |
+| `allTextContents()` | `List<String>` | empty |
+| `allInnerTexts()` | `List<String>` | empty |
+| `isVisible()` | `Boolean` | false |
+| `isHidden()` | `Boolean` | true |
+| `isEnabled()` / `isDisabled()` | `Boolean` | throws |
+| `isChecked()` | `Boolean` (also throws for non-checkable elements) | throws |
+| `isEditable()` | `Boolean` (enabled and not read-only) | throws |
+| `isFocused()` | `Boolean` | false |
+
+Content reads need `KmpwrightConfig.allowDomExtraction`.
+
+## Narrowing and combining
+
+All non-suspending; they return a new `Locator`.
+
+| Member | Description |
+|---|---|
+| `first()` | The first match. |
+| `last()` | The last match. |
+| `nth(index: Int)` | The match at `index`; negative counts from the end. |
+| `filter(hasText: String? = null, hasNotText: String? = null, has: Locator? = null, hasNot: Locator? = null)` | Keeps matches containing (or not containing) the text, or a descendant matching `has` / not matching `hasNot`. |
+| `filter(hasText: Regex?, hasNotText: Regex? = null, has: Locator? = null, hasNot: Locator? = null)` | Same with regular expressions. |
+| `and(locator: Locator)` | Elements matching both. |
+| `or(locator: Locator)` | Elements matching either, in document order. |
+
+`has`, `hasNot`, `and` and `or` need locators from the same page ("… needs a locator created by the same page").
+
+## `ElementFinder`
+
+Shared by `Page`, `Locator` and `FrameLocator`. On a `Locator`, results are scoped to its matches. Text arguments match case-insensitively as substrings unless `exact = true`.
+
+| Member | Description |
+|---|---|
+| `locator(selector: String): Locator` | Elements matching any [selector engine](#selector-engines), including refs. |
+| `frameLocator(selector: String): FrameLocator` | Elements inside the iframe matched by `selector`. |
+| `getByRole(role: String, name: String? = null, exact: Boolean = false, checked: Boolean? = null, disabled: Boolean? = null, expanded: Boolean? = null, selected: Boolean? = null, pressed: Boolean? = null, level: Int? = null, includeHidden: Boolean? = null): Locator` | By ARIA role and accessible name. |
+| `getByRole(role: String, name: Regex, checked: Boolean? = null, disabled: Boolean? = null, expanded: Boolean? = null, selected: Boolean? = null, pressed: Boolean? = null, level: Int? = null, includeHidden: Boolean? = null): Locator` | Accessible name matched by a regex. |
+| `getByText(text: String, exact: Boolean = false)` / `getByText(text: Regex)` | By text content. |
+| `getByLabel(text: String, exact: Boolean = false)` / `getByLabel(text: Regex)` | Form controls by `<label>`, `aria-label` or `aria-labelledby`. |
+| `getByPlaceholder(text: String, exact: Boolean = false)` / `getByPlaceholder(text: Regex)` | Inputs by `placeholder`. |
+| `getByAltText(text: String, exact: Boolean = false)` / `getByAltText(text: Regex)` | Images and areas by `alt`. |
+| `getByTitle(text: String, exact: Boolean = false)` / `getByTitle(text: Regex)` | By `title` attribute. |
+| `getByTestId(testId: String)` / `getByTestId(testId: Regex)` | By `data-testid`; the string form is an exact match. |
+
+All `getBy*` methods return `Locator` and are non-suspending.
+
+## `FrameLocator`
+
+Locates elements inside an iframe, like Playwright's `FrameLocator`. It is an `ElementFinder`, so it has `locator`, `frameLocator` (nested frames) and every `getBy*`. `page.mainFrame()` returns the main frame as a `FrameLocator`.
+
+| Member | Description |
+|---|---|
+| `name(): String?` | The iframe's `name` (or `id`) attribute. |
+| `url(): String?` | The URL of the iframe's document. |
+| `boundingBox(): Rectangle?` | The iframe element's box in CSS pixels. |
+
+## Option classes
+
+### `ClickOptions`
+
+Used by `click` and `dblclick`.
+
+<TypeTable
+  type={{
+    button: { type: 'MouseButton', description: 'LEFT, MIDDLE or RIGHT.', default: 'MouseButton.LEFT' },
+    clickCount: { type: 'Int', description: 'Number of clicks (dblclick always uses 2).', default: '1' },
+    delayMs: { type: 'Long', description: 'Delay before the click (between mousedown and mouseup for native mouse input).', default: '0' },
+    position: { type: 'Position?', description: 'Point relative to the element\'s top-left corner, in CSS pixels. null clicks the visible center.', default: 'null' },
+    force: { type: 'Boolean', description: 'Skip actionability checks.', default: 'false' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+### `TapOptions`
+
+<TypeTable
+  type={{
+    force: { type: 'Boolean', description: 'Skip actionability checks.', default: 'false' },
+    modifiers: { type: 'Int', description: 'Modifier bit mask for native touch input.', default: '0' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+### `FillOptions`, `HoverOptions`, `ActionOptions`, `CheckOptions`
+
+All four have the same fields. `FillOptions` is used by `fill` and `clear`, `HoverOptions` by `hover`, `ActionOptions` by `selectOption` and `setInputFiles`, `CheckOptions` by `check`, `uncheck` and `setChecked`.
+
+<TypeTable
+  type={{
+    force: { type: 'Boolean', description: 'Skip actionability checks.', default: 'false' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+### `PressOptions` and `PressSequentiallyOptions`
+
+<TypeTable
+  type={{
+    delayMs: { type: 'Long', description: 'PressOptions: wait between keydown and keyup. PressSequentiallyOptions: wait between key presses.', default: '0' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+Key names follow Playwright: `"Enter"`, `"Tab"`, `"ArrowDown"`, `"Shift+Tab"`, `"Control+A"`. `KeyboardModifiers` has the constants `SHIFT`, `CONTROL`, `ALT`, `META`, `CAPS_LOCK`.
+
+### `DragOptions`
+
+Used by `dragTo` and `page.mouse.drag`.
+
+<TypeTable
+  type={{
+    sourcePosition: { type: 'Position?', description: 'Grab point relative to the source element\'s top-left corner.', default: 'null' },
+    targetPosition: { type: 'Position?', description: 'Drop point relative to the target element\'s top-left corner.', default: 'null' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+### `ScrollIntoViewOptions`
+
+<TypeTable
+  type={{
+    block: { type: 'ScrollPosition', description: 'Vertical alignment: Start, Center, End or Nearest.', default: 'ScrollPosition.Center' },
+    inline: { type: 'ScrollPosition', description: 'Horizontal alignment.', default: 'ScrollPosition.Nearest' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+### `HighlightOptions`
+
+<TypeTable
+  type={{
+    color: { type: 'String', description: 'CSS color of the overlay.', default: '"rgba(255, 0, 0, 0.3)"' },
+    borderColor: { type: 'String', description: 'CSS border color.', default: '"red"' },
+    durationMs: { type: 'Long', description: 'Milliseconds before the highlight is removed; 0 keeps it until navigation.', default: '3000' },
+  }}
+/>
+
+### Value types
+
+| Type | Definition |
+|---|---|
+| `Position` | `Position(x: Double, y: Double)` in CSS pixels |
+| `Rectangle` | `Rectangle(x: Double, y: Double, width: Double, height: Double)` in CSS pixels |
+| `SelectorState` | `Attached`, `Detached`, `Visible`, `Hidden` |
+| `ScrollPosition` | `Start`, `Center`, `End`, `Nearest` |
+| `MouseButton` | `LEFT`, `MIDDLE`, `RIGHT` |
+
+## Related
+
+- [Locators guide](/docs/guides/locators)
+- [Assertions](/docs/reference/assertions)
+- [Page](/docs/reference/page) for the `page.click(selector)` conveniences.

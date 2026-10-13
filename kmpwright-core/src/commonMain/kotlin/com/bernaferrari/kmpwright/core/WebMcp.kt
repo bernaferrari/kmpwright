@@ -3,34 +3,58 @@ package com.bernaferrari.kmpwright.core
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlin.coroutines.cancellation.CancellationException
 
-/** Experimental browser WebMCP tools. Metadata and outputs are supplied by the page. */
-interface WebMcp {
-    suspend fun discover(): List<WebMcpTool>
-    fun context(): WebMcpContext
-    suspend fun invoke(name: String, input: JsonObject = JsonObject(emptyMap()), frameId: String? = null,
-        timeoutMs: Long = 30_000, waitForResult: Boolean = true): WebMcpInvocation
-    fun invocation(id: String): WebMcpInvocation
-    suspend fun awaitInvocation(id: String, timeoutMs: Long = 30_000): WebMcpInvocation
-    suspend fun cancelInvocation(id: String): WebMcpInvocation
+/**
+ * Experimental browser WebMCP tools (agent-browser `webmcp`). Metadata and outputs are supplied by the
+ * page. A null `timeoutMs` uses [TimeoutConfig.default].
+ */
+public interface WebMcp {
+    /** Tools registered by the page and its frames. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun discover(): List<WebMcpTool>
+
+    /** A bounded summary of the observed tools. */
+    public fun context(): WebMcpContext
+
+    /** Invokes tool [name] with [input]; waits for the result unless [waitForResult] is false. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun invoke(name: String, input: JsonObject = JsonObject(emptyMap()), frameId: String? = null,
+        timeoutMs: Long? = null, waitForResult: Boolean = true): WebMcpInvocation
+
+    /** The current state of invocation [id]. */
+    public fun invocation(id: String): WebMcpInvocation
+
+    /** Waits for invocation [id] to finish. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun awaitInvocation(id: String, timeoutMs: Long? = null): WebMcpInvocation
+
+    /** Cancels invocation [id]. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun cancelInvocation(id: String): WebMcpInvocation
 }
 
+/** A tool registered by the page. */
 @Serializable
-data class WebMcpTool(val name: String, val description: String, val inputSchema: JsonElement?,
+public data class WebMcpTool(val name: String, val description: String, val inputSchema: JsonElement?,
     val annotations: JsonElement?, val origin: String, val frameId: String, val backendNodeId: Long? = null)
 
+/** A compact tool description. */
 @Serializable
-data class WebMcpToolSummary(val name: String, val description: String, val origin: String, val frameId: String)
+public data class WebMcpToolSummary(val name: String, val description: String, val origin: String, val frameId: String)
 
+/** Summary of the observed tools. */
 @Serializable
-data class WebMcpContext(val observed: Boolean, val toolCount: Int, val tools: List<WebMcpToolSummary>,
+public data class WebMcpContext(val observed: Boolean, val toolCount: Int, val tools: List<WebMcpToolSummary>,
     val truncated: Boolean, val experimental: Boolean = true, val untrusted: Boolean = true)
 
+/** Lifecycle of a tool invocation. */
 @Serializable
-enum class WebMcpInvocationStatus { Pending, Completed, Canceled, Failed, TimedOut }
+public enum class WebMcpInvocationStatus { Pending, Completed, Canceled, Failed, TimedOut }
 
+/** A tool invocation and its result. */
 @Serializable
-data class WebMcpInvocation(val id: String, val toolName: String, val frameId: String, val origin: String,
+public data class WebMcpInvocation(val id: String, val toolName: String, val frameId: String, val origin: String,
     val status: WebMcpInvocationStatus, val output: JsonElement? = null, val error: String? = null,
     val outputTruncated: Boolean = false, val originalOutputBytes: Int? = null,
     val durationMs: Long = 0, val rawStatus: String? = null)
@@ -39,9 +63,9 @@ internal object UnavailableWebMcp : WebMcp {
     private fun unavailable(): Nothing = throw KmpwrightException("WebMCP requires a browser exposing the experimental CDP WebMCP domain")
     override suspend fun discover(): List<WebMcpTool> = unavailable()
     override fun context() = WebMcpContext(false, 0, emptyList(), false)
-    override suspend fun invoke(name: String, input: JsonObject, frameId: String?, timeoutMs: Long, waitForResult: Boolean): WebMcpInvocation = unavailable()
+    override suspend fun invoke(name: String, input: JsonObject, frameId: String?, timeoutMs: Long?, waitForResult: Boolean): WebMcpInvocation = unavailable()
     override fun invocation(id: String): WebMcpInvocation = unavailable()
-    override suspend fun awaitInvocation(id: String, timeoutMs: Long): WebMcpInvocation = unavailable()
+    override suspend fun awaitInvocation(id: String, timeoutMs: Long?): WebMcpInvocation = unavailable()
     override suspend fun cancelInvocation(id: String): WebMcpInvocation = unavailable()
 }
 
@@ -61,12 +85,12 @@ internal class GuardedWebMcp(private val backend: () -> WebMcp, private val conf
         return backend().discover()
     }
     override fun context(): WebMcpContext = if (config.allowDomExtraction) backend().context() else WebMcpContext(false, 0, emptyList(), false)
-    override suspend fun invoke(name: String, input: JsonObject, frameId: String?, timeoutMs: Long, waitForResult: Boolean): WebMcpInvocation {
+    override suspend fun invoke(name: String, input: JsonObject, frameId: String?, timeoutMs: Long?, waitForResult: Boolean): WebMcpInvocation {
         if (!config.allowEval) throw KmpwrightException("JavaScript evaluation is disabled")
         authorize()
-        return backend().invoke(name, input, frameId, timeoutMs, waitForResult)
+        return backend().invoke(name, input, frameId, config.defaultTimeout(timeoutMs), waitForResult)
     }
     override fun invocation(id: String): WebMcpInvocation = backend().invocation(id)
-    override suspend fun awaitInvocation(id: String, timeoutMs: Long): WebMcpInvocation = backend().awaitInvocation(id, timeoutMs)
+    override suspend fun awaitInvocation(id: String, timeoutMs: Long?): WebMcpInvocation = backend().awaitInvocation(id, config.defaultTimeout(timeoutMs))
     override suspend fun cancelInvocation(id: String): WebMcpInvocation = backend().cancelInvocation(id)
 }

@@ -4,9 +4,11 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import java.nio.file.*
 import java.nio.file.attribute.BasicFileAttributes
+import kotlin.coroutines.cancellation.CancellationException
 
-actual object ChromeProfiles {
-    actual suspend fun discoverUserDataDirectory(): String? = withContext(Dispatchers.IO) {
+public actual object ChromeProfiles {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun discoverUserDataDirectory(): String? = withContext(Dispatchers.IO) {
         val home = System.getProperty("user.home")
         val candidates = when {
             System.getProperty("os.name").startsWith("Mac") -> listOf("$home/Library/Application Support/Google/Chrome", "$home/Library/Application Support/Chromium")
@@ -15,7 +17,8 @@ actual object ChromeProfiles {
         }
         candidates.firstOrNull { Files.isRegularFile(Path.of(it).resolve("Local State"), LinkOption.NOFOLLOW_LINKS) }
     }
-    actual suspend fun list(userDataDirectory: String): List<ChromeProfile> = withContext(Dispatchers.IO) {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun list(userDataDirectory: String): List<ChromeProfile> = withContext(Dispatchers.IO) {
         val state = Path.of(userDataDirectory).resolve("Local State")
         if (!Files.isRegularFile(state, LinkOption.NOFOLLOW_LINKS)) return@withContext emptyList()
         require(Files.size(state) <= 16 * 1024 * 1024) { "Chrome Local State exceeds 16 MiB" }
@@ -25,7 +28,8 @@ actual object ChromeProfiles {
             ChromeProfile(directory, ((info as? JsonObject)?.get("name") as? JsonPrimitive)?.content ?: directory)
         }.sortedBy { it.directory }
     }
-    actual suspend fun resolve(source: ChromeProfileSource): ChromeProfile {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun resolve(source: ChromeProfileSource): ChromeProfile {
         val profiles = list(source.userDataDirectory)
         profiles.firstOrNull { it.directory == source.profile }?.let { return it }
         val names = profiles.filter { it.name.equals(source.profile, ignoreCase = true) }

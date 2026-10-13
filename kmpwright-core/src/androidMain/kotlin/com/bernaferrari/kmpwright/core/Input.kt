@@ -1,51 +1,68 @@
 package com.bernaferrari.kmpwright.core
 
 import android.os.SystemClock
+import android.view.InputDevice
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.webkit.WebView
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-class AndroidTouch(
-    private val controller: AndroidWebViewController
-) : Touch {
+/**
+ * Native touch input. Coordinates are CSS pixels relative to the layout
+ * viewport (the same space as `Locator.boundingBox`), converted to WebView
+ * device pixels once per gesture.
+ */
+internal class AndroidTouch(
+    private val controller: AndroidWebViewController,
+    /** Resolves per-call timeouts; a null `timeoutMs` uses [TimeoutConfig.action]. */
+    private val config: KmpwrightConfig = KmpwrightConfig()
+) : Touchscreen {
     private val webView: WebView = controller.getWebView()
 
-    override suspend fun tap(x: Double, y: Double, options: TapOptions) {
+    override suspend fun tap(x: Double, y: Double, options: TapOptions): Unit = config.inputAction(options.timeoutMs, "tap") {
+        press(x, y, 10)
+    }
+
+    /** Touch down at ([x], [y]), hold for [holdMs], release. */
+    internal suspend fun press(x: Double, y: Double, holdMs: Long) {
+        val transform = webView.cssToViewTransform()
         val downTime = SystemClock.uptimeMillis()
-        dispatchTouch(MotionEvent.ACTION_DOWN, x, y, downTime)
-        delay(10)
-        dispatchTouch(MotionEvent.ACTION_UP, x, y, downTime)
+        dispatchTouch(MotionEvent.ACTION_DOWN, transform.x(x), transform.y(y), downTime)
+        delay(holdMs.coerceAtLeast(10))
+        dispatchTouch(MotionEvent.ACTION_UP, transform.x(x), transform.y(y), downTime)
     }
 
     override suspend fun longTap(x: Double, y: Double, options: LongTapOptions) {
+        val transform = webView.cssToViewTransform()
         val downTime = SystemClock.uptimeMillis()
-        dispatchTouch(MotionEvent.ACTION_DOWN, x, y, downTime)
+        dispatchTouch(MotionEvent.ACTION_DOWN, transform.x(x), transform.y(y), downTime)
         delay(options.durationMs)
-        dispatchTouch(MotionEvent.ACTION_UP, x, y, downTime)
+        dispatchTouch(MotionEvent.ACTION_UP, transform.x(x), transform.y(y), downTime)
     }
 
     override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, options: ScrollOptions) {
+        val transform = webView.cssToViewTransform()
         val downTime = SystemClock.uptimeMillis()
         val steps = options.steps.coerceAtLeast(1)
-        dispatchTouch(MotionEvent.ACTION_DOWN, x, y, downTime)
+        dispatchTouch(MotionEvent.ACTION_DOWN, transform.x(x), transform.y(y), downTime)
         for (step in 1..steps) {
             val progress = step.toDouble() / steps
             dispatchTouch(
                 MotionEvent.ACTION_MOVE,
-                x + (deltaX * progress),
-                y + (deltaY * progress),
+                transform.x(x + (deltaX * progress)),
+                transform.y(y + (deltaY * progress)),
                 downTime
             )
             delay(8)
         }
-        dispatchTouch(MotionEvent.ACTION_UP, x + deltaX, y + deltaY, downTime)
+        dispatchTouch(MotionEvent.ACTION_UP, transform.x(x + deltaX), transform.y(y + deltaY), downTime)
     }
 
     override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, options: SwipeOptions) {
+        val transform = webView.cssToViewTransform()
         val dx = x2 - x1
         val dy = y2 - y1
         val distance = sqrt((dx * dx) + (dy * dy))
@@ -53,36 +70,43 @@ class AndroidTouch(
         val steps = (durationMs / 16L).coerceAtLeast(1L).toInt()
         val downTime = SystemClock.uptimeMillis()
 
-        dispatchTouch(MotionEvent.ACTION_DOWN, x1, y1, downTime)
+        dispatchTouch(MotionEvent.ACTION_DOWN, transform.x(x1), transform.y(y1), downTime)
         for (step in 1..steps) {
             val progress = step.toDouble() / steps
             dispatchTouch(
                 MotionEvent.ACTION_MOVE,
-                x1 + (dx * progress),
-                y1 + (dy * progress),
+                transform.x(x1 + (dx * progress)),
+                transform.y(y1 + (dy * progress)),
                 downTime
             )
             delay(16)
         }
-        dispatchTouch(MotionEvent.ACTION_UP, x2, y2, downTime)
+        dispatchTouch(MotionEvent.ACTION_UP, transform.x(x2), transform.y(y2), downTime)
     }
 
     override suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions) {
-        runOnUiThread(webView) {
-            webView.zoomBy(scale.toFloat().coerceAtLeast(0.1f))
+        onMain {
+            webView.zoomBy(scale.toFloat().coerceIn(0.01f, 100f))
         }
     }
 
-    private suspend fun dispatchTouch(action: Int, x: Double, y: Double, downTime: Long) {
-        runOnUiThread(webView) {
+    /** [x]/[y] are WebView-local device pixels. */
+    private suspend fun dispatchTouch(action: Int, x: Float, y: Float, downTime: Long) {
+        onMain {
             webView.requestFocus()
+            val properties = arrayOf(MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = MotionEvent.TOOL_TYPE_FINGER
+            })
+            val coordinates = arrayOf(MotionEvent.PointerCoords().apply {
+                this.x = x
+                this.y = y
+                pressure = 1f
+                size = 1f
+            })
             val event = MotionEvent.obtain(
-                downTime,
-                SystemClock.uptimeMillis(),
-                action,
-                x.toFloat(),
-                y.toFloat(),
-                0
+                downTime, SystemClock.uptimeMillis(), action, 1, properties, coordinates,
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
             )
             try {
                 webView.dispatchTouchEvent(event)
@@ -93,11 +117,13 @@ class AndroidTouch(
     }
 }
 
-class AndroidMouse(
-    private val controller: AndroidWebViewController
+internal class AndroidMouse(
+    private val controller: AndroidWebViewController,
+    /** Resolves per-call timeouts; a null `timeoutMs` uses [TimeoutConfig.action]. */
+    private val config: KmpwrightConfig = KmpwrightConfig()
 ) : Mouse {
     private val webView: WebView = controller.getWebView()
-    private val touch = AndroidTouch(controller)
+    private val touch = AndroidTouch(controller, config)
 
     override suspend fun move(x: Double, y: Double, options: MoveOptions) {
         controller.evaluateJavaScript(
@@ -119,21 +145,17 @@ class AndroidMouse(
         ) { }
     }
 
-    override suspend fun click(x: Double, y: Double, options: MouseClickOptions) {
-        repeat(options.clickCount.coerceAtLeast(1)) {
-            touch.tap(x, y, TapOptions(timeoutMs = options.timeoutMs))
-            if (options.delayMs > 0) {
-                delay(options.delayMs)
-            }
+    /** Playwright semantics: [MouseClickOptions.delayMs] is the time between press and release (and between clicks). */
+    override suspend fun click(x: Double, y: Double, options: MouseClickOptions): Unit = config.inputAction(options.timeoutMs, "mouse click") {
+        val clicks = options.clickCount.coerceAtLeast(1)
+        repeat(clicks) { index ->
+            if (index > 0 && options.delayMs > 0) delay(options.delayMs)
+            touch.press(x, y, options.delayMs)
         }
     }
 
     override suspend fun dblclick(x: Double, y: Double, options: MouseClickOptions) {
         click(x, y, options.copy(clickCount = 2))
-    }
-
-    override suspend fun tripleclick(x: Double, y: Double, options: MouseClickOptions) {
-        click(x, y, options.copy(clickCount = 3))
     }
 
     override suspend fun down(options: MouseDownOptions) {
@@ -160,23 +182,30 @@ class AndroidMouse(
         ) { }
     }
 
+    /** Deltas are CSS pixels. */
     override suspend fun wheel(deltaX: Double, deltaY: Double, options: WheelOptions) {
-        runOnUiThread(webView) {
-            webView.scrollBy(deltaX.toInt(), deltaY.toInt())
+        val transform = webView.cssToViewTransform()
+        onMain {
+            webView.scrollBy(transform.length(deltaX).roundToInt(), transform.length(deltaY).roundToInt())
         }
     }
 
-    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions) {
+    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions): Unit =
+        config.inputAction(options.timeoutMs, "mouse drag") {
         touch.swipe(startX, startY, endX, endY)
     }
 }
 
-class AndroidKeyboard(
-    private val controller: AndroidWebViewController
+internal class AndroidKeyboard(
+    private val controller: AndroidWebViewController,
+    /** Resolves per-call timeouts; a null `timeoutMs` uses [TimeoutConfig.action]. */
+    private val config: KmpwrightConfig = KmpwrightConfig()
 ) : Keyboard {
     private val webView: WebView = controller.getWebView()
     private val pressedKeys = linkedSetOf<String>()
     private val keyDownTimes = mutableMapOf<String, Long>()
+    private val pendingKeyUps = mutableMapOf<String, List<KeyEvent>>()
+    private val virtualKeyMap: KeyCharacterMap by lazy { KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD) }
 
     override suspend fun insertText(text: String) {
         // A WebView InputConnection can still reference the previous editor
@@ -184,13 +213,14 @@ class AndroidKeyboard(
         insertTextViaDom(text)
     }
 
-    override suspend fun type(text: String, options: TypeOptions) {
-        for (unit in text.toUnicodeTextUnits()) {
-            insertText(unit)
-            if (options.delayMs > 0) {
-                delay(options.delayMs)
-            }
-        }
+    private val focused = FocusedElementInput(controller, config)
+
+    /**
+     * Playwright `keyboard.type`: keydown, keypress, beforeinput, input and keyup for every character,
+     * sent to the focused element in the renderer (an IME [insertText] has no key events).
+     */
+    override suspend fun type(text: String, options: TypeOptions): Unit = config.inputAction(options.timeoutMs, "keyboard type") {
+        focused.type(text, options.delayMs)
     }
 
     override suspend fun down(key: String) {
@@ -199,53 +229,83 @@ class AndroidKeyboard(
             pressedKeys.add(canonicalKey)
         }
 
-        val keyCode = canonicalKey.toAndroidKeyCode()
-        if (keyCode == KeyEvent.KEYCODE_UNKNOWN) {
-            if (canonicalKey.length == 1) {
+        val namedKeyCode = canonicalKey.toNamedAndroidKeyCode()
+        if (namedKeyCode == KeyEvent.KEYCODE_UNKNOWN && canonicalKey.length == 1) {
+            // Printable characters use the virtual keyboard's real key
+            // sequence, including SHIFT for uppercase and shifted symbols.
+            val events = virtualKeyMap.getEvents(canonicalKey.toCharArray())
+            if (events == null) {
                 insertText(canonicalKey)
+                return
             }
+            val downTime = SystemClock.uptimeMillis()
+            keyDownTimes[canonicalKey] = downTime
+            pendingKeyUps[canonicalKey] = events.filter { it.action == KeyEvent.ACTION_UP }
+            events.filter { it.action == KeyEvent.ACTION_DOWN }
+                .forEach { dispatchKeyEvent(it.action, it.keyCode, downTime, it.metaState) }
             return
         }
+        if (namedKeyCode == KeyEvent.KEYCODE_UNKNOWN) return
 
         val downTime = SystemClock.uptimeMillis()
         keyDownTimes[canonicalKey] = downTime
-        dispatchKeyEvent(KeyEvent.ACTION_DOWN, keyCode, downTime)
+        dispatchKeyEvent(KeyEvent.ACTION_DOWN, namedKeyCode, downTime)
     }
 
     override suspend fun up(key: String) {
         val canonicalKey = canonicalModifierKey(key)
-        val keyCode = canonicalKey.toAndroidKeyCode()
         val downTime = keyDownTimes.remove(canonicalKey) ?: SystemClock.uptimeMillis()
-        if (keyCode != KeyEvent.KEYCODE_UNKNOWN) {
-            dispatchKeyEvent(KeyEvent.ACTION_UP, keyCode, downTime)
+        val characterUps = pendingKeyUps.remove(canonicalKey)
+        if (characterUps != null) {
+            characterUps.forEach { dispatchKeyEvent(it.action, it.keyCode, downTime, it.metaState) }
+        } else {
+            val keyCode = canonicalKey.toNamedAndroidKeyCode()
+            if (keyCode != KeyEvent.KEYCODE_UNKNOWN) {
+                dispatchKeyEvent(KeyEvent.ACTION_UP, keyCode, downTime)
+            }
         }
         if (canonicalKey.isModifierKey()) {
             pressedKeys.remove(canonicalKey)
         }
     }
 
-    override suspend fun press(key: String, options: PressOptions) {
-        down(key)
-        if (options.delayMs > 0) {
-            delay(options.delayMs)
+    /**
+     * Playwright `keyboard.press`: modifiers of a combination go down in order, then the key,
+     * [PressOptions.delayMs], key up and modifiers up in reverse. Named keys (Enter, Tab, Backspace,
+     * arrows...) are native [KeyEvent]s; characters and shortcuts with Control/Meta/Alt (`"Control+A"`,
+     * `"ControlOrMeta+A"` = Control on Android) use the page runtime's synthetic key sequence, which
+     * inserts the character or applies the shortcut's editing default (select-all).
+     */
+    override suspend fun press(key: String, options: PressOptions): Unit = config.inputAction(options.timeoutMs, "keyboard press") {
+        val (mainKey, modifiers) = parseKeyCombination(key)
+        val held = pressedKeys.filter { it.isModifierKey() }.toSet()
+        val shortcut = (modifiers + held).any { it == KeyboardModifiers.CONTROL || it == KeyboardModifiers.META || it == KeyboardModifiers.ALT }
+        if (shortcut || mainKey.toUnicodeTextUnits().size == 1) {
+            // Injected KeyEvents neither run editing shortcuts (Ctrl+A) nor reliably insert characters into
+            // an editor focused from script (the IME connection may still point at another editor): use the
+            // same synthetic sequence as Locator.press, which applies the default action of the key.
+            focused.press(key, options.delayMs, held)
+            return@inputAction
         }
-        up(key)
+        val acquired = mutableListOf<String>()
+        try {
+            for (modifier in modifiers) {
+                if (modifier !in pressedKeys) { down(modifier); acquired += modifier }
+            }
+            down(mainKey)
+            acquired += mainKey
+            if (options.delayMs > 0) delay(options.delayMs)
+        } finally {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { acquired.asReversed().forEach { up(it) } }
+        }
     }
 
-    override suspend fun downAndUp(key: String, options: TypeOptions) {
-        down(key)
-        if (options.delayMs > 0) {
-            delay(options.delayMs)
-        }
-        up(key)
-    }
+    internal fun isModifierPressed(key: String): Boolean = pressedKeys.contains(canonicalModifierKey(key))
 
-    override fun isModifierPressed(key: String): Boolean = pressedKeys.contains(canonicalModifierKey(key))
+    internal fun modifiers(): Set<String> = pressedKeys.toSet()
 
-    override fun modifiers(): Set<String> = pressedKeys.toSet()
-
-    private suspend fun dispatchKeyEvent(action: Int, keyCode: Int, downTime: Long) {
-        runOnUiThread(webView) {
+    private suspend fun dispatchKeyEvent(action: Int, keyCode: Int, downTime: Long, extraMetaState: Int = 0) {
+        onMain {
             webView.requestFocus()
             val event = KeyEvent(
                 downTime,
@@ -253,7 +313,11 @@ class AndroidKeyboard(
                 action,
                 keyCode,
                 0,
-                currentMetaState()
+                currentMetaState() or extraMetaState,
+                KeyCharacterMap.VIRTUAL_KEYBOARD,
+                0,
+                0,
+                InputDevice.SOURCE_KEYBOARD
             )
             webView.dispatchKeyEvent(event)
         }
@@ -298,30 +362,8 @@ class AndroidKeyboard(
 
 }
 
-private suspend fun <T> runOnUiThread(webView: WebView, block: () -> T): T =
-    suspendCancellableCoroutine { continuation ->
-        webView.post {
-            continuation.resume(block())
-        }
-    }
-
-private fun canonicalModifierKey(key: String): String = when (key.lowercase()) {
-    "shift" -> KeyboardModifiers.SHIFT
-    "control", "ctrl" -> KeyboardModifiers.CONTROL
-    "alt", "option" -> KeyboardModifiers.ALT
-    "meta", "cmd", "command" -> KeyboardModifiers.META
-    else -> key
-}
-
-private fun String.isModifierKey(): Boolean = when (this) {
-    KeyboardModifiers.SHIFT,
-    KeyboardModifiers.CONTROL,
-    KeyboardModifiers.ALT,
-    KeyboardModifiers.META -> true
-    else -> false
-}
-
-private fun String.toAndroidKeyCode(): Int = when (lowercase()) {
+/** Non-printable named keys; printable characters go through [KeyCharacterMap]. */
+private fun String.toNamedAndroidKeyCode(): Int = when (lowercase()) {
     "enter", "return" -> KeyEvent.KEYCODE_ENTER
     "tab" -> KeyEvent.KEYCODE_TAB
     "escape", "esc" -> KeyEvent.KEYCODE_ESCAPE
@@ -335,40 +377,27 @@ private fun String.toAndroidKeyCode(): Int = when (lowercase()) {
     "end" -> KeyEvent.KEYCODE_MOVE_END
     "pageup" -> KeyEvent.KEYCODE_PAGE_UP
     "pagedown" -> KeyEvent.KEYCODE_PAGE_DOWN
+    "insert" -> KeyEvent.KEYCODE_INSERT
+    "capslock" -> KeyEvent.KEYCODE_CAPS_LOCK
+    "f1" -> KeyEvent.KEYCODE_F1
+    "f2" -> KeyEvent.KEYCODE_F2
+    "f3" -> KeyEvent.KEYCODE_F3
+    "f4" -> KeyEvent.KEYCODE_F4
+    "f5" -> KeyEvent.KEYCODE_F5
+    "f6" -> KeyEvent.KEYCODE_F6
+    "f7" -> KeyEvent.KEYCODE_F7
+    "f8" -> KeyEvent.KEYCODE_F8
+    "f9" -> KeyEvent.KEYCODE_F9
+    "f10" -> KeyEvent.KEYCODE_F10
+    "f11" -> KeyEvent.KEYCODE_F11
+    "f12" -> KeyEvent.KEYCODE_F12
     "space", " " -> KeyEvent.KEYCODE_SPACE
     "shift" -> KeyEvent.KEYCODE_SHIFT_LEFT
     "control", "ctrl" -> KeyEvent.KEYCODE_CTRL_LEFT
     "alt", "option" -> KeyEvent.KEYCODE_ALT_LEFT
     "meta", "cmd", "command" -> KeyEvent.KEYCODE_META_LEFT
-    else -> when {
-        length == 1 -> first().toAndroidKeyCode()
-        else -> KeyEvent.KEYCODE_UNKNOWN
-    }
+    else -> KeyEvent.KEYCODE_UNKNOWN
 }
-
-private fun Char.toAndroidKeyCode(): Int = when {
-    this in 'a'..'z' || this in 'A'..'Z' ->
-        KeyEvent.KEYCODE_A + (uppercaseChar().code - 'A'.code)
-    this in '0'..'9' ->
-        KeyEvent.KEYCODE_0 + (code - '0'.code)
-    else -> when (this) {
-        ';', ':' -> KeyEvent.KEYCODE_SEMICOLON
-        '=', '+' -> KeyEvent.KEYCODE_EQUALS
-        ',', '<' -> KeyEvent.KEYCODE_COMMA
-        '-', '_' -> KeyEvent.KEYCODE_MINUS
-        '.', '>' -> KeyEvent.KEYCODE_PERIOD
-        '/', '?' -> KeyEvent.KEYCODE_SLASH
-        '`', '~' -> KeyEvent.KEYCODE_GRAVE
-        '[', '{' -> KeyEvent.KEYCODE_LEFT_BRACKET
-        '\\', '|' -> KeyEvent.KEYCODE_BACKSLASH
-        ']', '}' -> KeyEvent.KEYCODE_RIGHT_BRACKET
-        '\'', '"' -> KeyEvent.KEYCODE_APOSTROPHE
-        else -> KeyEvent.KEYCODE_UNKNOWN
-    }
-}
-
-private fun String.toUnicodeTextUnits(): List<String> =
-    codePoints().toArray().map { codePoint -> String(Character.toChars(codePoint)) }
 
 private fun String.jsQuoted(): String =
     buildString(length + 2) {

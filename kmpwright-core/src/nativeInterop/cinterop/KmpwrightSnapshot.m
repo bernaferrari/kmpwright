@@ -4,7 +4,6 @@
 #import <CommonCrypto/CommonHMAC.h>
 #import <CommonCrypto/CommonKeyDerivation.h>
 #import <Security/Security.h>
-#import <WebKit/WebKit.h>
 
 static NSString *const WWEncryptionPrefix = @"WW2:";
 static const size_t WWSaltSize = 16;
@@ -13,31 +12,6 @@ static const size_t WWTagSize = CC_SHA256_DIGEST_LENGTH;
 static const uint WWPBKDFRounds = 210000;
 
 @implementation KmpwrightSnapshot
-
-+ (void)capturePngFromWebView:(WKWebView *)webView
-                  completion:(void (^)(NSData * _Nullable pngData, NSError * _Nullable error))completion
-{
-    if (!completion) return;
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        WKSnapshotConfiguration *config = [[WKSnapshotConfiguration alloc] init];
-
-        [webView takeSnapshotWithConfiguration:config completionHandler:^(
-            UIImage * _Nullable image,
-            NSError * _Nullable error
-        ) {
-            if (error || !image) {
-                completion(nil, error);
-                return;
-            }
-
-            NSData *png = UIImagePNGRepresentation(image);
-            completion(png, png ? nil : [NSError errorWithDomain:@"KmpwrightSnapshot"
-                                                             code:-1
-                                                         userInfo:@{NSLocalizedDescriptionKey: @"PNG encode failed"}]);
-        }];
-    });
-}
 
 + (nullable NSString *)encryptString:(NSString *)plainText password:(NSString *)password
 {

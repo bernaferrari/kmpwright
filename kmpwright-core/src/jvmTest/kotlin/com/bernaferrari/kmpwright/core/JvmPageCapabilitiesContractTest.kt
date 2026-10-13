@@ -37,12 +37,14 @@ class JvmPageCapabilitiesContractTest {
                 PageCapability.HttpRead to SupportLevel.Supported,
                 PageCapability.NetworkHistory to SupportLevel.Partial,
                 PageCapability.VideoRecording to SupportLevel.Supported,
-            PageCapability.Screencast to SupportLevel.Supported
+            PageCapability.Screencast to SupportLevel.Supported,
+                PageCapability.CrossOriginFrames to SupportLevel.Supported
             ),
             capabilities.supportLevels()
         )
         assertEquals(PageCapability.values().size, capabilities.supportLevels().size)
         assertTrue(capabilities.notes.isNotEmpty())
+        assertTrue(capabilities.notes.any { it.contains("emulated natively") })
     }
 
     @Test
@@ -51,9 +53,8 @@ class JvmPageCapabilitiesContractTest {
         var started = false
 
         try {
-            page.withRequiredCapabilities(PageCapability.Cdp.require()) {
-                started = true
-            }
+            page.requireCapabilities(PageCapability.Cdp.require())
+            started = true
         } catch (error: KmpwrightException) {
             assertTrue(error.message.orEmpty().contains("Cdp"))
         } finally {

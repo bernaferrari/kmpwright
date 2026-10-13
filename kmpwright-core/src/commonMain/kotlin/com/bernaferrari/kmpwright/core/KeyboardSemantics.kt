@@ -37,13 +37,50 @@ internal fun isSelectAllShortcut(key: String, pressedModifiers: Set<String>): Bo
     return KeyboardModifiers.CONTROL in pressedModifiers || KeyboardModifiers.META in pressedModifiers
 }
 
+/**
+ * Canonical key name: modifier aliases (`Ctrl`, `Cmd`, `Option`, `ControlOrMeta`) become `Control`/`Meta`/
+ * `Alt`, and Playwright's US-layout code names become their key (`Space` -> `" "`, `KeyA` -> `"a"`,
+ * `Digit1` -> `"1"`, `Minus` -> `"-"`, ...). Other names (`Enter`, `ArrowLeft`, `F5`, single characters)
+ * are returned unchanged.
+ */
 internal fun canonicalModifierKey(key: String): String = when (key.lowercase()) {
     "shift" -> KeyboardModifiers.SHIFT
     "control", "ctrl" -> KeyboardModifiers.CONTROL
     "alt", "option" -> KeyboardModifiers.ALT
     "meta", "cmd", "command" -> KeyboardModifiers.META
-    else -> key
+    "controlormeta" -> controlOrMetaModifier()
+    else -> keyForCodeName(key) ?: key
 }
+
+/** The key produced by a Playwright US-layout code name, or null when [name] is not one. */
+private fun keyForCodeName(name: String): String? {
+    if (name.length == 4 && name.startsWith("Key") && name[3] in 'A'..'Z') return name[3].lowercase()
+    if (name.length == 6 && name.startsWith("Digit") && name[5] in '0'..'9') return name[5].toString()
+    return when (name) {
+        "Space" -> " "
+        "Backquote" -> "`"
+        "Minus" -> "-"
+        "Equal" -> "="
+        "BracketLeft" -> "["
+        "BracketRight" -> "]"
+        "Backslash" -> "\\"
+        "Semicolon" -> ";"
+        "Quote" -> "'"
+        "Comma" -> ","
+        "Period" -> "."
+        "Slash" -> "/"
+        "Esc" -> "Escape"
+        "Return" -> "Enter"
+        else -> null
+    }
+}
+
+/** Every named (non-character) key the synthetic keyboards understand, as in Playwright's US layout. */
+internal val NAMED_KEYS: Set<String> = setOf(
+    "Enter", "Tab", "Escape", "Backspace", "Delete", "Insert", "ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown",
+    "Home", "End", "PageUp", "PageDown", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+    KeyboardModifiers.SHIFT, KeyboardModifiers.CONTROL, KeyboardModifiers.ALT, KeyboardModifiers.META, KeyboardModifiers.CAPS_LOCK
+)
 
 internal fun String.isModifierKey(): Boolean = when (this) {
     KeyboardModifiers.SHIFT,
@@ -118,6 +155,8 @@ private fun keyCodeNameForKey(key: String): String = when (key) {
     "End" -> "End"
     "PageUp" -> "PageUp"
     "PageDown" -> "PageDown"
+    "Insert" -> "Insert"
+    KeyboardModifiers.CAPS_LOCK -> "CapsLock"
     "F1" -> "F1"
     "F2" -> "F2"
     "F3" -> "F3"
@@ -158,6 +197,8 @@ private fun domKeyCodeForKey(key: String): Int = when (key) {
     "End" -> 35
     "PageUp" -> 33
     "PageDown" -> 34
+    "Insert" -> 45
+    KeyboardModifiers.CAPS_LOCK -> 20
     "F1" -> 112
     "F2" -> 113
     "F3" -> 114

@@ -14,7 +14,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * CDP (Chrome DevTools Protocol) JSON-RPC 2.0 message types.
  */
 @Serializable
-data class CdpRequest(
+internal data class CdpRequest(
     val id: Int,
     val method: String,
     val params: JsonObject = JsonObject(emptyMap()),
@@ -22,27 +22,27 @@ data class CdpRequest(
 )
 
 @Serializable
-data class CdpResponse(
+internal data class CdpResponse(
     val id: Int,
     val result: JsonObject? = null,
     val error: CdpError? = null
 )
 
 @Serializable
-data class CdpError(
+internal data class CdpError(
     val code: Int,
     val message: String,
     val data: String? = null
 )
 
-data class CdpEvent(
+internal data class CdpEvent(
     val method: String,
     val params: JsonObject,
     val sessionId: String? = null
 )
 
 /** Result of connecting to a cloud browser provider. */
-data class ProviderSession(
+internal data class ProviderSession(
     val provider: String,
     val sessionId: String,
     val websocketUrl: String,
@@ -53,7 +53,7 @@ data class ProviderSession(
  * CDP domain methods commonly used by Kmpwright.
  * Grouped by domain for discoverability.
  */
-object CdpMethods {
+internal object CdpMethods {
     // --- Page ---
     const val PAGE_ENABLE = "Page.enable"
     const val PAGE_DISABLE = "Page.disable"
@@ -89,7 +89,7 @@ object CdpMethods {
     const val NETWORK_SET_USER_AGENT_OVERRIDE = "Network.setUserAgentOverride"
     const val NETWORK_EMULATE_NETWORK_CONDITIONS = "Network.emulateNetworkConditions"
     const val NETWORK_SET_COOKIE = "Network.setCookie"
-    const val NETWORK_DELETE_COOKIE = "Network.deleteCookie"
+    const val NETWORK_DELETE_COOKIES = "Network.deleteCookies"
     const val NETWORK_GET_COOKIES = "Network.getAllCookies"
     const val NETWORK_CLEAR_COOKIES = "Network.clearBrowserCookies"
 
@@ -120,6 +120,10 @@ object CdpMethods {
     const val EMULATION_SET_CPU_THROTTLING_RATE = "Emulation.setCPUThrottlingRate"
     const val EMULATION_SET_TOUCH_EMULATION_ENABLED = "Emulation.setTouchEmulationEnabled"
     const val EMULATION_SET_GEOLATION_OVERRIDE = "Emulation.setGeolocationOverride"
+    const val EMULATION_CLEAR_GEOLOCATION_OVERRIDE = "Emulation.clearGeolocationOverride"
+    const val EMULATION_SET_EMULATED_MEDIA = "Emulation.setEmulatedMedia"
+    const val TARGET_GET_TARGET_INFO = "Target.getTargetInfo"
+    const val PAGE_GET_NAVIGATION_HISTORY = "Page.getNavigationHistory"
 
     // --- Fetch (request interception) ---
     const val FETCH_ENABLE = "Fetch.enable"

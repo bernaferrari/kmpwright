@@ -9,7 +9,7 @@ it is not a hosted queue or service.
 
 Build slots with `browserFarmSlot`. Each lease uses a fresh disposable Chromium
 context or nonpersistent WKWebView data store. Release closes all pages and
-contexts created by that borrower, including their saved states, init scripts
+contexts created by that borrower, including their storage state, init scripts
 and background jobs. The next borrower receives a new context.
 
 Android WebView shares process-wide cookie/storage state and cannot provide this

@@ -15,8 +15,8 @@ class SessionStorageTest {
     @Test
     fun `set and get roundtrip`() {
         runBlocking {
-            page.setSessionStorage("key1", "value1")
-            val result = page.getSessionStorage("key1")
+            page.sessionStorage.set("key1", "value1")
+            val result = page.sessionStorage.get("key1")
             assertEquals("value1", result)
         }
     }
@@ -24,7 +24,7 @@ class SessionStorageTest {
     @Test
     fun `returns null for missing key`() {
         runBlocking {
-            val result = page.getSessionStorage("nonexistent")
+            val result = page.sessionStorage.get("nonexistent")
             assertNull(result)
         }
     }
@@ -32,9 +32,9 @@ class SessionStorageTest {
     @Test
     fun `getAll returns all items`() {
         runBlocking {
-            page.setSessionStorage("a", "1")
-            page.setSessionStorage("b", "2")
-            val all = page.getAllSessionStorage()
+            page.sessionStorage.set("a", "1")
+            page.sessionStorage.set("b", "2")
+            val all = page.sessionStorage.entries()
             assertEquals(2, all.size)
             assertEquals("1", all["a"])
             assertEquals("2", all["b"])
@@ -44,7 +44,7 @@ class SessionStorageTest {
     @Test
     fun `getAll returns empty when empty`() {
         runBlocking {
-            val all = page.getAllSessionStorage()
+            val all = page.sessionStorage.entries()
             assertTrue(all.isEmpty())
         }
     }
@@ -52,20 +52,20 @@ class SessionStorageTest {
     @Test
     fun `remove deletes item`() {
         runBlocking {
-            page.setSessionStorage("x", "bye")
-            assertEquals("bye", page.getSessionStorage("x"))
-            page.removeSessionStorage("x")
-            assertNull(page.getSessionStorage("x"))
+            page.sessionStorage.set("x", "bye")
+            assertEquals("bye", page.sessionStorage.get("x"))
+            page.sessionStorage.remove("x")
+            assertNull(page.sessionStorage.get("x"))
         }
     }
 
     @Test
     fun `clear removes all items`() {
         runBlocking {
-            page.setSessionStorage("a", "1")
-            page.setSessionStorage("b", "2")
-            page.clearSessionStorage()
-            assertTrue(page.getAllSessionStorage().isEmpty())
+            page.sessionStorage.set("a", "1")
+            page.sessionStorage.set("b", "2")
+            page.sessionStorage.clear()
+            assertTrue(page.sessionStorage.entries().isEmpty())
         }
     }
 
@@ -80,7 +80,7 @@ class SessionStorageTest {
                 override suspend fun evaluateJavaScriptAsync(script: String): String? = null
             }
 
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
     }
@@ -116,18 +116,14 @@ class SessionStorageTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
         override fun removeRouteHandler(urlPattern: String) {}
         override fun removeAllRouteHandlers() {}
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
         override fun setCookie(cookie: Cookie) {}
         override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
         override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
         override fun deleteCookie(name: String, domain: String) {}
         override fun deleteAllCookies() {}
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
 
         fun executeJs(script: String): String? {
             val setItemRegex = Regex("""(localStorage|sessionStorage)\.setItem\('([^']*)',\s*'([^']*)'\)""")

@@ -1,35 +1,63 @@
 {
   "jvmTest": {
-    "tests": 859,
+    "tests": 947,
     "failures": 0,
     "errors": 0,
-    "skipped": 0
-  },
-  "iosSimTest": {
-    "tests": 39,
-    "failures": 0,
-    "errors": 0,
-    "skipped": 0
+    "skipped": 0,
+    "browser": "Real Chromium with React fixture",
+    "seconds": 131
   },
   "androidInstrumentation": {
-    "tests": 55,
+    "tests": 67,
     "failures": 0,
-    "seconds": 70.313,
-    "activityLifecycle": "one activity per class, fresh WebView per test"
+    "seconds": 245.57,
+    "device": "CodexKmpwrightReliability arm64 emulator",
+    "activityLifecycle": "activity reused within each class; fresh WebView per test"
   },
   "upstreamCommit": "d9570915f4dd6504dee4070379d2c4f79d81dbb2",
-  "date": "2026-10-11",
+  "date": "2026-10-13",
   "releaseChecks": {
     "xcframeworkArm64DeviceAndSimulator": true,
     "artifactOnlySwiftConsumer": true,
     "localMavenPublication": true,
     "independentKotlinAndAndroidConsumers": true,
     "releaseVersionPropagation": true,
-    "sharedIosExampleFramework": true
+    "sharedIosExampleFramework": true,
+    "abiValidation": true,
+    "commonAndIosMetadata": true
   },
   "runtimeVerificationLimits": [
-    "Darwin app-host document integration",
-    "Linux Chromium NSS private-CA trust (wired into CI)",
+    "Live vendor cloud-provider sessions (protocol contracts tested locally)",
+    "Linux Chromium NSS private-CA browser trust (wired into CI)",
     "Host-dependent WebGPU adapter availability"
-  ]
+  ],
+  "iosAppHostTest": {
+    "tests": 85,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "runner": "run-ios-webkit-tests.sh; actual WKWebView documents",
+    "seconds": 27.971
+  },
+  "websiteChecks": {
+    "lockedInstall": true,
+    "types": true,
+    "lint": true,
+    "productionBuild": true,
+    "responsivePreview": true
+  },
+  "previousBareIosCheckpoint": {
+    "date": "2026-10-11",
+    "tests": 39,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "releaseChecksDate": "2026-10-13",
+  "iosSimTest": {
+    "tests": 56,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
 }

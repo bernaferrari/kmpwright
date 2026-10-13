@@ -19,28 +19,29 @@ class AnnotatedScreenshotTest {
     }
 
     @Test
-    fun `annotatedScreenshot injects numbered labels and captures screenshot`() {
+    fun `annotated screenshot injects numbered labels and captures screenshot`() {
         runBlocking {
             controller.snapshotResult = "{\"flatNodes\":[],\"refMap\":{\"@e1\":{\"refId\":\"@e1\",\"role\":\"button\",\"name\":\"Submit\",\"cssSelector\":\"button.submit\"}},\"textTree\":\"[1] button \\\"Submit\\\"\\n\",\"timestamp\":0}"
             controller.bboxResult = "[{\"i\":0,\"x\":10.0,\"y\":20.0,\"w\":100.0,\"h\":40.0}]"
-            val result = page.annotatedScreenshot()
-            assertNotNull(result.screenshot)
-            assertEquals(1, result.labels.size)
-            assertEquals("button: Submit", result.labels[0].text)
-            assertEquals(0, result.labels[0].index)
-            assertEquals(10.0, result.labels[0].rectangle.x, 0.01)
-            assertEquals(20.0, result.labels[0].rectangle.y, 0.01)
-            assertEquals(100.0, result.labels[0].rectangle.width, 0.01)
-            assertEquals(40.0, result.labels[0].rectangle.height, 0.01)
+            val result = page.screenshot(ScreenshotOptions(annotate = true))
+            assertNotNull(result.bytes)
+            assertEquals(1, result.annotations.size)
+            assertEquals("@e1", result.annotations[0].ref)
+            assertEquals("button", result.annotations[0].role)
+            assertEquals("Submit", result.annotations[0].name)
+            assertEquals(10.0, result.annotations[0].box.x, 0.01)
+            assertEquals(20.0, result.annotations[0].box.y, 0.01)
+            assertEquals(100.0, result.annotations[0].box.width, 0.01)
+            assertEquals(40.0, result.annotations[0].box.height, 0.01)
         }
     }
 
     @Test
-    fun `annotatedScreenshot cleans up DOM labels after screenshot`() {
+    fun `annotated screenshot cleans up DOM labels after screenshot`() {
         runBlocking {
             controller.snapshotResult = "{\"flatNodes\":[],\"refMap\":{\"@e1\":{\"refId\":\"@e1\",\"role\":\"link\",\"name\":\"Home\",\"cssSelector\":\"a.home\"}},\"textTree\":\"[1] link \\\"Home\\\"\\n\",\"timestamp\":0}"
             controller.bboxResult = """[{"i":0,"x":0.0,"y":0.0,"w":50.0,"h":20.0}]"""
-            page.annotatedScreenshot()
+            page.screenshot(ScreenshotOptions(annotate = true))
             val scripts = controller.executedScripts
             // Should have inject script, screenshot, and cleanup script
             assertTrue(scripts.any { it.contains("data-ww-anno") })
@@ -49,21 +50,21 @@ class AnnotatedScreenshotTest {
     }
 
     @Test
-    fun `annotatedScreenshot with empty refMap returns no labels`() {
+    fun `annotated screenshot with empty refMap returns no labels`() {
         runBlocking {
             controller.snapshotResult = """{"nodes":[],"refMap":{},"textTree":"","timestamp":0}"""
             controller.bboxResult = """[]"""
-            val result = page.annotatedScreenshot()
-            assertTrue(result.labels.isEmpty())
+            val result = page.screenshot(ScreenshotOptions(annotate = true))
+            assertTrue(result.annotations.isEmpty())
         }
     }
 
     @Test
-    fun `annotatedScreenshot respects format option`() {
+    fun `annotated screenshot respects format option`() {
         runBlocking {
             controller.snapshotResult = """{"nodes":[],"refMap":{},"textTree":"","timestamp":0}"""
             controller.bboxResult = """[]"""
-            val result = page.annotatedScreenshot(AnnotatedScreenshotOptions(format = ScreenshotFormat.JPEG, quality = 85))
+            val result = page.screenshot(ScreenshotOptions(annotate = true, format = ScreenshotFormat.JPEG, quality = 85))
             assertNotNull(result)
             assertEquals(ScreenshotFormat.JPEG, page.capturedOptions!!.format)
             assertEquals(85, page.capturedOptions!!.quality)
@@ -74,7 +75,7 @@ class AnnotatedScreenshotTest {
         controller, KmpwrightConfig()
     ) {
         var capturedOptions: ScreenshotOptions? = null
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
         override fun createPlatformLocator(selector: String): BaseLocator =
@@ -141,17 +142,13 @@ class AnnotatedScreenshotTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
         override fun removeRouteHandler(urlPattern: String) {}
         override fun removeAllRouteHandlers() {}
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
         override fun setCookie(cookie: Cookie) {}
         override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
         override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
         override fun deleteCookie(name: String, domain: String) {}
         override fun deleteAllCookies() {}
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
     }
 }

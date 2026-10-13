@@ -21,17 +21,15 @@ class SnapshotDiffPageTest {
     @Test
     fun `diffSnapshot with two snapshots returns diff`() {
         runBlocking {
-            val before = A11ySnapshot(
-                nodes = listOf(A11yNode("heading", "Title")),
-                refMap = mapOf("@e1" to RefEntry("@e1", "heading", "Title", "h1")),
-                textTree = "[1] heading \"Title\"\n",
-                timestamp = 0
+            val before = Snapshot(
+                nodes = listOf(SnapshotNode("heading", "Title")),
+                refs = mapOf("@e1" to RefEntry("@e1", "heading", "Title", "h1")),
+                tree = "[1] heading \"Title\"\n"
             )
-            val after = A11ySnapshot(
-                nodes = listOf(A11yNode("heading", "Title"), A11yNode("button", "Submit")),
-                refMap = mapOf("@e1" to RefEntry("@e1", "heading", "Title", "h1")),
-                textTree = "[1] heading \"Title\"\n[2] button \"Submit\"\n",
-                timestamp = 1
+            val after = Snapshot(
+                nodes = listOf(SnapshotNode("heading", "Title"), SnapshotNode("button", "Submit")),
+                refs = mapOf("@e1" to RefEntry("@e1", "heading", "Title", "h1")),
+                tree = "[1] heading \"Title\"\n[2] button \"Submit\"\n"
             )
             val diff = page.diffSnapshot(before, after)
             assertTrue(diff.changed)
@@ -43,11 +41,10 @@ class SnapshotDiffPageTest {
     @Test
     fun `diffSnapshot with identical snapshots returns unchanged`() {
         runBlocking {
-            val snap = A11ySnapshot(
-                nodes = listOf(A11yNode("heading", "Title")),
-                refMap = emptyMap(),
-                textTree = "[1] heading \"Title\"\n",
-                timestamp = 0
+            val snap = Snapshot(
+                nodes = listOf(SnapshotNode("heading", "Title")),
+                refs = emptyMap(),
+                tree = "[1] heading \"Title\"\n"
             )
             val diff = page.diffSnapshot(snap, snap)
             assertFalse(diff.changed)
@@ -58,16 +55,12 @@ class SnapshotDiffPageTest {
     }
 
     @Test
-    fun `diffSnapshot by name throws when no snapshot saved`() {
+    fun `diffSnapshot by name records a new baseline on first use`() {
         runBlocking {
-            var thrown = false
-            try {
-                page.diffSnapshot("nonexistent")
-            } catch (e: KmpwrightException) {
-                thrown = true
-                assertTrue(e.message!!.contains("nonexistent"))
-            }
-            assertTrue(thrown)
+            val first = page.diffSnapshot("fresh")
+            assertFalse(first.changed)
+            assertEquals(0, first.additions)
+            assertFalse(page.diffSnapshot("fresh").changed)
         }
     }
 
@@ -87,7 +80,7 @@ class SnapshotDiffPageTest {
                 override suspend fun evaluateJavaScriptAsync(script: String): String? = null
             }
 
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
     }
@@ -119,17 +112,13 @@ class SnapshotDiffPageTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
         override fun removeRouteHandler(urlPattern: String) {}
         override fun removeAllRouteHandlers() {}
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
         override fun setCookie(cookie: Cookie) {}
         override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
         override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
         override fun deleteCookie(name: String, domain: String) {}
         override fun deleteAllCookies() {}
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
     }
 }

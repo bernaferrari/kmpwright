@@ -1,4 +1,4 @@
-package com.bernaferrari.kmpwright.example.shared
+package com.bernaferrari.kmpwright.example
 
 import com.bernaferrari.kmpwright.core.*
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -21,15 +21,15 @@ class IOSReliabilityProbe {
                     step = "1/5 locator identity"; progress(step)
                     check(page.goto("$baseUrl/first").ok) { "Initial navigation failed" }
                     val rows = page.locator(".row")
-                    val filteredCount = rows.filter(FilterOptions(hasText = "Second")).count()
+                    val filteredCount = rows.filter(hasText = "Second").count()
                     check(filteredCount == 1) { "hasText count: expected 1, actual $filteredCount; JS number=${page.evaluate("1").value}" }
-                    check(rows.filter(FilterOptions(hasNotText = "First")).count() == 1) { "hasNotText count" }
-                    check(rows.filter(FilterOptions(has = "#second")).count() == 1) { "has descendant count" }
-                    check(rows.filter(FilterOptions(hasNot = "#second")).count() == 1) { "hasNot descendant count" }
+                    check(rows.filter(hasNotText = "First").count() == 1) { "hasNotText count" }
+                    check(rows.filter(has = page.locator("#second")).count() == 1) { "has descendant count" }
+                    check(rows.filter(hasNot = page.locator("#second")).count() == 1) { "hasNot descendant count" }
                     check(rows.nth(1).locator("button").getAttribute("id") == "second") { "Indexed descendant" }
                     check(rows.nth(1).boundingBox()!!.y > rows.first().boundingBox()!!.y) { "Indexed bounding box" }
                     check(runCatching { rows.nth(99).waitFor(SelectorState.Attached, 150) }.isFailure) { "Absent indexed wait passed" }
-                    check(runCatching { rows.nth(1).expect().toHaveText(rows.first().innerText(), 150) }.isFailure) { "Wrong-element assertion passed" }
+                    check(runCatching { expect(rows.nth(1)).toHaveText(rows.first().innerText(), 150) }.isFailure) { "Wrong-element assertion passed" }
                     check(page.locator("text=Unique text").getAttribute("id") == "nested") { "Nested text identity" }
 
                     step = "2/5 link navigation"; progress(step)
@@ -49,7 +49,7 @@ class IOSReliabilityProbe {
                     page.evaluate("fetch('$baseUrl/echo',{method:'POST',body:new Uint8Array([0,128,255])}).then(r=>r.arrayBuffer()).then(b=>window.binaryResult=Array.from(new Uint8Array(b)).join(',')).catch(e=>window.binaryResult='error:'+e)")
                     page.waitForFunction("window.binaryResult !== undefined", 3_000)
                     check(page.evaluate("window.binaryResult").value == "0,128,255") { "binaryResult: " + page.evaluate("window.binaryResult").value }
-                    page.route("$baseUrl/no-content") { RouteHandler.Fulfill(FulfillOptions(status = 204)) }
+                    page.route("$baseUrl/no-content") { it.fulfill(status = 204) }
                     page.evaluate("fetch('$baseUrl/no-content').then(async r=>window.emptyResult=r.status+':'+await r.text()).catch(e=>window.emptyResult='error:'+e)")
                     page.waitForFunction("window.emptyResult !== undefined", 3_000)
                     check(page.evaluate("window.emptyResult").value == "204:") { "emptyResult: " + page.evaluate("window.emptyResult").value }
@@ -59,43 +59,44 @@ class IOSReliabilityProbe {
 
                     step = "4/5 native cookie and storage round trips"; progress(step)
                     val expires = currentTimeMillis() / 1000.0 + 3600
-                    page.setCookie(Cookie("persistent", "saved", "127.0.0.1", expires = expires, httpOnly = true))
-                    page.setCookie(Cookie("session", "saved", "127.0.0.1"))
-                    page.setLocalStorage("key", "value")
-                    page.setSessionStorage("key", "value")
-                    check(page.getLocalStorage("key") == "value")
-                    check(page.getSessionStorage("key") == "value")
-                    page.saveState("roundtrip")
-                    page.deleteAllCookies()
-                    page.clearLocalStorage()
-                    check(page.loadState("roundtrip"))
-                    check(page.getCookie("persistent")!!.httpOnly)
-                    check(kotlin.math.abs(page.getCookie("persistent")!!.expires!! - expires) < 2)
-                    check(page.getCookie("session")!!.expires == null)
-                    check(page.getLocalStorage("key") == "value")
-                    page.clearLocalStorage(); page.clearSessionStorage(); page.saveState("empty")
-                    page.setLocalStorage("later", "data"); page.setSessionStorage("later", "data")
-                    page.loadState("empty")
-                    check(page.getAllLocalStorage().isEmpty() && page.getAllSessionStorage().isEmpty())
+                    page.addCookies(listOf(Cookie("persistent", "saved", "127.0.0.1", expires = expires, httpOnly = true)))
+                    page.addCookies(listOf(Cookie("session", "saved", "127.0.0.1")))
+                    page.localStorage.set("key", "value")
+                    page.sessionStorage.set("key", "value")
+                    check(page.localStorage.get("key") == "value")
+                    check(page.sessionStorage.get("key") == "value")
+                    val roundtrip = page.storageState()
+                    page.clearCookies()
+                    page.localStorage.clear()
+                    page.setStorageState(roundtrip)
+                    val restored = page.cookies().associateBy { it.name }
+                    check(restored.getValue("persistent").httpOnly)
+                    check(kotlin.math.abs(restored.getValue("persistent").expires!! - expires) < 2)
+                    check(restored.getValue("session").expires == null)
+                    check(page.localStorage.get("key") == "value")
+                    page.localStorage.clear(); page.sessionStorage.clear(); val empty = page.storageState()
+                    page.localStorage.set("later", "data"); page.sessionStorage.set("later", "data")
+                    page.setStorageState(empty)
+                    check(page.localStorage.entries().isEmpty() && page.sessionStorage.entries().isEmpty())
 
                     step = "5/5 native PDF and context clearing"; progress(step)
                     val pdf = page.pdf(PdfOptions(format = PdfFormat.Content, margin = PdfMargin("0", "0", "0", "0")))
                     check(pdf.bytes.take(4).toByteArray().decodeToString() == "%PDF")
                     val context = browser.newContext()
                     try {
-                        val isolated = context.newPageAsync()
+                        val isolated = context.newPage()
                         check(isolated.goto("$baseUrl/next").ok)
-                        check(isolated.getCookie("persistent") == null)
-                        isolated.setLocalStorage("clear", "data")
-                        context.clearDataAsync()
-                        check(isolated.getLocalStorage("clear") == null)
-                    } finally { context.closeAsync() }
+                        check(isolated.cookies().none { it.name == "persistent" })
+                        isolated.localStorage.set("clear", "data")
+                        context.clearData()
+                        check(isolated.localStorage.get("clear") == null)
+                    } finally { context.close() }
                 }
                 completion(Json.encodeToString(mapOf("status" to "passed", "step" to step)))
             } catch (failure: Throwable) {
                 completion(Json.encodeToString(mapOf("status" to "failed", "step" to step, "error" to failure.stackTraceToString())))
             } finally {
-                browser.closeAsync()
+                browser.close()
                 scope.cancel()
             }
         }

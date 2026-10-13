@@ -45,7 +45,7 @@ internal class PageScriptTask(private val controller: WebViewScriptController) {
             }
         } catch (_: TimeoutCancellationException) {
             currentCoroutineContext().ensureActive()
-            throw KmpwrightException("Timeout awaiting JavaScript task")
+            throw KmpwrightTimeoutException("Timeout awaiting JavaScript task")
         } finally {
             withContext(NonCancellable) { withTimeoutOrNull(1_000) { runCatching {
                 controller.evaluateJavaScriptAsync("delete window[${jsStringLiteral(key)}]")

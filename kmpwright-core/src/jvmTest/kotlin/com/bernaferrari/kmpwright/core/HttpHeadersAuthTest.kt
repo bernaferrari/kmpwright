@@ -33,7 +33,7 @@ class HttpHeadersAuthTest {
     fun `unsupported credentials fail without exposing secrets to page scripts`() {
         runBlocking {
             val error = runCatching {
-                page.setHTTPCredentials("admin", "secret")
+                page.setHTTPCredentials(HttpCredentials("admin", "secret"))
             }.exceptionOrNull()
 
             assertTrue(error is KmpwrightException)
@@ -48,8 +48,8 @@ class HttpHeadersAuthTest {
 
         runBlocking {
             nativePage.setExtraHTTPHeaders(mapOf("X-Native" to "1"))
-            nativePage.setHTTPCredentials("native", "secret")
-            nativePage.clearHTTPCredentials()
+            nativePage.setHTTPCredentials(HttpCredentials("native", "secret"))
+            nativePage.setHTTPCredentials(null)
         }
 
         assertTrue(nativeController.executedScripts.isEmpty())
@@ -67,7 +67,7 @@ class HttpHeadersAuthTest {
                 override suspend fun evaluateJavaScriptAsync(script: String): String? = null
             }
 
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
     }
@@ -106,12 +106,9 @@ class HttpHeadersAuthTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
         override fun removeRouteHandler(urlPattern: String) {}
         override fun removeAllRouteHandlers() {}
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
         override fun setCookie(cookie: Cookie) {}
         override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
         override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
@@ -129,7 +126,6 @@ class HttpHeadersAuthTest {
             }
             return false
         }
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
     }
 
     private class NativeRequestConfigController : MockEvalController() {

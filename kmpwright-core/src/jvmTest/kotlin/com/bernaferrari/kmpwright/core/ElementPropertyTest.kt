@@ -26,36 +26,6 @@ class ElementPropertyTest {
         }
     }
 
-    @Test
-    fun `computedStyles returns style map`() {
-        runBlocking {
-            val locator = TestLocator()
-            val styles = locator.computedStyles()
-            assertNotNull(styles)
-            assertTrue(styles.containsKey("display"))
-            assertEquals("block", styles["display"])
-            assertEquals("10px", styles["padding"])
-        }
-    }
-
-    @Test
-    fun `computedStyles returns empty map on parse error`() {
-        runBlocking {
-            val locator = TestLocator(returnJson = "not valid json")
-            val styles = locator.computedStyles()
-            assertTrue(styles.isEmpty())
-        }
-    }
-
-    @Test
-    fun `computedStyles returns empty map when element not found`() {
-        runBlocking {
-            val locator = TestLocator(elementExists = false)
-            val styles = locator.computedStyles()
-            assertTrue(styles.isEmpty())
-        }
-    }
-
     private class TestLocator(
         private val returnHtml: String = "<span class=\"highlight\">Hello</span>",
         private val returnJson: String? = null,
@@ -88,18 +58,14 @@ class ElementPropertyTest {
             override fun setRequestIdleTimeout(timeoutMs: Long) {}
             override fun addDialogListener(listener: DialogListener) {}
             override fun removeDialogListener(listener: DialogListener) {}
-            override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+            override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
             override fun removeRouteHandler(urlPattern: String) {}
             override fun removeAllRouteHandlers() {}
-            override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-            override fun abortRoute(requestId: String, errorCode: String) {}
-            override fun continueRoute(requestId: String, options: ContinueOptions) {}
             override fun setCookie(cookie: Cookie) {}
             override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
             override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
             override fun deleteCookie(name: String, domain: String) {}
             override fun deleteAllCookies() {}
-            override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
         },
         "div.test",
         KmpwrightConfig()

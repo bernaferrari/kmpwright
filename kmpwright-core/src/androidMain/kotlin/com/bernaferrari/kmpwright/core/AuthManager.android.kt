@@ -1,6 +1,4 @@
 package com.bernaferrari.kmpwright.core
 
-internal actual fun authProfileDir(): String {
-    val home = System.getProperty("user.home") ?: "/data/local/tmp"
-    return "$home/.kmpwright/auth"
-}
+internal actual fun authProfileDir(): String =
+    java.io.File(AndroidAppStorage.requireFilesDir(), "kmpwright/auth").absolutePath

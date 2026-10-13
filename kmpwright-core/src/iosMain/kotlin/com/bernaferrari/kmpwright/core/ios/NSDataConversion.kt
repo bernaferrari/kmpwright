@@ -9,7 +9,7 @@ import platform.Foundation.create
 import platform.posix.memcpy
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
-fun NSData.toByteArrayPinned(): ByteArray {
+internal fun NSData.toByteArrayPinned(): ByteArray {
     val size = length.toInt()
     if (size <= 0) return ByteArray(0)
     val out = ByteArray(size)
@@ -22,7 +22,7 @@ fun NSData.toByteArrayPinned(): ByteArray {
 }
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
-fun ByteArray.toNSData(): NSData {
+internal fun ByteArray.toNSData(): NSData {
     if (isEmpty()) return NSData()
     return usePinned { pinned ->
         NSData.create(bytes = pinned.addressOf(0), length = size.toULong())

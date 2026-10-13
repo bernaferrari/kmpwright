@@ -1,117 +1,213 @@
 package com.bernaferrari.kmpwright.compose
 
-import android.content.Context
+import android.annotation.SuppressLint
+import android.webkit.WebSettings
 import android.webkit.WebView
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.*
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
-import com.bernaferrari.kmpwright.core.*
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import com.bernaferrari.kmpwright.core.AndroidPlatformContext
+import com.bernaferrari.kmpwright.core.Browser
+import com.bernaferrari.kmpwright.core.KmpwrightConfig
+import com.bernaferrari.kmpwright.core.KmpwrightException
+import com.bernaferrari.kmpwright.core.NavigationResult
+import com.bernaferrari.kmpwright.core.Page
+import com.bernaferrari.kmpwright.core.androidWebViewState
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
-/** Owns the view; the controller owns its configured Browser/Page attachment. */
+/**
+ * An Android [WebView] driven by Kmpwright.
+ *
+ * @param controller state holder; create it with [rememberKmpwrightController].
+ * @param startUrl loaded once per attached WebView; `null` leaves the page blank.
+ * @param captureBackPresses when true, system back navigates the WebView history while it can go back.
+ * @param onCreated called with the new WebView before Kmpwright attaches; clients installed here keep
+ *   receiving every callback.
+ */
 @Composable
-fun KmpwrightWebView(
+public fun KmpwrightWebView(
     controller: KmpwrightWebViewController,
     modifier: Modifier = Modifier,
-    startUrl: String = "about:blank"
+    startUrl: String? = null,
+    captureBackPresses: Boolean = true,
+    onCreated: (WebView) -> Unit = {}
 ) {
-    key(controller) {
+    val currentOnCreated by rememberUpdatedState(onCreated)
+    BackHandler(enabled = captureBackPresses && controller.canGoBack) { controller.goBack() }
+
+    // A crashed renderer cannot be reused: a new generation recreates the view.
+    key(controller, controller.viewGeneration) {
         AndroidView(
             factory = { context ->
                 WebView(context).apply {
+                    // Automation is implemented with page scripts.
+                    @SuppressLint("SetJavaScriptEnabled")
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
-                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    currentOnCreated(this)
                     controller.attach(this)
                 }
             },
-            modifier = modifier.fillMaxSize(),
-            onReset = null,
+            modifier = modifier,
             onRelease = { view ->
                 controller.detach(view)
-                view.removeAllViews()
                 view.destroy()
-            },
-            update = { view -> controller.attach(view) }
+            }
         )
-        LaunchedEffect(controller, startUrl) { controller.navigate(startUrl) }
-        DisposableEffect(controller) { onDispose { controller.attach(null) } }
+        val page = controller.page
+        LaunchedEffect(page, startUrl) {
+            if (page != null && startUrl != null) controller.loadUrl(startUrl)
+        }
     }
 }
 
-class KmpwrightWebViewController(
-    private val context: Context,
-    private val config: KmpwrightConfig = KmpwrightConfig()
-) {
+/**
+ * Remembers a [KmpwrightWebViewController]. [config] is read once; the
+ * controller is not recreated when the configuration value changes.
+ */
+@Composable
+public fun rememberKmpwrightController(config: KmpwrightConfig = KmpwrightConfig()): KmpwrightWebViewController =
+    remember { KmpwrightWebViewController(config) }
+
+/**
+ * State holder for [KmpwrightWebView]. All members must be used on the main
+ * thread; the observable properties are Compose snapshot state.
+ */
+@Stable
+public class KmpwrightWebViewController(private val config: KmpwrightConfig = KmpwrightConfig()) {
     private var webView: WebView? = null
     private var browser: Browser? = null
-    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val _error = MutableStateFlow<Throwable?>(null)
-    val error: StateFlow<Throwable?> = _error
+    private var scope = newScope()
 
     /** Becomes available when the composable attaches its WebView. */
-    var page: Page? by mutableStateOf(null)
+    public var page: Page? by mutableStateOf(null)
         private set
 
-    fun attach(webView: WebView?) {
+    /** The committed URL. */
+    public var url: String? by mutableStateOf(null)
+        private set
+
+    /** The document title. */
+    public var title: String? by mutableStateOf(null)
+        private set
+
+    /** Whether a navigation is in progress. */
+    public var isLoading: Boolean by mutableStateOf(false)
+        private set
+
+    /** Whether [goBack] has a history entry to go to. */
+    public var canGoBack: Boolean by mutableStateOf(false)
+        private set
+
+    /** Whether [goForward] has a history entry to go to. */
+    public var canGoForward: Boolean by mutableStateOf(false)
+        private set
+
+    /** The last failure of a fire-and-forget operation or a renderer crash. */
+    public var lastError: Throwable? by mutableStateOf(null)
+        private set
+
+    internal var viewGeneration by mutableIntStateOf(0)
+        private set
+
+    private fun newScope() = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    internal fun attach(webView: WebView) {
         if (this.webView === webView) return
-        scope.cancel()
-        browser?.close()
-        browser = null
-        page = null
+        release()
         this.webView = webView
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        if (webView != null) {
-            browser = Browser(AndroidPlatformContext(context, webView = webView), config)
-            page = browser!!.page()
+        config.userAgent?.let { webView.settings.userAgentString = it }
+        val attached = Browser(AndroidPlatformContext(webView.context, webView = webView), config)
+        browser = attached
+        val attachedPage = attached.page()
+        page = attachedPage
+        val state = attachedPage.androidWebViewState() ?: return
+        scope.launch {
+            state.collect { snapshot ->
+                url = snapshot.url
+                title = snapshot.title
+                isLoading = snapshot.isLoading
+                canGoBack = snapshot.canGoBack
+                canGoForward = snapshot.canGoForward
+                if (snapshot.rendererGone && this@KmpwrightWebViewController.webView === webView) {
+                    lastError = KmpwrightException("Page crashed: the WebView renderer process is gone; recreating the WebView")
+                    viewGeneration++
+                }
+            }
         }
     }
 
     internal fun detach(view: WebView) {
-        if (webView === view) attach(null)
+        if (webView === view) release()
     }
 
-    private fun attachedPage(): Page = page ?: error("KMPwright WebView is not attached")
+    private fun release() {
+        scope.cancel()
+        scope = newScope()
+        browser?.dispose()
+        browser = null
+        page = null
+        webView = null
+        isLoading = false
+        canGoBack = false
+        canGoForward = false
+    }
 
-    /** Suspends until the configured automation navigation completes. */
-    suspend fun navigate(url: String): NavigationResult {
-        val page = attachedPage()
-        config.viewport?.let { page.setViewportSize(it.width, it.height) }
-        config.userAgent?.let { page.setUserAgent(it) }
-        return page.goto(url)
+    private fun attachedPage(): Page = page ?: throw KmpwrightException("KMPwright WebView is not attached")
+
+    /** Navigates the attached page (Playwright `page.goto`) and suspends until the navigation completes. */
+    public suspend fun goto(url: String): NavigationResult = attachedPage().goto(url)
+
+    /** Evaluates [script] in the page and returns its JSON-normalized value. */
+    public suspend fun evaluate(script: String): String = attachedPage().evaluate(script).value
+
+    /** Clears [lastError]. */
+    public fun clearError() {
+        lastError = null
     }
 
     private fun launchOperation(block: suspend () -> Unit) {
         scope.launch {
-            try { block(); _error.value = null }
-            catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Throwable) { _error.value = failure }
+            try {
+                block()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                lastError = failure
+            }
         }
     }
 
-    fun loadUrl(url: String) = launchOperation {
-        val result = navigate(url)
-        if (!result.ok) throw KmpwrightException(result.error ?: "Navigation failed")
+    /** Fire-and-forget navigation; failures are reported through [lastError]. */
+    public fun loadUrl(url: String): Unit = launchOperation {
+        val result = goto(url)
+        if (!result.ok) throw KmpwrightException(result.error ?: "Navigation to $url failed with status ${result.status}")
     }
 
-    fun evaluateJavaScript(script: String, callback: (String?) -> Unit) = launchOperation {
-        callback(attachedPage().evaluate(script).value)
-    }
+    /** Fire-and-forget reload; failures are reported through [lastError]. */
+    public fun reload(): Unit = launchOperation { attachedPage().reload() }
 
-    fun reload() = launchOperation { attachedPage().reload() }
-    fun goBack() = launchOperation { attachedPage().back() }
-    fun goForward() = launchOperation { attachedPage().forward() }
-    fun canGoBack(): Boolean = webView?.canGoBack() == true
-    fun canGoForward(): Boolean = webView?.canGoForward() == true
+    /** Fire-and-forget history back (Playwright `page.goBack`); failures are reported through [lastError]. */
+    public fun goBack(): Unit = launchOperation { attachedPage().goBack() }
+
+    /** Fire-and-forget history forward (Playwright `page.goForward`); failures are reported through [lastError]. */
+    public fun goForward(): Unit = launchOperation { attachedPage().goForward() }
 }
-
-@Composable
-fun rememberKmpwrightController(
-    context: Context,
-    config: KmpwrightConfig = KmpwrightConfig()
-): KmpwrightWebViewController = remember(context, config) { KmpwrightWebViewController(context, config) }

@@ -1,0 +1,192 @@
+---
+title: Recording, tracing and profiling
+description: Record page video with an optional cursor and contact sheet, stream screencast frames, capture Chrome performance traces and V8 CPU profiles; all JVM (CDP) only.
+---
+
+```kotlin
+page.requireCapabilities(PageCapability.VideoRecording, PageCapability.Tracing)
+
+page.tracing.start(TracingOptions(path = "build/trace.json"))
+page.video.start(RecordingOptions(path = "build/checkout.mp4", contactSheetPath = "build/checkout.png"))
+
+page.goto("https://example.com/shop")
+page.getByRole("button", name = "Add to cart").click()
+
+val video = page.video.stop()
+val trace = page.tracing.stop()
+println("${video.path}: ${video.frameCount} frames, ${video.durationMs} ms, ${video.width}x${video.height}")
+```
+
+Everything on this page uses Chrome DevTools Protocol domains (`Tracing`, `Profiler`, `Page.startScreencast`), so it works only on the JVM backend.
+
+## Backend support
+
+| Capability | API | Android | iOS | JVM (CDP) |
+|---|---|---|---|---|
+| `PageCapability.Tracing` | `page.tracing` | Unsupported | Unsupported | Supported |
+| `PageCapability.Profiling` | `page.profiler` | Unsupported | Unsupported | Supported |
+| `PageCapability.VideoRecording` | `page.video` | Unsupported | Unsupported | Supported |
+| `PageCapability.Screencast` | `page.screencast()` | Unsupported | Unsupported | Supported |
+
+On Android and iOS every call throws `UnsupportedOperationException` (for example "Tracing is unavailable on this backend"). `page.screencast()` throws when you call it, before you collect the flow.
+
+To fail early in shared code, check capabilities first:
+
+```kotlin
+if (page.capabilities().supports(PageCapability.VideoRecording)) {
+    page.video.start(RecordingOptions(path = "run.mp4"))
+}
+// or throw up front:
+page.requireCapabilities(PageCapability.Tracing)
+```
+
+See [Capabilities](/docs/platforms/capabilities).
+
+## Video
+
+```kotlin
+page.video.start(
+    RecordingOptions(
+        path = "build/login.webm",
+        fps = 24,
+        cursor = true,
+        contactSheetPath = "build/login-sheet.png",
+    )
+)
+// ... drive the page ...
+val result = page.video.stop()
+result.contactFrames.forEach { println("frame ${it.index} at ${it.timestampMs} ms") }
+```
+
+`page.video.start(options)` records the page to a video file until `page.video.stop()` (agent-browser `record`). Recording is video only, without audio.
+
+<Callout type="info">
+Encoding needs an `ffmpeg` executable on the JVM host. `start` runs `ffmpeg -version` and a short test encode first, and throws `KmpwrightException("ffmpeg is required before recording: …")` when it is missing. Point `ffmpegExecutable` at a full path if `ffmpeg` is not on `PATH`.
+</Callout>
+
+<TypeTable
+  type={{
+    path: { type: 'String', description: 'Output file. Must have an extension. .webm is encoded with VP8 (libvpx); any other extension with H.264 (libx264, yuv420p). .mp4 gets +faststart.', default: 'required' },
+    fps: { type: 'Int', description: 'Output frame rate, 1..60.', default: '30' },
+    quality: { type: 'Int', description: 'JPEG quality of the captured screencast frames, 0..100.', default: '85' },
+    maxWidth: { type: 'Int', description: 'Maximum captured frame width, 2..4096.', default: '1920' },
+    maxHeight: { type: 'Int', description: 'Maximum captured frame height, 2..4096.', default: '1080' },
+    cursor: { type: 'Boolean', description: 'Draw a mouse pointer and a click ripple into the video.', default: 'true' },
+    contactSheetPath: { type: 'String?', description: 'Also write a PNG contact sheet of key frames here. Must end in .png and differ from path.', default: 'null' },
+    contactSheetThreshold: { type: 'Double', description: 'Fraction of changed pixels (0..1) that makes a frame a new key frame.', default: '0.05' },
+    maxContactSheetFrames: { type: 'Int', description: 'Maximum frames on the contact sheet, 1..100.', default: '100' },
+    overwrite: { type: 'Boolean', description: 'Replace existing output files. When false, start throws if a file exists.', default: 'false' },
+    ffmpegExecutable: { type: 'String', description: 'ffmpeg command or path.', default: '"ffmpeg"' },
+  }}
+/>
+
+Invalid values throw `IllegalArgumentException` when you construct `RecordingOptions`.
+
+`page.video.stop()` returns:
+
+```kotlin
+data class RecordingResult(
+    val path: String,                  // absolute output path
+    val fps: Int,
+    val frameCount: Long,
+    val durationMs: Long,              // frameCount * 1000 / fps
+    val width: Int,                    // first frame size, rounded up to even numbers
+    val height: Int,
+    val contactSheetPath: String? = null,
+    val contactFrames: List<RecordingContactFrame> = emptyList() // (timestampMs, index) of each sheet frame
+)
+```
+
+How it works:
+
+- Frames come from `Page.startScreencast` on a separate CDP session, so you can stream a [screencast](#screencast) at the same time.
+- Chromium only sends frames when the page changes. The encoder writes frames at a fixed `fps`, repeating the latest frame, so the video plays in real time. Frames are letterboxed onto a canvas the size of the first frame.
+- The video is encoded into a temporary file next to the output and moved into place on `stop()`, so a failed recording never leaves a partial file at `path`.
+- `start` returns once the first frame is encoded (up to 10 s).
+- The cursor is drawn from trusted mouse pointer events, whether they come from KMPwright's CDP mouse input or a person using a headed browser. It is drawn into the video only, never into the page or the contact sheet.
+- Contact sheet: each frame is reduced to 640 px wide and kept when at least `contactSheetThreshold` of its pixels changed noticeably since the last kept frame; the last frame is always included. Kept frames are laid out four per row and labeled with their time and frame index. When the limit is reached, newer key frames replace the last slot.
+
+Errors:
+
+| Situation | Exception |
+|---|---|
+| `start` while recording | `IllegalStateException("Video recording is already active")` |
+| `stop` without a recording | `KmpwrightException("Video recording is not active")` |
+| Output exists and `overwrite = false` | `KmpwrightException("Output already exists: …")` |
+| No frame was captured | `KmpwrightException("Recording captured no frames")` |
+| The encoder falls more than 500 ms behind, or blocks a frame for 2 s | `KmpwrightException` from `stop()` |
+
+Closing the page stops an active recording. Recording passes the action policy as `ActionType.Screenshot`.
+
+Playwright: video is a context option (`recordVideo`) there and is saved when the page closes; here you start and stop it explicitly on the page.
+
+## Screencast
+
+<Callout type="warn">
+Experimental. The frame stream may change.
+</Callout>
+
+```kotlin
+page.screencast(ScreencastOptions(maxFps = 10, quality = 70)).collect { frame ->
+    // frame.bytes is a JPEG
+    preview.update(frame.bytes)
+}
+```
+
+`page.screencast(options): Flow<ScreencastFrame>` streams JPEG frames of the page (agent-browser `screencast`). The flow is cold: each collector attaches its own CDP session and starts `Page.startScreencast`; cancelling the collector stops it.
+
+The flow is conflated: when your collector is slower than the page, intermediate frames are dropped and you always get the latest one. Chromium only emits frames when something changes, so a static page produces few frames; `maxFps` limits delivery and never adds duplicate frames.
+
+<TypeTable
+  type={{
+    maxFps: { type: 'Int', description: 'Maximum frames delivered per second, 1..60.', default: '30' },
+    quality: { type: 'Int', description: 'JPEG quality, 0..100.', default: '80' },
+    maxWidth: { type: 'Int', description: 'Maximum frame width, 1..8192.', default: '1920' },
+    maxHeight: { type: 'Int', description: 'Maximum frame height, 1..8192.', default: '1080' },
+  }}
+/>
+
+`ScreencastFrame` fields: `bytes` (JPEG), `timestampMs`, `viewportWidth`, `viewportHeight` (the device size Chromium reports in the frame metadata), `pageScaleFactor`, `scrollOffsetX`, `scrollOffsetY`, `mimeType` (`"image/jpeg"`).
+
+The flow fails with `KmpwrightException` when the page crashes, its session detaches, the CDP connection closes, or a frame exceeds 16 MiB. Collection passes the action policy as `ActionType.Screenshot`.
+
+## Tracing
+
+```kotlin
+page.tracing.start(TracingOptions(screenshots = true, path = "build/trace.json"))
+page.goto("https://example.com")
+val json: ByteArray? = page.tracing.stop()
+```
+
+`page.tracing` records a Chrome performance trace with the CDP `Tracing` domain. The result is Chrome trace-event JSON, which you can load in the Performance panel of Chrome DevTools or in Perfetto.
+
+Playwright: `context.tracing` produces a Playwright trace (a zip for the Trace Viewer). KMPwright's `tracing` is the Chromium performance trace, like Puppeteer's `page.tracing`.
+
+<TypeTable
+  type={{
+    categories: { type: 'String', description: 'Comma-separated trace categories.', default: '"blink,devtools.timeline,v8,benchmark"' },
+    screenshots: { type: 'Boolean', description: 'Add the disabled-by-default-devtools.screenshot category to capture filmstrip screenshots.', default: 'false' },
+    path: { type: 'String?', description: 'Also write the trace to this file when stopped. Parent directories are created.', default: 'null' },
+  }}
+/>
+
+- `stop()` returns the trace JSON, or `null` when no trace was active.
+- Tracing belongs to the browser connection: only one page per `Browser` can trace at a time. A second `start` throws `KmpwrightException("Tracing is already owned by another page on this browser")`.
+- With `KmpwrightConfig.enableTraceExport = false`, `start` with a `path` throws `KmpwrightException`; tracing without a path still works.
+
+## CPU profiling
+
+```kotlin
+page.profiler.start()
+page.getByRole("button", name = "Run report").click()
+val profile: String? = page.profiler.stop()
+// JVM: java.io.File("report.cpuprofile").writeText(profile!!)
+```
+
+`page.profiler` runs the V8 sampling profiler of the page (agent-browser `profiler`) through the CDP `Profiler` domain. `stop()` returns the `Profiler.Profile` object as JSON, which DevTools can open as a `.cpuprofile` file, or `null` when the profiler was not running.
+
+## Related
+
+- [Screenshots and PDFs](/docs/guides/screenshots): single images work on every backend.
+- [Capabilities](/docs/platforms/capabilities)
+- [Page reference](/docs/reference/page)

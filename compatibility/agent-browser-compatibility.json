@@ -76,7 +76,7 @@
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "locatorByRef"
+          "member": "locator"
         }
       ],
       "notes": "JVM locators dispatch trusted CDP input, with shadow/label hit testing, asynchronous dialogs and nested cross-process frame coordinates. Mobile locators retain DOM input semantics."
@@ -110,7 +110,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Locator",
-          "member": "type"
+          "member": "pressSequentially"
         }
       ]
     },
@@ -227,11 +227,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "scrollDown"
-        },
-        {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "scrollUp"
+          "member": "scroll"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Locator",
@@ -298,10 +294,6 @@
         {
           "owner": "com.bernaferrari.kmpwright.core.Locator",
           "member": "screenshot"
-        },
-        {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "annotatedScreenshot"
         }
       ],
       "options": [
@@ -311,7 +303,7 @@
           "apiRefs": [
             {
               "owner": "com.bernaferrari.kmpwright.core.ScreenshotOptions",
-              "member": "getFullPage"
+              "member": "fullPage"
             }
           ]
         },
@@ -321,7 +313,7 @@
           "apiRefs": [
             {
               "owner": "com.bernaferrari.kmpwright.core.Page",
-              "member": "annotatedScreenshot"
+              "member": "screenshot"
             }
           ],
           "notes": "DOM annotation scripts are shared. Capture geometry and rendering vary by backend; real-browser annotation regression coverage currently targets JVM CDP."
@@ -332,7 +324,7 @@
           "apiRefs": [
             {
               "owner": "com.bernaferrari.kmpwright.core.ScreenshotOptions",
-              "member": "getFormat"
+              "member": "format"
             }
           ],
           "notes": "Kmpwright also exposes WEBP; agent-browser's pinned docs list PNG/JPEG."
@@ -379,11 +371,11 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "accessibilitySnapshot"
+          "member": "snapshot"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "locatorByRef"
+          "member": "locator"
         }
       ],
       "options": [
@@ -392,29 +384,29 @@
           "status": "supported",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.A11ySnapshotOptions",
-              "member": "getInteractiveOnly"
+              "owner": "com.bernaferrari.kmpwright.core.SnapshotOptions",
+              "member": "interactive"
             }
           ]
         },
         {
           "name": "--urls",
-          "status": "partial",
+          "status": "supported",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.Page",
-              "member": "accessibilitySnapshot"
+              "owner": "com.bernaferrari.kmpwright.core.SnapshotOptions",
+              "member": "urls"
             }
           ],
-          "notes": "Link URL inclusion is backend/output dependent."
+          "notes": "Links print their resolved href as url=\"...\" on every backend."
         },
         {
           "name": "-c",
-          "status": "partial",
+          "status": "supported",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.A11ySnapshotOptions",
-              "member": "getCompact"
+              "owner": "com.bernaferrari.kmpwright.core.SnapshotOptions",
+              "member": "compact"
             }
           ]
         },
@@ -423,8 +415,8 @@
           "status": "supported",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.A11ySnapshotOptions",
-              "member": "getMaxDepth"
+              "owner": "com.bernaferrari.kmpwright.core.SnapshotOptions",
+              "member": "maxDepth"
             }
           ]
         },
@@ -433,13 +425,13 @@
           "status": "supported",
           "apiRefs": [
             {
-              "owner": "com.bernaferrari.kmpwright.core.A11ySnapshotOptions",
-              "member": "getScopeSelector"
+              "owner": "com.bernaferrari.kmpwright.core.SnapshotOptions",
+              "member": "selector"
             }
           ]
         }
       ],
-      "notes": "CDP snapshots follow native Chromium AX roles, names, states and hierarchy, including aria-owns and scoped stable references. includeHidden and native WebViews use bounded DOM traversal."
+      "notes": "Text output uses agent-browser's format (`@e1 [heading] \"Title\" [level=1]`, flat -i list with one level of same-origin iframe content nested). CDP snapshots follow native Chromium AX roles, names, states and hierarchy, including aria-owns and scoped stable references. includeHidden and native WebViews use bounded DOM traversal. -s accepts any KMPwright selector."
     },
     {
       "command": "eval",
@@ -472,11 +464,11 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "getTitle"
+          "member": "title"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "getUrl"
+          "member": "url"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Locator",
@@ -504,7 +496,7 @@
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Locator",
-          "member": "computedStyles"
+          "member": "evaluate"
         }
       ]
     },
@@ -543,10 +535,6 @@
           "member": "locator"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "locatorByRef"
-        },
-        {
           "owner": "com.bernaferrari.kmpwright.core.Locator",
           "member": "first"
         },
@@ -566,7 +554,7 @@
           "apiRefs": [
             {
               "owner": "com.bernaferrari.kmpwright.core.Page",
-              "member": "accessibilitySnapshot"
+              "member": "snapshot"
             }
           ]
         },
@@ -622,12 +610,12 @@
       "semantics": "Read or write page/system clipboard text.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "clipboardRead"
+          "owner": "com.bernaferrari.kmpwright.core.Clipboard",
+          "member": "readText"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "clipboardWrite"
+          "owner": "com.bernaferrari.kmpwright.core.Clipboard",
+          "member": "writeText"
         }
       ]
     },
@@ -684,7 +672,7 @@
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Devices",
-          "member": "getAll"
+          "member": "all"
         }
       ]
     },
@@ -695,7 +683,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "emulateGeolocation"
+          "member": "setGeolocation"
         }
       ]
     },
@@ -706,7 +694,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "emulateOffline"
+          "member": "setOffline"
         }
       ]
     },
@@ -739,7 +727,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "emulateColorScheme"
+          "member": "emulateMedia"
         }
       ]
     },
@@ -750,15 +738,15 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "getAllCookies"
+          "member": "cookies"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "setCookie"
+          "member": "addCookies"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "deleteAllCookies"
+          "member": "clearCookies"
         }
       ]
     },
@@ -768,16 +756,16 @@
       "semantics": "Read and mutate localStorage.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "getAllLocalStorage"
+          "owner": "com.bernaferrari.kmpwright.core.WebStorage",
+          "member": "entries"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "setLocalStorage"
+          "owner": "com.bernaferrari.kmpwright.core.WebStorage",
+          "member": "set"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "clearLocalStorage"
+          "owner": "com.bernaferrari.kmpwright.core.WebStorage",
+          "member": "clear"
         }
       ]
     },
@@ -787,16 +775,16 @@
       "semantics": "Read and mutate sessionStorage.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "getAllSessionStorage"
+          "owner": "com.bernaferrari.kmpwright.core.WebStorage",
+          "member": "entries"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "setSessionStorage"
+          "owner": "com.bernaferrari.kmpwright.core.WebStorage",
+          "member": "set"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "clearSessionStorage"
+          "owner": "com.bernaferrari.kmpwright.core.WebStorage",
+          "member": "clear"
         }
       ]
     },
@@ -846,12 +834,12 @@
       "semantics": "Represent HAR 1.2 records.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "startHarCapture"
+          "owner": "com.bernaferrari.kmpwright.core.NetworkHistory",
+          "member": "startHar"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "stopHarCapture"
+          "owner": "com.bernaferrari.kmpwright.core.NetworkHistory",
+          "member": "stopHar"
         }
       ],
       "notes": "Portable HAR 1.2 capture from unified page/frame events; CDP includes available text/base64 bodies, native SDKs expose partial metadata. Bounded entries, byte retention and body reads; truncated bodies are explicit."
@@ -866,8 +854,8 @@
           "member": "pages"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.Browser",
-          "member": "closePage"
+          "owner": "com.bernaferrari.kmpwright.core.Page",
+          "member": "close"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Browser",
@@ -875,19 +863,19 @@
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Browser",
-          "member": "targetsAsync"
+          "member": "targets"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Browser",
-          "member": "attachTargetAsync"
+          "member": "attachTarget"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Browser",
-          "member": "activateTargetAsync"
+          "member": "activateTarget"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Browser",
-          "member": "closeTargetAsync"
+          "member": "closeTarget"
         }
       ],
       "notes": "Tabs opened from a page inherit successful headers, credentials, routes, emulation and init scripts before navigating. Independent Browser.newPage/context pages retain their configured ownership. Browser-scoped CDP enumerates existing targets and attaches without taking tab ownership. Activation revives discarded renderers. Attachment close detaches; explicit target close closes the tab."
@@ -899,7 +887,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Browser",
-          "member": "newWindowAsync"
+          "member": "newWindow"
         }
       ],
       "notes": "Browser-scoped CDP creates an owned top-level window; native WebViews and page-scoped endpoints reject this explicitly."
@@ -971,12 +959,12 @@
       "semantics": "Start and stop CDP tracing.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "startTracing"
+          "owner": "com.bernaferrari.kmpwright.core.Tracing",
+          "member": "start"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "stopTracing"
+          "owner": "com.bernaferrari.kmpwright.core.Tracing",
+          "member": "stop"
         }
       ],
       "notes": "Only CDP-backed pages support tracing; WebView is a no-op/unsupported backend."
@@ -987,12 +975,12 @@
       "semantics": "Start and stop the V8 CPU profiler.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "startProfiler"
+          "owner": "com.bernaferrari.kmpwright.core.Profiler",
+          "member": "start"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "stopProfiler"
+          "owner": "com.bernaferrari.kmpwright.core.Profiler",
+          "member": "stop"
         }
       ],
       "notes": "Only CDP-backed pages support profiling."
@@ -1015,7 +1003,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "errors"
+          "member": "pageErrors"
         }
       ]
     },
@@ -1037,7 +1025,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "back"
+          "member": "goBack"
         }
       ]
     },
@@ -1048,7 +1036,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "forward"
+          "member": "goForward"
         }
       ]
     },
@@ -1082,7 +1070,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "getReact"
+          "member": "react"
         }
       ],
       "notes": "React DevTools Inline 8.0.0 with private React 19.3.0 runtime. Typed tree/inspection, render profiles and rich Suspense metadata; DOM renderer selection handles Flight-first registration. Bounded capture, serialized hook operations and cleanup verified with a real React 19.3 application."
@@ -1179,16 +1167,16 @@
       "semantics": "Save and restore cookies/local storage state.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "saveStateToFile"
+          "owner": "com.bernaferrari.kmpwright.core.StorageState",
+          "member": "save"
+        },
+        {
+          "owner": "com.bernaferrari.kmpwright.core.StorageState$Companion",
+          "member": "load"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "loadStateFromFile"
-        },
-        {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "autosaveState"
+          "member": "autosaveStorageState"
         }
       ],
       "notes": "Explicit restore and page-owned periodic autosave, observable failures, authenticated encryption and atomic file replacement. Daemon summary/session protocols are excluded."
@@ -1200,7 +1188,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
-          "member": "getCdp"
+          "member": "cdp"
         }
       ],
       "notes": "Kmpwright configures browser instances but has no daemon session-id CLI."
@@ -1212,7 +1200,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
-          "member": "getCdp"
+          "member": "cdp"
         }
       ],
       "notes": "Profile reuse is backend/platform dependent and not a public equivalent of Chrome profile discovery."
@@ -1253,7 +1241,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "getWebMcp"
+          "member": "webMcp"
         }
       ],
       "notes": "Typed WebMCP catalog/context and invocation/result/cancellation with upstream limits. Observes owned pages before navigation and routes OOPIF tools by session. Real Chrome verifies same-process and cross-process duplicate names and explicit frame invocation. Initial preconnected same-process child tool replay remains a protocol limitation; native WebViews report unavailable."
@@ -1264,15 +1252,15 @@
       "semantics": "Record browser video, cursor overlays, or contact sheets through ffmpeg.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "startRecording"
+          "owner": "com.bernaferrari.kmpwright.core.Video",
+          "member": "start"
         },
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "stopRecording"
+          "owner": "com.bernaferrari.kmpwright.core.Video",
+          "member": "stop"
         }
       ],
-      "notes": "CDP/FFmpeg recording of the current page at fixed 1\u201360 FPS, clean contact sheets, trusted pointer observation, cursor composition, output preflight and bounded cleanup. Native WebViews cannot expose CDP screencasting."
+      "notes": "CDP/FFmpeg recording of the current page at fixed 1–60 FPS, clean contact sheets, trusted pointer observation, cursor composition, output preflight and bounded cleanup. Native WebViews cannot expose CDP screencasting."
     }
   ],
   "globalOptions": [
@@ -1293,7 +1281,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
-          "member": "getCdp"
+          "member": "cdp"
         }
       ],
       "notes": "No equivalent daemon session identifier."
@@ -1303,8 +1291,8 @@
       "status": "partial",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "loadStateFromFile"
+          "owner": "com.bernaferrari.kmpwright.core.StorageState$Companion",
+          "member": "load"
         }
       ]
     },
@@ -1368,7 +1356,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
-          "member": "getUserAgent"
+          "member": "userAgent"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
@@ -1382,7 +1370,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.ProxyConfig",
-          "member": "getUrl"
+          "member": "url"
         }
       ]
     },
@@ -1392,7 +1380,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.ProxyConfig",
-          "member": "getBypass"
+          "member": "bypass"
         }
       ]
     },
@@ -1402,7 +1390,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.CdpConfig",
-          "member": "getWebsocketUrl"
+          "member": "websocketUrl"
         }
       ]
     },
@@ -1412,7 +1400,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.CdpConfig",
-          "member": "getProvider"
+          "member": "provider"
         }
       ],
       "notes": "Use CloudProvider.AutoConnect in the typed provider field."
@@ -1423,7 +1411,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.CdpConfig",
-          "member": "getProvider"
+          "member": "provider"
         }
       ]
     },
@@ -1443,7 +1431,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.CdpConfig",
-          "member": "getHideScrollbars"
+          "member": "hideScrollbars"
         }
       ]
     },
@@ -1464,7 +1452,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.DefaultWebSettings",
-          "member": "getAllowFileAccess"
+          "member": "allowFileAccess"
         }
       ],
       "notes": "Only platform WebView settings expose related controls."
@@ -1475,7 +1463,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "emulateColorScheme"
+          "member": "emulateMedia"
         }
       ]
     },
@@ -1514,11 +1502,11 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "setDomainFilter"
+          "member": "setAllowedDomains"
         },
         {
           "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
-          "member": "getAllowedOriginRules"
+          "member": "allowedOriginRules"
         }
       ]
     },
@@ -1548,7 +1536,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.PageCapabilities",
-          "member": "getBackend"
+          "member": "backend"
         }
       ],
       "notes": "Kmpwright selects a platform backend rather than agent-browser's chrome/lightpanda engine flag."
@@ -1569,7 +1557,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.KmpwrightConfig",
-          "member": "getDebug"
+          "member": "debug"
         }
       ]
     },
@@ -1617,8 +1605,8 @@
       "notes": "Explicit Kotlin state restoration/autosave and wait APIs; callers compose guards rather than daemon session startup flags.",
       "apiRefs": [
         {
-          "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "loadStateFromFile"
+          "owner": "com.bernaferrari.kmpwright.core.StorageState$Companion",
+          "member": "load"
         }
       ]
     },
@@ -1629,7 +1617,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "autosaveState"
+          "member": "autosaveStorageState"
         }
       ]
     },
@@ -1673,7 +1661,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.Page",
-          "member": "annotatedScreenshot"
+          "member": "screenshot"
         }
       ]
     },
@@ -1789,7 +1777,7 @@
       "apiRefs": [
         {
           "owner": "com.bernaferrari.kmpwright.core.LaunchedBrowser",
-          "member": "closeAsync"
+          "member": "close"
         }
       ]
     }

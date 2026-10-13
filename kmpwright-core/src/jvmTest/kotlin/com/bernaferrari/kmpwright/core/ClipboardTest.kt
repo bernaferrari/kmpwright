@@ -21,7 +21,7 @@ class ClipboardTest {
     @Test
     fun `clipboardWrite uses navigator clipboard API`() {
         runBlocking {
-            page.clipboardWrite("hello world")
+            page.clipboard.writeText("hello world")
             val script = controller.executedScripts.last()
             assertTrue(script.contains("navigator.clipboard.writeText"))
             assertTrue(script.contains("hello world"))
@@ -31,7 +31,7 @@ class ClipboardTest {
     @Test
     fun `clipboardWrite escapes special characters`() {
         runBlocking {
-            page.clipboardWrite("it's a \"test\"")
+            page.clipboard.writeText("it's a \"test\"")
             val script = controller.executedScripts.last()
             assertTrue(script.contains("it\\'s a \\\"test\\\""))
         }
@@ -41,7 +41,7 @@ class ClipboardTest {
     fun `clipboardWrite falls back to execCommand`() {
         runBlocking {
             controller.throwOnClipboardApi = true
-            page.clipboardWrite("fallback text")
+            page.clipboard.writeText("fallback text")
             val script = controller.executedScripts.last()
             assertTrue(script.contains("execCommand"))
             assertTrue(script.contains("fallback text"))
@@ -53,7 +53,7 @@ class ClipboardTest {
     fun `clipboardRead uses navigator clipboard API`() {
         runBlocking {
             controller.clipboardReturnValue = "copied text"
-            val result = page.clipboardRead()
+            val result = page.clipboard.readText()
             assertEquals("copied text", result)
             val script = controller.executedScripts.last()
             assertTrue(script.contains("navigator.clipboard.readText"))
@@ -65,7 +65,7 @@ class ClipboardTest {
         runBlocking {
             controller.throwOnClipboardApi = true
             controller.selectionReturnValue = "pasted"
-            val result = page.clipboardRead()
+            val result = page.clipboard.readText()
             assertEquals("pasted", result)
         }
     }
@@ -75,7 +75,7 @@ class ClipboardTest {
         runBlocking {
             controller.throwOnClipboardApi = true
             controller.selectionReturnValue = ""
-            val result = page.clipboardRead()
+            val result = page.clipboard.readText()
             // Empty string is falsy so the fallback returns ""
             assertEquals("", result)
         }
@@ -91,7 +91,7 @@ class ClipboardTest {
                 override suspend fun evaluateJavaScriptAsync(script: String): String? = null
             }
 
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
     }
@@ -138,17 +138,13 @@ class ClipboardTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
         override fun removeRouteHandler(urlPattern: String) {}
         override fun removeAllRouteHandlers() {}
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
         override fun setCookie(cookie: Cookie) {}
         override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
         override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
         override fun deleteCookie(name: String, domain: String) {}
         override fun deleteAllCookies() {}
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
     }
 }

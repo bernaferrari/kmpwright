@@ -3,7 +3,7 @@ package com.bernaferrari.kmpwright.core
 import kotlinx.coroutines.flow.Flow
 
 /** Chrome emits changed frames; maxFps limits delivery rather than forcing synthetic duplicates. */
-data class ScreencastOptions(val maxFps: Int = 30, val quality: Int = 80,
+public data class ScreencastOptions @Throws(IllegalArgumentException::class) public constructor(val maxFps: Int = 30, val quality: Int = 80,
     val maxWidth: Int = 1920, val maxHeight: Int = 1080) {
     init {
         require(maxFps in 1..60) { "Screencast FPS must be between 1 and 60" }
@@ -12,6 +12,7 @@ data class ScreencastOptions(val maxFps: Int = 30, val quality: Int = 80,
     }
 }
 
-data class ScreencastFrame(val bytes: ByteArray, val timestampMs: Double,
+/** A frame emitted by [Page.screencast]. */
+public data class ScreencastFrame(val bytes: ByteArray, val timestampMs: Double,
     val viewportWidth: Double, val viewportHeight: Double, val pageScaleFactor: Double,
     val scrollOffsetX: Double, val scrollOffsetY: Double, val mimeType: String = "image/jpeg")

@@ -1,0 +1,240 @@
+---
+title: Locators
+description: Find elements with page.locator(selector) and the getBy* finders, compose locators with filter/nth/and/or, and read element state.
+---
+
+```kotlin
+page.goto("https://example.com/login")
+
+page.getByLabel("Email").fill("ada@example.com")
+page.getByLabel("Password").fill("correct horse")
+page.getByRole("button", name = "Sign in").click()
+
+val paid = page.locator("table tr").filter(hasText = "Paid")
+println(paid.count())
+println(page.getByTestId("balance").textContent())
+```
+
+A `Locator` is a lazy description of how to find elements. Creating one does nothing in the page; the selector is resolved again every time you call an action or query on it, so a locator stays valid across re-renders. Playwright: same model.
+
+Locators come from any `ElementFinder`: `Page`, `Locator` (scoped to its matches) and `FrameLocator` (scoped to an iframe). Snapshot refs from [snapshots](/docs/agents/snapshots) (`@e3`) are plain selectors, so agent output and handwritten code use the same API.
+
+## Finders
+
+Every `ElementFinder` (`Page`, `Locator`, `FrameLocator`) has these methods. Each returns a `Locator`; nothing is resolved until you act on it.
+
+| Method | Matches | Selector it builds |
+|---|---|---|
+| `locator(selector)` | Any [selector](#selector-syntax), including refs | as given |
+| `getByRole(role, name, exact, …)` | ARIA role and accessible name | `role=…[name=…]` |
+| `getByRole(role, name: Regex, …)` | Role, accessible name matches the regex | `role=…[name=/…/]` |
+| `getByText(text, exact = false)` / `getByText(Regex)` | Element text | `text=…` |
+| `getByLabel(text, exact = false)` / `getByLabel(Regex)` | Form controls by `<label>`, `aria-label` or `aria-labelledby` | `label=…` |
+| `getByPlaceholder(text, exact = false)` / `getByPlaceholder(Regex)` | `placeholder` attribute | `placeholder=…` |
+| `getByAltText(text, exact = false)` / `getByAltText(Regex)` | `alt` text of images | `alt=…` |
+| `getByTitle(text, exact = false)` / `getByTitle(Regex)` | `title` attribute | `title=…` |
+| `getByTestId(String)` / `getByTestId(Regex)` | `data-testid` attribute | `testid=…` |
+| `frameLocator(selector)` | Elements inside an iframe | see [Dialogs and frames](/docs/guides/dialogs-and-frames) |
+
+Text matching is the same for all `String` finders:
+
+- Default: case-insensitive substring, with whitespace collapsed (`"sign in"` matches `Sign   In now`).
+- `exact = true`: the whole whitespace-normalised string, case-sensitive.
+- `Regex`: tested against the whitespace-normalised text. `RegexOption.IGNORE_CASE`, `MULTILINE` and `DOT_MATCHES_ALL` become the JavaScript flags `i`, `m` and `s`.
+
+`getByTestId(String)` is the exception. It is an exact, case-sensitive match on `data-testid`. You can't change the test id attribute. Playwright: `selectors.setTestIdAttribute` has no equivalent.
+
+### getByRole
+
+```kotlin
+page.getByRole("button", name = "Save").click()
+page.getByRole("checkbox", name = "Subscribe", checked = false).check()
+page.getByRole("heading", level = 2).first().textContent()
+page.getByRole("link", name = Regex("^Docs")).click()
+page.getByRole("tab", selected = true).innerText()
+```
+
+<TypeTable
+  type={{
+    role: { type: 'String', description: 'ARIA role, for example "button", "link", "textbox", "heading". Lowercased; "_" becomes "-".' },
+    name: { type: 'String? | Regex', description: 'Accessible name. A String matches as a case-insensitive substring unless exact = true.', default: 'null' },
+    exact: { type: 'Boolean', description: 'Match the whole name, case-sensitive. Only on the String overload.', default: 'false' },
+    checked: { type: 'Boolean?', description: 'Checkbox or radio state, or aria-checked. An indeterminate ("mixed") element matches neither true nor false.', default: 'null' },
+    disabled: { type: 'Boolean?', description: 'Native :disabled, or aria-disabled="true" on the element or an ancestor.', default: 'null' },
+    expanded: { type: 'Boolean?', description: 'aria-expanded="true", or the open property (details, dialog).', default: 'null' },
+    selected: { type: 'Boolean?', description: 'aria-selected="true", or the selected property (option).', default: 'null' },
+    pressed: { type: 'Boolean?', description: 'Compared with the aria-pressed attribute. pressed = false matches only aria-pressed="false", not a missing attribute.', default: 'null' },
+    level: { type: 'Int?', description: 'Heading level: h1–h6, or aria-level.', default: 'null' },
+    includeHidden: { type: 'Boolean?', description: 'Include elements hidden from assistive technology (aria-hidden="true" on the element or an ancestor, display: none, visibility: hidden). Excluded by default.', default: 'null' },
+  }}
+/>
+
+How roles and names are computed depends on the backend:
+
+| Backend | Role and accessible name source |
+|---|---|
+| JVM (Chromium CDP) | Chrome's accessibility tree. Before a `role=` query runs, KMPwright attaches the browser's computed role and name to each node and uses them. Elements without that data fall back to the built-in rules below. |
+| Android WebView, iOS WKWebView | Built-in rules in the page runtime: explicit `role` attribute first, then implicit roles (`button`, `a[href]` → `link`, `input` types → `textbox`/`checkbox`/`radio`/`slider`/`spinbutton`/`searchbox`/`combobox`, `select` → `combobox`/`listbox`, `h1`–`h6` → `heading`, `img` → `img`, `nav`, `main`, lists, tables, `dialog`, …). The name comes from `aria-labelledby`, then `aria-label`, then associated `<label>`s, button values, `alt`, placeholder, `<legend>`/`<caption>`, text content (for roles named from content), then `title`. |
+
+Explicit roles and common HTML elements give the same results on every backend. Unusual markup (for example `aria-owns` or `<section>` without a label) may differ.
+
+`getByRole("input")` is a KMPwright extension: it matches any `textbox`, `searchbox`, `combobox`, `spinbutton` or `listbox`, plus every `input`, `textarea` and `select` element.
+
+## Selector syntax
+
+`locator(selector)` accepts these engines. A selector without a recognised `engine=` prefix is CSS.
+
+| Selector | Matches |
+|---|---|
+| `button.primary`, `#id`, `css=div > a` | CSS. Queried on the document and on every open shadow root. |
+| `xpath=//form//input` | XPath, evaluated from the current scope. Only element nodes are returned. The `xpath=` prefix is required: a bare `//div` is parsed as CSS and fails as invalid. |
+| `text=Sign in` | Elements whose text contains "Sign in" (case-insensitive, whitespace-normalised). |
+| `text="Sign in"` | Elements whose whole text is exactly "Sign in" (case-sensitive, whitespace-normalised). |
+| `text=/sign\s+in/i` | Elements whose text matches the regular expression. Flags `d i m s u y` are allowed. |
+| `role=button[name="Save"]` | ARIA role with attribute filters (below). |
+| `label=Email` | Controls labelled by matching `<label>` text, `aria-label` or `aria-labelledby`. |
+| `placeholder=Search` | Elements whose `placeholder` matches. |
+| `alt=Logo` | `img`, `area` and `input` elements whose `alt` matches, plus `[role=img]` elements whose `aria-label` matches. |
+| `title=Close` | Elements whose `title` attribute matches. |
+| `testid=submit` | `data-testid` equal to `submit`. `testid=/^row-/` matches a regex. |
+| `@e3`, `e3`, `ref=e3`, `ref=@e3` | The element with that ref in the latest [snapshot](/docs/agents/snapshots). |
+| `form >> text=Save` | Chaining: each part runs inside the matches of the previous part. |
+
+`label=`, `placeholder=`, `alt=` and `title=` use the same text rules as `text=`: plain value for a substring, `"quoted"` for exact, `/regex/flags` for a regex.
+
+### Text matching details
+
+`text=` matches against the element's rendered text (`innerText`; for `<input type=button|submit|reset>`, its value). It returns the deepest elements that match: if a `<button>` and its parent `<div>` both contain "Save", only the button is returned. Text inside `script`, `style`, `noscript`, `head`, `template` and `title` is ignored.
+
+### Role attributes
+
+`role=` takes attribute filters in square brackets, the same ones `getByRole` builds:
+
+| Attribute | Example | Notes |
+|---|---|---|
+| `name` | `[name="Save"]`, `[name=/^Save/i]` | A quoted value is a case-insensitive substring. Add `s` for an exact, case-sensitive match (`[name="Save" s]`) or `i` for an exact, case-insensitive match (`[name="save" i]`). |
+| `checked` | `[checked]`, `[checked=false]`, `[checked=mixed]` | A bare attribute means `true`. |
+| `disabled` | `[disabled]`, `[disabled=false]` | |
+| `expanded` | `[expanded=true]` | |
+| `selected` | `[selected]` | |
+| `pressed` | `[pressed=true]`, `[pressed=mixed]` | Compared with the `aria-pressed` attribute. |
+| `level` | `[level=2]` | |
+| `include-hidden` | `[include-hidden]` | Include elements hidden from assistive technology. |
+
+### Shadow DOM
+
+Open shadow roots are pierced by every engine except XPath:
+
+- CSS runs `querySelectorAll` on the document and separately on each open shadow root. A single CSS selector can't cross a shadow boundary: `my-card button` does not match a button inside `my-card`'s shadow root. Chain instead: `my-card >> button`.
+- `text=`, `role=`, `label=`, `placeholder=`, `alt=`, `title=` and `testid=` walk open shadow trees.
+- Closed shadow roots are never pierced.
+
+### Snapshot refs
+
+`page.locator("@e3")` targets the element that [`page.snapshot()`](/docs/agents/snapshots) labelled `e3`. `e3`, `ref=e3` and `ref=@e3` are equivalent when they make up the whole selector or a whole `>>` part of it. A ref is not re-resolved by role or name. It points at that exact DOM node, and matches nothing once the node is detached or a new document is loaded. Take a new snapshot after the page changes.
+
+Inside `locator.locator(...)` and filters, write the `ref=e3` form. Refs only match within the scope of the parent locator.
+
+### Invalid selectors
+
+Syntax errors fail right away with a `KmpwrightException` whose message starts with `Invalid selector`. KMPwright does not retry them until the timeout. This covers malformed CSS, a bad XPath expression, an invalid regular expression and unparseable `role=` attributes.
+
+## Composing locators
+
+```kotlin
+val row = page.locator("tr")
+    .filter(hasText = "Ada Lovelace")
+    .filter(has = page.getByRole("button", name = "Edit"))
+row.getByRole("button", name = "Edit").click()
+
+val items = page.getByRole("listitem")
+items.first().click()
+items.nth(-2).click()            // second to last
+items.filter(hasNotText = "archived").count()
+items.filter(hasText = Regex("^Q[1-4]")).count()
+
+val submit = page.getByRole("button").and(page.locator("[type=submit]"))
+val dismiss = page.getByText("Close").or(page.getByLabel("Dismiss"))
+
+for (item in items.all()) println(item.innerText())
+```
+
+| Method | Behavior |
+|---|---|
+| `locator(selector)` and `getBy*` | Search inside every current match (descendants only, never the element itself). |
+| `first()` / `last()` / `nth(index)` | Pick one match. A negative `index` counts from the end. An out-of-range index matches nothing. |
+| `filter(hasText, hasNotText, has, hasNot)` | Keep matches whose text contains `hasText`, does not contain `hasNotText`, has a descendant matching `has`, and has none matching `hasNot`. Text matching follows the same rules as `getByText` (case-insensitive substring). |
+| `filter(hasText: Regex?, hasNotText: Regex?, has, hasNot)` | The same with regular expressions. |
+| `and(locator)` | Matches of this locator that also match `locator`. |
+| `or(locator)` | Matches of either locator, deduplicated, in document order. |
+| `all()` | One locator per element matching right now (`nth(0)`…`nth(count - 1)`). The elements are not awaited. |
+
+`has`, `hasNot`, `and` and `or` take a `Locator` from the same page. A locator from another page throws `KmpwrightException`. The `has`/`hasNot` locator is evaluated relative to each candidate, so `page.getByRole("button")` inside `filter(has = …)` means "a button inside this element".
+
+Steps keep their order. `locator("li").nth(1).locator("a")` searches inside the second `li`, and `locator("li a").nth(1)` takes the second link overall.
+
+## Strictness
+
+KMPwright enforces Playwright-style strict mode by default (`KmpwrightConfig.strictSelectors = true`). An operation that needs one element fails immediately with `Strict mode violation: '<selector>' resolved to N elements (…). Use first(), last(), nth() or a more specific selector.` when the locator matches more than one element. Strict operations:
+
+- every action (`click`, `fill`, `press`, `check`, …),
+- single-element queries (`textContent`, `innerText`, `innerHTML`, `getAttribute`, `inputValue`, `boundingBox`, `isVisible`, `isEnabled`, `isChecked`, `isEditable`, `isFocused`, `evaluate`, …).
+
+These operations work on all matches and are never strict: `count()`, `all()`, `allTextContents()`, `allInnerTexts()`. `waitFor(state)` checks the first match.
+
+To act on the first match instead of failing, call `first()`. To turn strictness off globally, set `KmpwrightConfig(strictSelectors = false)`. Every single-element operation then uses the first match.
+
+## Reading element state
+
+Queries run once and return. They don't auto-wait, except where noted. To wait for a state, use [assertions](/docs/guides/assertions) (`expect(locator).toBeVisible()`) or `waitFor`.
+
+| Method | Returns | When nothing matches |
+|---|---|---|
+| `count()` | Number of matches | `0` |
+| `textContent()` | `textContent` | `null` |
+| `innerText()` | Rendered `innerText` | `""` |
+| `innerHTML()` | `innerHTML` | `""` |
+| `getAttribute(name)` | Attribute value, `null` if absent | `null` |
+| `inputValue()` | `value` of an input, textarea or select | `null` |
+| `allTextContents()` | `textContent` of every match | empty list |
+| `allInnerTexts()` | `innerText` of every match | empty list |
+| `boundingBox()` | `Rectangle(x, y, width, height)` in CSS pixels, viewport-relative | `null` |
+| `isVisible()` | Non-empty box and `visibility` not `hidden`/`collapse` | `false` |
+| `isHidden()` | `!isVisible()` | `true` |
+| `isEnabled()` / `isDisabled()` | Not `:disabled` and no `aria-disabled="true"` on it or an ancestor | throws |
+| `isChecked()` | Checkbox/radio state or `aria-checked` (`mixed` counts as checked); throws for other elements | throws |
+| `isEditable()` | Enabled, a fillable element, not `readonly`/`aria-readonly` | throws |
+| `isFocused()` | Element is the active element of its document or shadow root | `false` |
+| `waitFor(state, timeoutMs)` | Waits until the first match is `Attached`, `Detached`, `Visible` (default) or `Hidden` | waits |
+| `evaluate("el => …", timeoutMs)` | `JsResult(value, type)` of a function called with the element. The function runs synchronously and a returned Promise is not awaited. Waits for the element to be attached. | waits, then throws |
+| `screenshot(options)` | Image of the element's box (scrolls it into view first); see [Screenshots](/docs/guides/screenshots) | waits, then throws |
+
+Opacity is ignored by `isVisible()`: an `opacity: 0` element with a size counts as visible. Playwright: same.
+
+`waitFor` uses `TimeoutConfig.waitForSelector` when `timeoutMs` is null. The other queries take no timeout.
+
+The DOM-reading queries (`textContent`, `innerText`, `innerHTML`, `getAttribute`, `inputValue`, `count`, `all*`, `boundingBox`) throw when `KmpwrightConfig.allowDomExtraction = false`. `evaluate` throws when `allowEval = false`.
+
+### Page shortcuts
+
+The same queries exist on `Page`, taking a selector:
+
+```kotlin
+page.textContent("#total")              // waits for the element to be attached
+page.getAttribute("a.next", "href")
+page.inputValue("#email")
+page.isVisible("#banner")               // no waiting
+page.count("li")
+page.waitForSelector("#results", SelectorState.Visible)
+```
+
+`textContent`, `innerText`, `innerHTML`, `getAttribute` and `inputValue` on `Page` first wait for the element to be attached. They take an optional `timeoutMs`, which defaults to `TimeoutConfig.waitForSelector`. `isVisible`, `isHidden`, `isEnabled`, `isDisabled`, `isChecked`, `isEditable` and `count` don't wait.
+
+## Related
+
+<Cards>
+  <Card href="/docs/guides/actions" title="Actions" description="Click, fill, press and the auto-wait rules." />
+  <Card href="/docs/guides/assertions" title="Assertions" description="expect(locator) with retrying checks." />
+  <Card href="/docs/agents/snapshots" title="Snapshots" description="Where @e3 refs come from." />
+  <Card href="/docs/reference/locator" title="Locator reference" description="Every Locator method and option." />
+</Cards>

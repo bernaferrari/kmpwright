@@ -1,0 +1,172 @@
+---
+title: Installation
+description: Add kmpwright-core (and optionally kmpwright-compose) to a Kotlin Multiplatform, Android, iOS or JVM project, with the minimum versions and threading rules each platform needs.
+---
+
+<Callout type="warn">
+**Not published yet.** Version `0.1.0` is alpha. The Maven Central artifacts and the `KmpwrightCore` XCFramework release asset do not exist yet. Until they do, use the source-build steps below. The published coordinates are fixed and listed here so you can prepare your build.
+</Callout>
+
+## Build from source (today)
+
+Clone the repository and run the Android demo on a connected device or emulator:
+
+```bash
+git clone https://github.com/bernaferrari/kmpwright.git
+cd kmpwright
+./gradlew :example-android:installDebug
+```
+
+For the iOS Simulator, follow the [sample app setup](/docs/sample-app). To use the library in a module inside this checkout, add Gradle project dependencies:
+
+```kotlin
+// build.gradle.kts of a module in the KMPwright checkout
+kotlin {
+    sourceSets {
+        commonMain.dependencies {
+            implementation(project(":kmpwright-core"))
+        }
+        androidMain.dependencies {
+            implementation(project(":kmpwright-compose"))
+        }
+    }
+}
+```
+
+Build requirements: JDK 17, the Android SDK for Android targets, and macOS with Xcode for iOS targets.
+
+To try the published-coordinate setup without Maven Central, `./scripts/verify-publication.sh` stages both modules into `build/test-repository` and compiles independent consumer projects against them.
+
+## Planned release artifacts
+
+| Artifact | Coordinates | Targets |
+| --- | --- | --- |
+| Core | `io.github.bernaferrari:kmpwright-core:0.1.0` | Android, iOS (`iosArm64`, `iosSimulatorArm64`), JVM |
+| Compose wrapper (optional) | `io.github.bernaferrari:kmpwright-compose:0.1.0` | Android only |
+| iOS XCFramework (Swift/Xcode) | `KmpwrightCore-0.1.0.xcframework.zip` release asset | arm64 device, arm64 simulator |
+
+Everything public lives in one package: `com.bernaferrari.kmpwright.core` (core) and `com.bernaferrari.kmpwright.compose` (Compose wrapper).
+
+## Minimum versions
+
+| Platform | Minimum | Source |
+| --- | --- | --- |
+| Android | API 26 (Android 8.0), `minSdk = 26` | `kmpwright-core/build.gradle.kts` |
+| iOS | iOS 15.0, arm64 device and arm64 simulator only (no Intel simulator) | `kmpwright-core/build.gradle.kts` |
+| JVM | JDK 17 | project toolchain baseline |
+| JVM browser | An installed Chrome or Chromium executable, or a CDP endpoint | `launchBrowser`, `CdpConfig` |
+
+Video recording on the JVM also needs FFmpeg on `PATH`.
+
+## Kotlin Multiplatform (after the first release)
+
+Add the core to `commonMain`. Gradle picks the right Android, iOS or JVM variant per target.
+
+```kotlin
+// build.gradle.kts
+repositories { mavenCentral() }
+
+kotlin {
+    sourceSets {
+        commonMain.dependencies {
+            implementation("io.github.bernaferrari:kmpwright-core:0.1.0")
+        }
+        androidMain.dependencies {
+            // Optional: Compose WebView wrapper (Android only).
+            implementation("io.github.bernaferrari:kmpwright-compose:0.1.0")
+        }
+    }
+}
+```
+
+Your shared code then works with `Browser`, `Page` and `Locator`. Each platform source set creates the `PlatformContext` (`AndroidPlatformContext`, `IOSPlatformContext`, `JvmPlatformContext`) because those wrap platform objects.
+
+## Android-only app (after the first release)
+
+```kotlin
+// app/build.gradle.kts
+dependencies {
+    implementation("io.github.bernaferrari:kmpwright-core:0.1.0")
+    implementation("io.github.bernaferrari:kmpwright-compose:0.1.0") // optional
+}
+```
+
+Declare network access in your `AndroidManifest.xml`. The library does not add it for you:
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+```
+
+To inspect the automated WebView from `chrome://inspect` during development, call `WebView.setWebContentsDebuggingEnabled(true)` (the [sample app](/docs/sample-app) does this).
+
+## iOS
+
+You have two options.
+
+**Kotlin Multiplatform.** Add the dependency to `commonMain` (above) and use KMPwright from `iosMain` or shared code. Your shared framework exports whatever you choose; the KMPwright API itself is Kotlin, so drive it from Kotlin code.
+
+**Swift/Xcode via XCFramework.** The release ships a static `KmpwrightCore.xcframework` (module name `KmpwrightCore`) as a versioned zip asset, not through CocoaPods:
+
+<Steps>
+<Step>
+Download `KmpwrightCore-0.1.0.xcframework.zip` and verify it against the adjacent `.sha256` file.
+</Step>
+<Step>
+Add `KmpwrightCore.xcframework` to your Xcode target and set **Do Not Embed** (it is a static library).
+</Step>
+<Step>
+Build for a device and for the arm64 simulator. The bundle contains only the `arm64-apple-ios` and arm64 simulator slices and declares iOS 15.0 as its minimum deployment target.
+</Step>
+</Steps>
+
+From source, the same XCFramework is produced by:
+
+```bash
+./gradlew :kmpwright-core:packageKmpwrightCoreReleaseXCFramework
+# output: kmpwright-core/build/XCFrameworks/release/KmpwrightCore.xcframework
+```
+
+See [`docs/releasing.md`](https://github.com/bernaferrari/kmpwright/blob/main/docs/releasing.md) for the verification steps.
+
+## JVM
+
+```kotlin
+// build.gradle.kts
+dependencies {
+    implementation("io.github.bernaferrari:kmpwright-core:0.1.0")
+}
+```
+
+On the JVM, KMPwright talks CDP to Chromium. Either point `launchBrowser` at a Chrome/Chromium executable, connect to an existing `ws://…/devtools/browser/…` endpoint, or use a cloud provider. See the [JVM platform page](/docs/platforms/jvm).
+
+## Threading rules
+
+KMPwright's API is `suspend` and can be called from any dispatcher, but the mobile WebViews themselves are single-threaded.
+
+<Tabs items={['Android', 'iOS', 'JVM']}>
+<Tab value="Android">
+
+- **Create the `Browser` on the main thread.** `Browser(AndroidPlatformContext(...))` checks this and throws `IllegalStateException` ("must be called on the Android main thread") otherwise. Create it from `Activity`, `Fragment` or Compose code, or wrap it in `withContext(Dispatchers.Main)`.
+- After construction, page and locator calls can come from any dispatcher; KMPwright confines WebView work to the main looper internally.
+- `browser.newPage()` creates a new managed `WebView` on the main thread for you.
+
+</Tab>
+<Tab value="iOS">
+
+- WebKit objects must only be touched on the main thread. KMPwright's suspend APIs switch to `Dispatchers.Main` internally, and its few synchronous entry points (including the `Browser` constructor) hop to the main queue and wait.
+- Create the `Browser` on the main thread. Never block the main thread (for example with `runBlocking`) while a background coroutine is waiting on a KMPwright call; that deadlocks.
+
+</Tab>
+<Tab value="JVM">
+
+No thread affinity. CDP work runs on `Dispatchers.IO`.
+
+</Tab>
+</Tabs>
+
+## Next
+
+<Cards>
+  <Card href="/docs/quick-start" title="Quick start" description="Attach to a WebView or launch Chromium and run your first action." />
+  <Card href="/docs/platforms/capabilities" title="Capabilities" description="What each backend supports, and how to check at runtime." />
+</Cards>

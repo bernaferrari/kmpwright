@@ -2,9 +2,10 @@ package com.bernaferrari.kmpwright.core
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.coroutines.cancellation.CancellationException
 
 /** Result of a conditional capture. Unchanged captures omit image bytes. */
-data class ConditionalScreenshotResult(
+public data class ConditionalScreenshotResult(
     val changed: Boolean,
     val image: ScreenshotResult?,
     val mismatchPercentage: Double?
@@ -16,18 +17,21 @@ data class ConditionalScreenshotResult(
  * fraction of pixels allowed to change (0.01 means 1%). A skipped image keeps
  * the last emitted baseline, so small cumulative changes eventually surface.
  */
-class ScreenshotTracker internal constructor(
+public class ScreenshotTracker internal constructor(
     private val capture: suspend (ScreenshotOptions) -> ScreenshotResult,
     private val maxScopes: Int = 8
 ) {
-    constructor(page: Page, maxScopes: Int = 8) : this({ page.screenshot(it) }, maxScopes)
+    /** Tracks screenshots of [page], keeping baselines for up to [maxScopes] scopes. */
+    public constructor(page: Page, maxScopes: Int = 8) : this({ page.screenshot(it) }, maxScopes)
 
     init { require(maxScopes > 0) { "maxScopes must be positive" } }
 
     private val mutex = Mutex()
     private val baselines = linkedMapOf<ScreenshotOptions, ScreenshotResult>()
 
-    suspend fun captureIfChanged(
+    /** Captures a screenshot and returns it only when it differs from the previous one of the same scope. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun captureIfChanged(
         options: ScreenshotOptions = ScreenshotOptions(),
         threshold: Double = 0.0
     ): ConditionalScreenshotResult = mutex.withLock {
@@ -53,5 +57,7 @@ class ScreenshotTracker internal constructor(
         ConditionalScreenshotResult(changed, if (changed) image else null, mismatch)
     }
 
-    suspend fun clear() = mutex.withLock { baselines.clear() }
+    /** Forgets every baseline. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun clear(): Unit = mutex.withLock { baselines.clear() }
 }

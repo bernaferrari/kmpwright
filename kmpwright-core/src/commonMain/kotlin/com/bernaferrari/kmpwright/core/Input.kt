@@ -1,111 +1,189 @@
 package com.bernaferrari.kmpwright.core
 
-interface Touch {
-    suspend fun tap(x: Double, y: Double, options: TapOptions = TapOptions())
-    suspend fun longTap(x: Double, y: Double, options: LongTapOptions = LongTapOptions())
-    suspend fun scroll(x: Double, y: Double, deltaX: Double = 0.0, deltaY: Double = -100.0, options: ScrollOptions = ScrollOptions())
-    suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, options: SwipeOptions = SwipeOptions())
-    suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions = PinchOptions())
+import kotlin.coroutines.cancellation.CancellationException
+
+/**
+ * Touch input in viewport coordinates, like Playwright's `page.touchscreen`. Besides [tap] it offers
+ * the mobile gestures [longTap], [scroll], [swipe] and [pinch].
+ */
+public interface Touchscreen {
+    /** Taps at ([x], [y]). */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun tap(x: Double, y: Double, options: TapOptions = TapOptions())
+
+    /** Presses at ([x], [y]) for [LongTapOptions.durationMs]. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun longTap(x: Double, y: Double, options: LongTapOptions = LongTapOptions())
+
+    /** Scrolls with a touch drag starting at ([x], [y]) by ([deltaX], [deltaY]). */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun scroll(x: Double, y: Double, deltaX: Double = 0.0, deltaY: Double = -100.0, options: ScrollOptions = ScrollOptions())
+
+    /** Swipes from ([x1], [y1]) to ([x2], [y2]). */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, options: SwipeOptions = SwipeOptions())
+
+    /** Pinches around ([x], [y]); [scale] above 1 zooms in. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions = PinchOptions())
 }
 
-data class TapOptions(
-    val timeoutMs: Long = 30_000,
+/** Options for [Locator.tap] and [Touchscreen.tap]. [timeoutMs] null uses [TimeoutConfig.action]. */
+public data class TapOptions(
     val force: Boolean = false,
-    val modifiers: Int = 0
+    val modifiers: Int = 0,
+    val timeoutMs: Long? = null
 )
 
-data class LongTapOptions(
-    val timeoutMs: Long = 30_000,
-    val durationMs: Long = 750
+/** Options for [Touchscreen.longTap]. */
+public data class LongTapOptions(
+    val durationMs: Long = 750,
+    val timeoutMs: Long? = null
 )
 
-data class ScrollOptions(
-    val timeoutMs: Long = 30_000,
-    val steps: Int = 5
+/** Options for [Touchscreen.scroll]. */
+public data class ScrollOptions(
+    val steps: Int = 5,
+    val timeoutMs: Long? = null
 )
 
-data class SwipeOptions(
-    val timeoutMs: Long = 30_000,
-    val speed: Double = 500.0
+/** Options for [Touchscreen.swipe]; [speed] is in CSS pixels per second. */
+public data class SwipeOptions(
+    val speed: Double = 500.0,
+    val timeoutMs: Long? = null
 )
 
-data class PinchOptions(
-    val timeoutMs: Long = 30_000
+/** Options for [Touchscreen.pinch]. */
+public data class PinchOptions(
+    val timeoutMs: Long? = null
 )
 
-interface Mouse {
-    suspend fun move(x: Double, y: Double, options: MoveOptions = MoveOptions())
-    suspend fun click(x: Double, y: Double, options: MouseClickOptions = MouseClickOptions())
-    suspend fun dblclick(x: Double, y: Double, options: MouseClickOptions = MouseClickOptions())
-    suspend fun tripleclick(x: Double, y: Double, options: MouseClickOptions = MouseClickOptions())
-    suspend fun down(options: MouseDownOptions = MouseDownOptions())
-    suspend fun up(options: MouseUpOptions = MouseUpOptions())
-    suspend fun wheel(deltaX: Double = 0.0, deltaY: Double = -100.0, options: WheelOptions = WheelOptions())
-    suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions = DragOptions())
+/** Mouse input in viewport coordinates, like Playwright's `page.mouse`. */
+public interface Mouse {
+    /** Moves the pointer to ([x], [y]). */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun move(x: Double, y: Double, options: MoveOptions = MoveOptions())
+
+    /** Moves to ([x], [y]) and clicks; use [MouseClickOptions.clickCount] for double or triple clicks. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun click(x: Double, y: Double, options: MouseClickOptions = MouseClickOptions())
+
+    /** Moves to ([x], [y]) and double-clicks. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun dblclick(x: Double, y: Double, options: MouseClickOptions = MouseClickOptions())
+
+    /** Presses a mouse button at the current position. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun down(options: MouseDownOptions = MouseDownOptions())
+
+    /** Releases a mouse button at the current position. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun up(options: MouseUpOptions = MouseUpOptions())
+
+    /** Dispatches a wheel event; positive [deltaY] scrolls down. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun wheel(deltaX: Double, deltaY: Double, options: WheelOptions = WheelOptions())
+
+    /** Presses at the start point, moves to the end point and releases. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions = DragOptions())
 }
 
-data class MoveOptions(
-    val timeoutMs: Long = 30_000,
-    val steps: Int = 1
+/** Options for [Mouse.move]. */
+public data class MoveOptions(
+    val steps: Int = 1,
+    val timeoutMs: Long? = null
 )
 
-data class MouseClickOptions(
-    val timeoutMs: Long = 30_000,
+/** Options for [Mouse.click] and [Mouse.dblclick]; [delayMs] is the time between press and release. */
+public data class MouseClickOptions(
     val button: MouseButton = MouseButton.LEFT,
     val clickCount: Int = 1,
-    val delayMs: Long = 0
+    val delayMs: Long = 0,
+    val timeoutMs: Long? = null
 )
 
-data class MouseDownOptions(
+/** Options for [Mouse.down]. */
+public data class MouseDownOptions(
     val button: MouseButton = MouseButton.LEFT,
     val clickCount: Int = 1
 )
 
-data class MouseUpOptions(
+/** Options for [Mouse.up]. */
+public data class MouseUpOptions(
     val button: MouseButton = MouseButton.LEFT
 )
 
-data class WheelOptions(
-    val timeoutMs: Long = 30_000
+/** Options for [Mouse.wheel]. */
+public data class WheelOptions(
+    val timeoutMs: Long? = null
 )
 
-data class DragOptions(
-    val timeoutMs: Long = 30_000,
+/** Options for [Locator.dragTo] and [Mouse.drag]. [timeoutMs] null uses [TimeoutConfig.action]. */
+public data class DragOptions(
     val sourcePosition: Position? = null,
-    val targetPosition: Position? = null
+    val targetPosition: Position? = null,
+    val timeoutMs: Long? = null
 )
 
-enum class MouseButton {
+/** Mouse buttons. */
+public enum class MouseButton {
     LEFT,
     MIDDLE,
     RIGHT
 }
 
-interface Keyboard {
-    suspend fun insertText(text: String)
-    suspend fun type(text: String, options: TypeOptions = TypeOptions())
-    suspend fun down(key: String)
-    suspend fun up(key: String)
-    suspend fun press(key: String, options: PressOptions = PressOptions())
-    suspend fun downAndUp(key: String, options: TypeOptions = TypeOptions())
-    fun isModifierPressed(key: String): Boolean
-    fun modifiers(): Set<String>
+/** Keyboard input to the focused element, like Playwright's `page.keyboard`. */
+public interface Keyboard {
+    /** Inserts [text] without key events (like an IME commit). */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun insertText(text: String)
+
+    /**
+     * Types [text] character by character, sending `keydown`, `keypress`, `beforeinput`, `input` and `keyup`
+     * for each (Playwright `keyboard.type`); use [insertText] for input events only.
+     */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun type(text: String, options: TypeOptions = TypeOptions())
+
+    /** Dispatches `keydown` for [key]. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun down(key: String)
+
+    /** Dispatches `keyup` for [key]. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun up(key: String)
+
+    /**
+     * Presses a key or combination such as `"Control+A"` or `"ControlOrMeta+A"` (Meta on Apple platforms,
+     * Control elsewhere): modifiers down, key down, [PressOptions.delayMs], key up, modifiers up.
+     */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun press(key: String, options: PressOptions = PressOptions())
 }
 
-data class TypeOptions(
+/** Options for [Keyboard.type] and the `Page.type` convenience; [delayMs] waits between key presses. */
+public data class TypeOptions(
     val delayMs: Long = 0,
-    val timeoutMs: Long = 30_000
+    val timeoutMs: Long? = null
 )
 
-data class PressOptions(
+/** Options for [Keyboard.press] and [Locator.press]; [delayMs] waits between `keydown` and `keyup`. */
+public data class PressOptions(
     val delayMs: Long = 0,
-    val timeoutMs: Long = 30_000
+    val timeoutMs: Long? = null
 )
 
-object KeyboardModifiers {
-    const val SHIFT = "Shift"
-    const val CONTROL = "Control"
-    const val ALT = "Alt"
-    const val META = "Meta"
-    const val CAPS_LOCK = "CapsLock"
+/** Canonical modifier key names accepted in key combinations such as `"Shift+Tab"`. */
+public object KeyboardModifiers {
+    /** The Shift key. */
+    public const val SHIFT: String = "Shift"
+    /** The Control key. */
+    public const val CONTROL: String = "Control"
+    /** The Alt (Option) key. */
+    public const val ALT: String = "Alt"
+    /** The Meta (Command/Windows) key. */
+    public const val META: String = "Meta"
+    /** The Caps Lock key. */
+    public const val CAPS_LOCK: String = "CapsLock"
 }

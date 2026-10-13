@@ -2,11 +2,31 @@ name: ci
 
 on:
   push:
-    # Keep CI reachable while the repository transitions from master to main.
-    branches: ["main", "master"]
+    branches: ["main"]
   pull_request:
 
 jobs:
+  website:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24"
+      - name: Install locked website dependencies
+        run: |
+          npm install --global pnpm@11.25.0
+          pnpm install --frozen-lockfile
+      - name: Check and build website
+        run: |
+          pnpm types:check
+          pnpm lint
+          pnpm build
+
   android:
     runs-on: ubuntu-latest
     steps:
@@ -42,6 +62,8 @@ jobs:
         run: ./gradlew :kmpwright-core:linkReleaseFrameworkIosSim :kmpwright-example-shared:linkReleaseFrameworkIosSim
       - name: Run iOS simulator backend contracts
         run: ./gradlew :kmpwright-core:iosSimTest --no-daemon
+      - name: Run iOS tests in an app host (WKWebView document contracts)
+        run: ./scripts/run-ios-webkit-tests.sh
       - name: Verify XCFramework and Swift consumer
         run: ./scripts/verify-ios-xcframework.sh
 

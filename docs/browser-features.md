@@ -27,7 +27,7 @@ made later to the source page do not retroactively update the new tab.
 ## Native Chromium input and accessibility
 
 JVM CDP locators dispatch browser input for click, double click, hover, tap,
-fill, type, press and drag. Keyboard chords such as `ControlOrMeta+A` are
+fill, pressSequentially, press and drag. Keyboard chords such as `ControlOrMeta+A` are
 supported. Shadow roots and associated labels participate in hit testing;
 overlays intercept actions unless the caller explicitly requests a forced action.
 Mobile locators retain their documented DOM input limitations.
@@ -35,7 +35,23 @@ Mobile locators retain their documented DOM input limitations.
 CDP snapshots use Chrome's computed roles, accessible names and states while
 retaining Kmpwright's stable element references. Open shadow roots participate
 in snapshots. CDP hierarchy follows Chromium AX relationships, including `aria-owns`,
-with scoped references and interactive filtering. Mobile snapshots use DOM heuristics.
+with scoped references and interactive filtering. Mobile snapshots use DOM heuristics
+with native control state (`checked`, `selected`, `disabled`…) and text nodes, so every
+backend prints the same shape.
+
+`Snapshot.tree` follows agent-browser's text format on every backend: one element per
+line, `@eN [role] "name"` for elements with refs and `[role] "name"` for structure,
+children indented two spaces. Text inputs print as `[input type="email"]` with
+`placeholder="…"`, headings add `[level=N]`, states print as `[checked]`, `[disabled]`,
+`[expanded]`, `[selected]`, `[required]` (mixed checkboxes as `[checked=mixed]`), field
+values as `value="…"`, and with `SnapshotOptions(urls = true)` links add `url="…"`.
+`interactive = true` keeps only ref lines, flat except for content nested under a ref
+such as a same-origin iframe (one level is inlined, like agent-browser); `compact = true`
+drops structure that contains no refs or values. Page text is printed as JSON string
+literals with whitespace collapsed and a 200-character limit, so a page cannot inject
+lines or refs. Unknown or stale refs (`@e9` after a new snapshot or navigation) fail
+immediately with "Unknown ref @e9 — run snapshot again" or "Ref @e9 is no longer
+attached — run snapshot again" instead of waiting.
 
 ## WebMCP
 
@@ -167,7 +183,7 @@ trusted click, upload, screenshots and overlay interception.
 
 `HttpReader().read(url)` fetches readable content without launching a browser.
 `page.read()` extracts the current document; `page.read(url)` reads through HTTP
-without navigating and applies the page's navigation policy and domain filter.
+without navigating and applies the page's navigation policy and allowed domains.
 HTTP reads do not share browser cookies. `ReadOptions` supports raw content,
 strict `text/markdown`, heading outlines and section filtering, explicit headers,
 and nearest-ancestor `llms.txt` / `llms-full.txt` discovery. Relative links and
@@ -194,11 +210,11 @@ complete native WebView subresource visibility. `clear()` releases retained
 metadata without restarting collection. The shared Navigation example shows
 current-document reads, HTTP reads and recent requests.
 
-Prefer `page.closeAsync()` and `browser.closeAsync()` from coroutines. They await
+Prefer the suspending `page.close()` and `browser.close()` from coroutines. They await
 owned React profiler/bridge and init-script cleanup before releasing backend
-ownership. Synchronous native WebView `close()` remains best effort because SDK
+ownership. The non-suspending `dispose()` remains best effort because native SDK
 JavaScript evaluation is asynchronous; callers retaining the host view can also
-explicitly disable React inspection before synchronous teardown. Mouse clicks
+explicitly disable React inspection before calling `dispose()`. Mouse clicks
 and drags release acquired buttons on cancellation while preserving buttons
 held by the caller.
 
@@ -231,12 +247,12 @@ scopes. CDP snapshots follow the native AX hierarchy; `includeHidden` falls back
 ## Video recording
 
 ```kotlin
-page.startRecording(RecordingOptions(
+page.video.start(RecordingOptions(
     path = "capture.mp4", // .webm also supported; FFmpeg must be installed
     fps = 30, cursor = true, contactSheetPath = "contact.png"
 ))
 page.locator("button").click()
-val video = page.stopRecording()
+val video = page.video.stop()
 println("${video.frameCount} frames in ${video.durationMs} ms")
 ```
 
@@ -253,14 +269,14 @@ audio. Closing the page finalizes an active recording. Native WebViews report
 ## Existing tabs and new windows
 
 ```kotlin
-val targets = browser.targetsAsync()
-val attached = browser.attachTargetAsync(targets.first().id)
-browser.activateTargetAsync(targets.first().id)
-attached.closeAsync() // detach; the existing tab remains open
-val window = browser.newWindowAsync()
+val targets = browser.targets()
+val attached = browser.attachTarget(targets.first().id)
+browser.activateTarget(targets.first().id)
+attached.close() // detach; the existing tab remains open
+val window = browser.newWindow()
 window.goto("https://example.com")
-window.closeAsync() // library-created target is owned and closed
-// To explicitly close an existing tab: browser.closeTargetAsync(targetId)
+window.close() // library-created target is owned and closed
+// To explicitly close an existing tab: browser.closeTarget(targetId)
 ```
 
 Target APIs require a browser-scoped CDP endpoint. Discovery includes foreign page
@@ -276,7 +292,7 @@ page.setFileChooserInterception()
 coroutineScope {
     val chooser = async(start = CoroutineStart.UNDISPATCHED) { page.waitForFileChooser() }
     page.locator("input[type=file]").click()
-    page.setFileChooserFiles(chooser.await(), listOf("/absolute/path/report.pdf"))
+    chooser.await().setFiles(listOf("/absolute/path/report.pdf"))
 }
 page.setFileChooserInterception(false)
 ```
@@ -290,9 +306,9 @@ uploads remain available through their documented backend capabilities.
 ## HAR capture
 
 ```kotlin
-page.startHarCapture()
+page.network.startHar()
 page.goto("https://example.com")
-val harJson = page.stopHarCapture()
+val harJson = page.network.stopHar()
 ```
 
 HAR 1.2 export uses unified page/frame request events. CDP captures available text
@@ -301,19 +317,25 @@ retain the network metadata their SDKs expose. Capture is bounded to 500 entries
 16 MiB of serialized entry data, 32 concurrent body reads and 1 MiB per body. Body
 truncation is explicit in `_kmpwrightTruncated`; unavailable bodies retain metadata.
 
-## State autosave and login
+## Storage state, autosave and login
 
 ```kotlin
-val autosave = page.autosaveState(StateAutosaveOptions(
-    name = "signed-in", intervalMs = 30_000, password = statePassword
+page.storageState().save("signed-in.state", password = statePassword)
+page.setStorageState(StorageState.load("signed-in.state", password = statePassword))
+
+val autosave = page.autosaveStorageState(StorageStateAutosaveOptions(
+    path = "signed-in.state", password = statePassword, intervalMs = 30_000
 ))
 // Inspect autosave.error and autosave.lastSavedAt; a write error stops the job.
 autosave.stop()
 val result = page.login(profile, AuthLoginOptions(navigate = false))
 ```
 
-Autosave writes immediately, then periodically until stopped or its page closes.
-Encrypted saves require an explicit password. File replacement preserves the
+`page.storageState()` returns an in-memory `StorageState` (URL, cookies, local and
+session storage) that `setStorageState` restores; `save`/`load` persist it. Loading
+throws on a missing file or wrong password. Autosave writes immediately, then
+periodically until stopped or its page closes. The password is always passed
+explicitly; `null` writes plaintext. File replacement preserves the
 previous save when writing fails. Login uses configured selectors or discovers
 usable controls in the password form; ambiguous controls require explicit selectors.
 It validates origins, document/control identities and form destinations before each
@@ -327,9 +349,9 @@ val launched = launchBrowser(BrowserLaunchOptions(
     executablePath = "/path/to/chrome", headless = true, webGpu = false
 ))
 try {
-    val page = launched.browser.newPageAsync()
+    val page = launched.browser.newPage()
     page.goto("https://example.com")
-} finally { launched.closeAsync() }
+} finally { launched.close() }
 ```
 
 The JVM launcher owns its process, loopback debugging endpoint and temporary profile.
@@ -349,9 +371,9 @@ val launched = launchBrowser(BrowserLaunchOptions(
     profileSnapshot = ChromeProfileSource("/path/to/chrome/user-data", "Work")
 ))
 try {
-    val page = launched.browser.newPageAsync()
+    val page = launched.browser.newPage()
     page.goto("https://example.com")
-} finally { launched.closeAsync() }
+} finally { launched.close() }
 ```
 
 `ChromeProfiles.list(directory)` reads Chrome's Local State; `resolve` accepts an
@@ -386,3 +408,11 @@ platform trust there. The owned Linux launcher also accepts `caCertificatePath`,
 imports it into a temporary NSS store through `certutil`, and cleans it on close.
 It requires a temporary browser profile and cannot combine with `ignoreHttpsErrors`.
 Linux browser NSS integration is not exercised on the macOS validation host.
+
+### Files in a remote CDP browser
+
+`launchBrowser()` uploads files from the Kotlin process's local filesystem.
+Remote CDP connections have no file-transfer service, so uploads fail explicitly
+by default. Set `CdpConfig(remoteBrowserSharesFileSystem = true)` only when the
+remote browser can read the same absolute file paths as the Kotlin process.
+Empty file selections can still clear the input without transferring files.

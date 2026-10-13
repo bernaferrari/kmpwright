@@ -111,6 +111,12 @@ internal class CdpWebMcp(private val transport: CdpEventTransport, private val s
             synchronized(lock) { catalogError = "WebMCP iframe discovery failed: ${error.message}" }
         } catch (error: TimeoutCancellationException) {
             synchronized(lock) { catalogError = "WebMCP iframe discovery timed out" }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            // frameReady callbacks and a concurrent close can fail with any
+            // exception type; record it rather than crashing the scope.
+            synchronized(lock) { catalogError = "WebMCP iframe discovery failed: ${error.message ?: error::class.simpleName}" }
         } finally {
             withContext(NonCancellable) { withTimeoutOrNull(1_000) { runCatching {
                 val response = transport.sendSession(childSession, "Runtime.runIfWaitingForDebugger")
@@ -193,7 +199,8 @@ internal class CdpWebMcp(private val transport: CdpEventTransport, private val s
         WebMcpContext(observed, tools.size, summaries, truncated)
     }
 
-    override suspend fun invoke(name: String, input: JsonObject, frameId: String?, timeoutMs: Long, waitForResult: Boolean): WebMcpInvocation {
+    override suspend fun invoke(name: String, input: JsonObject, frameId: String?, timeoutMs: Long?, waitForResult: Boolean): WebMcpInvocation {
+        val timeoutMs = timeoutMs ?: DEFAULT_WEBMCP_TIMEOUT_MS
         require(timeoutMs > 0) { "Invocation timeout must be positive" }
         require(input.toString().encodeToByteArray().size <= 1024 * 1024) { "WebMCP input exceeds 1 MiB" }
         val cached = synchronized(lock) { if (observed) cachedTools() else null }
@@ -233,7 +240,8 @@ internal class CdpWebMcp(private val transport: CdpEventTransport, private val s
         if (record.status == WebMcpInvocationStatus.Pending) record.copy(durationMs = elapsed(id)) else record
     }
 
-    override suspend fun awaitInvocation(id: String, timeoutMs: Long): WebMcpInvocation {
+    override suspend fun awaitInvocation(id: String, timeoutMs: Long?): WebMcpInvocation {
+        val timeoutMs = timeoutMs ?: DEFAULT_WEBMCP_TIMEOUT_MS
         require(timeoutMs > 0) { "Invocation timeout must be positive" }
         val deferred = synchronized(lock) {
             val record = invocation(id)
@@ -387,3 +395,6 @@ internal class CdpWebMcp(private val transport: CdpEventTransport, private val s
 
     private fun JsonObject.string(key: String): String = (this[key] as? JsonPrimitive)?.contentOrNull ?: ""
 }
+
+
+private const val DEFAULT_WEBMCP_TIMEOUT_MS = 30_000L

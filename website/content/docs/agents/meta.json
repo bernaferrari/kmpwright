@@ -1,0 +1,4 @@
+{
+  "title": "Agents",
+  "pages": ["index", "commands", "snapshots", "llm-tools", "skills"]
+}

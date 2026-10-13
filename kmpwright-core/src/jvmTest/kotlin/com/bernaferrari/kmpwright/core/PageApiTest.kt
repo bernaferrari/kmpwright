@@ -55,9 +55,9 @@ class PageApiTest {
     }
 
     @Test
-    fun `goto with referer`() {
+    fun `goto with an explicit timeout`() {
         runBlocking {
-            val result = page.goto("https://example.com", GotoOptions(referer = "https://google.com"))
+            val result = page.goto("https://example.com", GotoOptions(timeoutMs = 1_000))
             assertEquals("https://example.com", result.url)
         }
     }
@@ -90,7 +90,7 @@ class PageApiTest {
     fun `back completes without error`() {
         runBlocking {
             page.goto("https://example.com")
-            page.back()
+            page.goBack()
         }
     }
 
@@ -98,7 +98,7 @@ class PageApiTest {
     fun `forward completes without error`() {
         runBlocking {
             page.goto("https://example.com")
-            page.forward()
+            page.goForward()
         }
     }
 
@@ -137,10 +137,10 @@ class PageApiTest {
     @Test
     fun `evaluate returns JsResult`() {
         runBlocking {
-            controller.evalHandler = { "42" }
+            controller.evalHandler = { "{\"t\":\"number\",\"v\":\"42\"}" }
             val result = page.evaluate("1 + 1")
             assertEquals("42", result.value)
-            assertEquals("text", result.type)
+            assertEquals("number", result.type)
         }
     }
 
@@ -224,7 +224,7 @@ class PageApiTest {
     }
 
     @Test
-    fun `serviceWorkers returns empty list`() {
+    fun `serviceWorkers returns empty list`() = runBlocking {
         val workers = page.serviceWorkers()
         assertTrue(workers.isEmpty())
     }
@@ -241,8 +241,7 @@ class PageApiTest {
     @Test
     fun `viewportSize returns controller dimensions`() {
         val size = page.viewportSize()
-        assertEquals(375, size.first)
-        assertEquals(667, size.second)
+        assertEquals(ViewportSize(375, 667), size)
     }
 
     @Test
@@ -270,7 +269,7 @@ class PageApiTest {
     fun `setCookie stores cookie`() {
         runBlocking {
             val cookie = Cookie(name = "session", value = "abc123", domain = "example.com", path = "/")
-            page.setCookie(cookie)
+            page.addCookies(listOf(cookie))
             assertEquals(1, controller.cookies.size)
             assertEquals("session", controller.cookies[0].name)
         }
@@ -281,8 +280,8 @@ class PageApiTest {
         runBlocking {
             page.goto("https://example.com")
             val cookie = Cookie(name = "session", value = "abc123", domain = "example.com", path = "/")
-            page.setCookie(cookie)
-            val retrieved = page.getCookie("session")
+            page.addCookies(listOf(cookie))
+            val retrieved = page.cookie("session")
             assertNotNull(retrieved)
         }
     }
@@ -292,9 +291,9 @@ class PageApiTest {
         runBlocking {
             val cookie1 = Cookie(name = "a", value = "1", domain = "example.com", path = "/")
             val cookie2 = Cookie(name = "b", value = "2", domain = "example.com", path = "/")
-            page.setCookie(cookie1)
-            page.setCookie(cookie2)
-            val cookies = page.getAllCookies()
+            page.addCookies(listOf(cookie1))
+            page.addCookies(listOf(cookie2))
+            val cookies = page.cookies()
             assertEquals(2, cookies.size)
         }
     }
@@ -303,9 +302,9 @@ class PageApiTest {
     fun `deleteCookie removes cookie`() {
         runBlocking {
             val cookie = Cookie(name = "temp", value = "x", domain = "example.com", path = "/")
-            page.setCookie(cookie)
+            page.addCookies(listOf(cookie))
             assertEquals(1, controller.cookies.size)
-            page.deleteCookie("temp", "example.com")
+            page.clearCookies("temp", "example.com")
             assertEquals(0, controller.cookies.size)
         }
     }
@@ -313,9 +312,9 @@ class PageApiTest {
     @Test
     fun `deleteAllCookies clears all cookies`() {
         runBlocking {
-            page.setCookie(Cookie(name = "a", value = "1", domain = "example.com", path = "/"))
-            page.setCookie(Cookie(name = "b", value = "2", domain = "example.com", path = "/"))
-            page.deleteAllCookies()
+            page.addCookies(listOf(Cookie(name = "a", value = "1", domain = "example.com", path = "/")))
+            page.addCookies(listOf(Cookie(name = "b", value = "2", domain = "example.com", path = "/")))
+            page.clearCookies()
             assertEquals(0, controller.cookies.size)
         }
     }
@@ -323,20 +322,20 @@ class PageApiTest {
     @Test
     fun `multiple cookies can be stored and retrieved`() {
         runBlocking {
-            page.setCookie(Cookie(name = "a", value = "1", domain = "example.com"))
-            page.setCookie(Cookie(name = "b", value = "2", domain = "example.com"))
-            page.setCookie(Cookie(name = "c", value = "3", domain = "example.com"))
-            assertEquals(3, page.getAllCookies().size)
+            page.addCookies(listOf(Cookie(name = "a", value = "1", domain = "example.com")))
+            page.addCookies(listOf(Cookie(name = "b", value = "2", domain = "example.com")))
+            page.addCookies(listOf(Cookie(name = "c", value = "3", domain = "example.com")))
+            assertEquals(3, page.cookies().size)
         }
     }
 
     @Test
     fun `cookie replacement on duplicate name`() {
         runBlocking {
-            page.setCookie(Cookie(name = "session", value = "old", domain = "example.com"))
-            page.setCookie(Cookie(name = "session", value = "new", domain = "example.com"))
-            assertEquals(1, page.getAllCookies().size)
-            assertEquals("new", page.getAllCookies()[0].value)
+            page.addCookies(listOf(Cookie(name = "session", value = "old", domain = "example.com")))
+            page.addCookies(listOf(Cookie(name = "session", value = "new", domain = "example.com")))
+            assertEquals(1, page.cookies().size)
+            assertEquals("new", page.cookies()[0].value)
         }
     }
 
@@ -352,16 +351,16 @@ class PageApiTest {
     }
 
     @Test
-    fun `close disposes controller`() {
+    fun `dispose disposes controller`() {
         assertFalse(controller.disposed)
-        page.close()
+        page.dispose()
         assertTrue(controller.disposed)
     }
 
     @Test
-    fun `expect returns KmpwrightExpect`() {
+    fun `expect returns LocatorAssertions`() {
         val locator = page.locator("#btn")
-        val expect = page.expect(locator)
+        val expect = expect(locator)
         assertNotNull(expect)
     }
 
@@ -384,31 +383,31 @@ class PageApiTest {
 
     @Test
     fun `errors returns empty list initially`() {
-        val errors = page.errors()
+        val errors = page.pageErrors()
         assertTrue(errors.isEmpty())
     }
 
     @Test
-    fun `route registers handler`() {
+    fun `route registers handler`() = testBlocking {
         page.route("https://api.example.com/**") { route ->
-            RouteHandler.Continue()
+            route.resume()
         }
     }
 
     @Test
-    fun `unroute removes handler`() {
+    fun `unroute removes handler`() = testBlocking {
         page.route("https://api.example.com/**") { route ->
-            RouteHandler.Continue()
+            route.resume()
         }
         page.unroute("https://api.example.com/**")
     }
 
     @Test
-    fun `unroute with null removes all handlers`() {
+    fun `unroute with null removes all handlers`() = testBlocking {
         page.route("https://api.example.com/**") { route ->
-            RouteHandler.Continue()
+            route.resume()
         }
-        page.unroute()
+        page.unrouteAll()
     }
 
     @Test
@@ -439,19 +438,13 @@ class PageApiTest {
         }
         val emitter = launch {
             delay(20)
-            page.events.loadState.emit(LoadState.Load)
+            (page.events as PageEventSinks).loadStateSink.emit(LoadState.Load)
         }
 
         page.waitForLoadState(LoadState.Load, timeoutMs = 1_000)
         emitter.cancel()
 
         assertEquals(1, controller.executedScripts.count { it.contains("document.readyState") })
-    }
-
-    @Test
-    fun `stateNames returns empty list initially`() {
-        val names = page.stateNames()
-        assertTrue(names.isEmpty())
     }
 
     @Test
@@ -468,7 +461,7 @@ class PageApiTest {
 
     @Test
     fun `touch accessor throws UnsupportedOperationException`() {
-        assertFailsWith<UnsupportedOperationException> { page.touch }
+        assertFailsWith<UnsupportedOperationException> { page.touchscreen }
     }
 
     @Test
@@ -488,28 +481,17 @@ class PageApiTest {
     }
 
     @Test fun `unsupported tracing and profiling fail explicitly`() = runBlocking<Unit> {
-        assertFailsWith<UnsupportedOperationException> { page.startTracing() }
-        assertFailsWith<UnsupportedOperationException> { page.stopTracing() }
-        assertFailsWith<UnsupportedOperationException> { page.startProfiler() }
-        assertFailsWith<UnsupportedOperationException> { page.stopProfiler() }
+        assertFailsWith<KmpwrightUnsupportedException> { page.tracing.start() }
+        assertFailsWith<KmpwrightUnsupportedException> { page.tracing.stop() }
+        assertFailsWith<KmpwrightUnsupportedException> { page.profiler.start() }
+        assertFailsWith<KmpwrightUnsupportedException> { page.profiler.stop() }
     }
 
     @Test
-    fun `locatorByRef throws without snapshot`() {
+    fun `locator ref without snapshot does not throw eagerly`() {
         runBlocking {
             try {
-                page.locatorByRef("@e1")
-            } catch (e: KmpwrightException) {
-                // Expected - no snapshot available
-            }
-        }
-    }
-
-    @Test
-    fun `snapshotAndInteract throws without snapshot`() {
-        runBlocking {
-            try {
-                page.snapshotAndInteract("@e1") { }
+                page.locator("@e1")
             } catch (e: KmpwrightException) {
                 // Expected - no snapshot available
             }
@@ -519,18 +501,18 @@ class PageApiTest {
     @Test
     fun `diffSnapshot completes`() {
         runBlocking {
-            val before = A11ySnapshot(emptyList(), emptyMap(), "", 0L)
-            val after = A11ySnapshot(emptyList(), emptyMap(), "", 0L)
+            val before = Snapshot("", emptyMap(), emptyList())
+            val after = Snapshot("", emptyMap(), emptyList())
             val result = page.diffSnapshot(before, after)
             assertNotNull(result)
         }
     }
 
     @Test
-    fun `annotatedScreenshot throws for TestPage without screenshot controller`() {
+    fun `annotated screenshot throws for TestPage without screenshot controller`() {
         runBlocking {
             try {
-                page.annotatedScreenshot()
+                page.screenshot(ScreenshotOptions(annotate = true))
             } catch (e: IllegalStateException) {
                 // Expected - TestPage does not override createScreenshotController
             }

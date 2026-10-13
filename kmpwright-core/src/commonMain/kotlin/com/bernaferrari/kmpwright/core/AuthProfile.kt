@@ -1,12 +1,16 @@
 package com.bernaferrari.kmpwright.core
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * A saved authentication profile with credentials and optional auto-login selectors.
  */
 @Serializable
-data class AuthProfile(
+public data class AuthProfile(
     val name: String,
     val url: String,
     val username: String,
@@ -16,13 +20,19 @@ data class AuthProfile(
     val submitSelector: String? = null,
     val createdAt: Long = currentTimeMillis(),
     val lastUsedAt: Long? = null
-)
+) {
+    /** Never prints the password. */
+    override fun toString(): String =
+        "AuthProfile(name=$name, url=$url, username=$username, password=***, usernameSelector=$usernameSelector, " +
+            "passwordSelector=$passwordSelector, submitSelector=$submitSelector, createdAt=$createdAt, lastUsedAt=$lastUsedAt)"
+}
 
 /**
- * Manages persistent encrypted auth profiles on disk.
- * Platform-specific file I/O is delegated to expect/actual functions.
+ * Manages persistent auth profiles on disk with the same rules as [StorageState]: every call is
+ * suspending and runs on the IO dispatcher, [save] takes an explicit password (null writes
+ * plaintext on purpose), and [load] throws instead of returning null.
  */
-object AuthManager {
+public object AuthManager {
 
     private val json = kotlinx.serialization.json.Json {
         ignoreUnknownKeys = true
@@ -30,52 +40,56 @@ object AuthManager {
         prettyPrint = true
     }
 
-    fun save(profile: AuthProfile, encrypt: Boolean = true, password: String? = null) {
-        val dir = authProfileDir()
-        mkdirs(dir)
-        val serialized = json.encodeToString(AuthProfile.serializer(), profile)
-        val content = if (encrypt) SessionManager.encrypt(serialized, password) else serialized
-        val safeName = sanitizeFileName(profile.name)
-        fileWrite("$dir/$safeName.json", content)
+    /** Test seam: replaces the platform profile directory. */
+    internal var directoryOverride: String? = null
+    private fun directory(): String = directoryOverride ?: authProfileDir()
+    private fun profilePath(name: String): String = "${directory()}/${sanitizeStateFileName(name)}.json"
+
+    /**
+     * Saves [profile]. Profiles contain credentials, so they are encrypted with [password]; pass
+     * `password = null` explicitly to write plaintext (the same rule as [StorageState.save]).
+     *
+     * @throws IllegalArgumentException when [password] is blank.
+     */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun save(profile: AuthProfile, password: String?) {
+        require(password == null || password.isNotBlank()) { "Password must not be blank; pass null to write plaintext" }
+        withContext(Dispatchers.IO) {
+            mkdirs(directory())
+            val serialized = json.encodeToString(AuthProfile.serializer(), profile)
+            fileWrite(profilePath(profile.name), if (password != null) SessionManager.encrypt(serialized, password) else serialized)
+        }
     }
 
-    fun load(name: String, password: String? = null): AuthProfile? {
-        val dir = authProfileDir()
-        val safeName = sanitizeFileName(name)
-        val raw = fileRead("$dir/$safeName.json") ?: return null
-        val content = if (password != null) {
-            // When a password is provided, require successful decryption
-            SessionManager.decrypt(raw, password) ?: return null
-        } else {
-            raw
-        }
-        return try {
+    /**
+     * Loads the profile [name]. A [password] makes this an authenticated decryption that never falls
+     * back to plaintext; pass null to read a plaintext profile.
+     *
+     * @throws KmpwrightException when the profile is missing, cannot be decrypted (wrong password) or is malformed.
+     */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun load(name: String, password: String?): AuthProfile = withContext(Dispatchers.IO) {
+        val raw = fileRead(profilePath(name)) ?: throw KmpwrightException("Auth profile not found: $name")
+        val content = if (password == null) raw else SessionManager.decryptOrThrow(raw, password, "Auth profile $name")
+        try {
             json.decodeFromString(AuthProfile.serializer(), content)
-        } catch (_: Exception) {
-            null
+        } catch (error: Exception) {
+            throw KmpwrightException("Auth profile $name is not valid${if (password == null) " plaintext; pass its password" else ""}", error)
         }
     }
 
-    fun list(): List<String> {
-        val dir = authProfileDir()
-        return fileList(dir).filter { it.endsWith(".json") }.map { it.removeSuffix(".json") }
+    /** Names of the saved profiles. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun list(): List<String> = withContext(Dispatchers.IO) {
+        fileList(directory()).filter { it.endsWith(".json") }.map { it.removeSuffix(".json") }
     }
 
-    fun delete(name: String): Boolean {
-        val dir = authProfileDir()
-        val safeName = sanitizeFileName(name)
-        return fileDelete("$dir/$safeName.json")
-    }
+    /** Deletes the profile [name]; true when it existed. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun delete(name: String): Boolean = withContext(Dispatchers.IO) { fileDelete(profilePath(name)) }
 }
 
 /**
  * Returns the directory where auth profiles are stored. Platform-specific.
  */
 internal expect fun authProfileDir(): String
-
-/**
- * Sanitizes a file name to prevent path traversal attacks.
- */
-private fun sanitizeFileName(name: String): String {
-    return name.replace("\\", "").replace("/", "").replace("..", "").ifEmpty { "unnamed" }
-}

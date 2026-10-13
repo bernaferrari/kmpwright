@@ -17,16 +17,16 @@ class BrowserLaunchTest {
             repeat(2) {
                 val launched = launchBrowser(BrowserLaunchOptions(executable!!, userDataDirectory = directory.toString()))
                 try {
-                    val page = launched.browser.newPageAsync()
+                    val page = launched.browser.newPage()
                     page.setContent("<button>Owned launch</button>")
                     assertEquals("Owned launch", page.locator("button").textContent())
-                    assertTrue(launched.browser.versionAsync().version.first().isDigit())
+                    assertTrue(launched.browser.version().version.first().isDigit())
                     val output = directory.resolve("close-recording-$it.mp4")
-                    page.startRecording(RecordingOptions(output.toString(), maxWidth = 320, maxHeight = 240, cursor = false))
+                    page.video.start(RecordingOptions(output.toString(), maxWidth = 320, maxHeight = 240, cursor = false))
                     kotlinx.coroutines.delay(100)
-                    page.closeAsync()
+                    page.close()
                     assertTrue("Closing the page must finalize its active recording", Files.size(output) > 100)
-                } finally { withTimeout(10_000) { launched.closeAsync() }; launched.closeAsync() }
+                } finally { withTimeout(10_000) { launched.close() }; launched.close() }
                 assertFalse(Files.exists(directory.resolve("DevToolsActivePort")))
                 assertEquals("preserve caller files", Files.readString(directory.resolve("owner.txt")))
             }
@@ -34,8 +34,8 @@ class BrowserLaunchTest {
             assertTrue("Launched Chrome should publish its profile", available.isNotEmpty())
             val original = Files.readAllBytes(directory.resolve("Local State"))
             val copied = launchBrowser(BrowserLaunchOptions(executable!!, profileSnapshot = ChromeProfileSource(directory.toString(), available.first().directory)))
-            try { copied.browser.newPageAsync().setContent("<h1>Snapshot launch</h1>") }
-            finally { copied.closeAsync() }
+            try { copied.browser.newPage().setContent("<h1>Snapshot launch</h1>") }
+            finally { copied.close() }
             assertArrayEquals(original, Files.readAllBytes(directory.resolve("Local State")))
         } finally { directory.toFile().deleteRecursively() }
     }

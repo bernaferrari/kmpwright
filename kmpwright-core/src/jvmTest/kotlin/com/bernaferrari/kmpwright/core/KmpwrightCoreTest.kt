@@ -84,7 +84,7 @@ class LocatorOptionsTest {
     @Test
     fun `click options have default values`() {
         val options = ClickOptions()
-        assertEquals(30_000L, options.timeoutMs)
+        assertNull(options.timeoutMs)
         assertEquals(MouseButton.LEFT, options.button)
         assertEquals(1, options.clickCount)
     }
@@ -92,33 +92,33 @@ class LocatorOptionsTest {
     @Test
     fun `tap options have default values`() {
         val options = TapOptions()
-        assertEquals(30_000L, options.timeoutMs)
+        assertNull(options.timeoutMs)
     }
 
     @Test
     fun `fill options have default values`() {
         val options = FillOptions()
-        assertEquals(30_000L, options.timeoutMs)
+        assertNull(options.timeoutMs)
         assertEquals(false, options.force)
     }
 
     @Test
     fun `type options have default values`() {
         val options = TypeOptions()
-        assertEquals(30_000L, options.timeoutMs)
+        assertNull(options.timeoutMs)
     }
 
     @Test
     fun `press options have default values`() {
         val options = PressOptions()
-        assertEquals(30_000L, options.timeoutMs)
+        assertNull(options.timeoutMs)
         assertEquals(0L, options.delayMs)
     }
 
     @Test
     fun `scroll into view options have default values`() {
         val options = ScrollIntoViewOptions()
-        assertEquals(30_000L, options.timeoutMs)
+        assertNull(options.timeoutMs)
         assertEquals(ScrollPosition.Center, options.block)
         assertEquals(ScrollPosition.Nearest, options.inline)
     }
@@ -135,14 +135,14 @@ class LocatorOptionsTest {
     @Test
     fun `action options have default values`() {
         val options = ActionOptions()
-        assertEquals(30_000L, options.timeoutMs)
+        assertNull(options.timeoutMs)
         assertEquals(false, options.force)
     }
 
     @Test
     fun `drag options have default values`() {
         val options = DragOptions()
-        assertEquals(30_000L, options.timeoutMs)
+        assertNull(options.timeoutMs)
         assertNull(options.sourcePosition)
         assertNull(options.targetPosition)
     }
@@ -179,7 +179,7 @@ class ScreenshotOptionsTest {
         assertFalse(options.fullPage)
         assertNull(options.clip)
         assertFalse(options.omitBackground)
-        assertEquals(30_000L, options.timeoutMs)
+        assertNull(options.timeoutMs)
         assertEquals(90, options.quality)
         assertEquals(ScreenshotFormat.PNG, options.format)
         assertEquals(1.0, options.scale, 0.001)
@@ -217,10 +217,12 @@ class ScreenshotOptionsTest {
     @Test
     fun `screenshot copy preserves values`() {
         val original = ScreenshotOptions(fullPage = true, scale = 2.0)
-        val copy = original.copy(clip = Rectangle(0.0, 0.0, 100.0, 100.0))
-        assertTrue(copy.fullPage)
+        val copy = original.copy(fullPage = false, clip = Rectangle(0.0, 0.0, 100.0, 100.0))
+        assertFalse(copy.fullPage)
         assertEquals(2.0, copy.scale, 0.001)
         assertNotNull(copy.clip)
+        // Playwright rejects fullPage together with clip.
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { original.copy(clip = Rectangle(0.0, 0.0, 1.0, 1.0)) }
     }
 }
 
@@ -271,87 +273,6 @@ class ViewportTest {
         assertFalse(viewport.isMobile)
         assertFalse(viewport.hasTouch)
         assertTrue(viewport.isLandscape)
-    }
-}
-
-class SelectorParserTest {
-
-    @Test
-    fun `parse css selector directly`() {
-        val result = SelectorParser.parse(".button")
-        assertEquals(".button", result.css)
-        assertEquals(SelectorType.CSS, result.type)
-    }
-
-    @Test
-    fun `parse id selector`() {
-        val result = SelectorParser.parse("#submit")
-        assertEquals("#submit", result.css)
-        assertEquals(SelectorType.CSS, result.type)
-    }
-
-    @Test
-    fun `parse role button selector`() {
-        val result = SelectorParser.parse("role=button")
-        assertTrue(result.css.contains("button"))
-        assertTrue(result.css.contains("role=\"button\""))
-        assertEquals(SelectorType.ROLE, result.type)
-        assertEquals("button", result.original)
-    }
-
-    @Test
-    fun `parse role heading selector`() {
-        val result = SelectorParser.parse("role=heading")
-        assertTrue(result.css.contains("h1"))
-        assertTrue(result.css.contains("role=\"heading\""))
-        assertEquals(SelectorType.ROLE, result.type)
-    }
-
-    @Test
-    fun `parse role checkbox selector`() {
-        val result = SelectorParser.parse("role=checkbox")
-        assertTrue(result.css.contains("input[type=\"checkbox\"]"))
-        assertTrue(result.css.contains("role=\"checkbox\""))
-        assertEquals(SelectorType.ROLE, result.type)
-    }
-
-    @Test
-    fun `parse role link selector`() {
-        val result = SelectorParser.parse("role=link")
-        assertTrue(result.css.contains("a"))
-        assertTrue(result.css.contains("role=\"link\""))
-        assertEquals(SelectorType.ROLE, result.type)
-    }
-
-    @Test
-    fun `parse role dialog selector`() {
-        val result = SelectorParser.parse("role=dialog")
-        assertTrue(result.css.contains("dialog"))
-        assertTrue(result.css.contains("role=\"dialog\""))
-        assertEquals(SelectorType.ROLE, result.type)
-    }
-
-    @Test
-    fun `parse label selector`() {
-        val result = SelectorParser.parse("label=Email")
-        assertTrue(result.css.contains("label:has-text"))
-        assertTrue(result.css.contains("Email"))
-        assertEquals(SelectorType.LABEL, result.type)
-        assertEquals("Email", result.original)
-    }
-
-    @Test
-    fun `parse text selector`() {
-        val result = SelectorParser.parse("text=Submit")
-        assertTrue(result.css.contains("Submit"))
-        assertEquals(SelectorType.TEXT, result.type)
-        assertEquals("Submit", result.original)
-    }
-
-    @Test
-    fun `parse chain selector`() {
-        val result = SelectorParser.parse("role=list >> role=listitem >> text=Item 1")
-        assertTrue(result.css.contains(">>"))
     }
 }
 
@@ -462,17 +383,10 @@ class ScreenshotFormatTest {
 class GotoOptionsTest {
 
     @Test
-    fun `default goto options`() {
+    fun `default goto options defer to the configured navigation timeout`() {
         val options = GotoOptions()
-        assertEquals(30_000L, options.timeoutMs)
-        assertEquals(LoadState.DOMContentLoaded, options.waitUntil)
-        assertNull(options.referer)
-    }
-
-    @Test
-    fun `goto options with referer`() {
-        val options = GotoOptions(referer = "https://previous.com")
-        assertEquals("https://previous.com", options.referer)
+        assertNull(options.timeoutMs)
+        assertEquals(LoadState.Load, options.waitUntil)
     }
 }
 
@@ -481,7 +395,7 @@ class SetContentOptionsTest {
     @Test
     fun `default set content options`() {
         val options = SetContentOptions()
-        assertEquals(30_000L, options.timeoutMs)
+        assertNull(options.timeoutMs)
         assertEquals(LoadState.Load, options.waitUntil)
     }
 }
@@ -512,10 +426,11 @@ class DialogTypeTest {
 
     @Test
     fun `dialog type enum has all values`() {
-        assertEquals(3, DialogType.entries.size)
+        assertEquals(4, DialogType.entries.size)
         assertTrue(DialogType.entries.contains(DialogType.Alert))
         assertTrue(DialogType.entries.contains(DialogType.Confirm))
         assertTrue(DialogType.entries.contains(DialogType.Prompt))
+        assertTrue(DialogType.entries.contains(DialogType.BeforeUnload))
     }
 }
 
@@ -594,7 +509,9 @@ class PdfOptionsTest {
     @Test
     fun `pdf options defaults`() {
         val options = PdfOptions()
-        assertEquals(PdfFormat.Letter, options.format)
+        assertNull(options.format)
+        assertEquals(8.5 to 11.0, options.paperSizeInches())
+        assertNull(options.timeoutMs)
         assertFalse(options.landscape)
         assertFalse(options.displayHeaderFooter)
         assertEquals("", options.headerTemplate)
@@ -635,10 +552,11 @@ class PdfMarginTest {
     @Test
     fun `pdf margin defaults`() {
         val margin = PdfMargin()
-        assertEquals("1cm", margin.top)
-        assertEquals("1cm", margin.bottom)
-        assertEquals("1cm", margin.left)
-        assertEquals("1cm", margin.right)
+        assertEquals("0", margin.top)
+        assertEquals("0", margin.bottom)
+        assertEquals("0", margin.left)
+        assertEquals("0", margin.right)
+        assertEquals(0.0, pdfLengthInches(margin.top), 0.0)
     }
 
     @Test
@@ -687,19 +605,19 @@ class A11ySnapshotOptionsTest {
 
     @Test
     fun `default options`() {
-        val options = A11ySnapshotOptions()
+        val options = SnapshotOptions()
         assertFalse(options.includeHidden)
         assertNull(options.maxDepth)
-        assertFalse(options.interactiveOnly)
+        assertFalse(options.interactive)
         assertFalse(options.compact)
     }
 
     @Test
     fun `custom options`() {
-        val options = A11ySnapshotOptions(includeHidden = true, maxDepth = 10, interactiveOnly = true, compact = true)
+        val options = SnapshotOptions(includeHidden = true, maxDepth = 10, interactive = true, compact = true)
         assertTrue(options.includeHidden)
         assertEquals(10, options.maxDepth)
-        assertTrue(options.interactiveOnly)
+        assertTrue(options.interactive)
         assertTrue(options.compact)
     }
 }
@@ -719,7 +637,7 @@ class ActionTypeTest {
     @Test
     fun `ActionType has all expected values`() {
         val types = ActionType.entries
-        assertEquals(15, types.size)
+        assertEquals(22, types.size)
         assertTrue(types.contains(ActionType.Click))
         assertTrue(types.contains(ActionType.Navigate))
         assertTrue(types.contains(ActionType.AddScriptTag))
@@ -741,20 +659,18 @@ class RefEntryTest {
 
     @Test
     fun `RefEntry defaults`() {
-        val entry = RefEntry(refId = "@e1", role = "button", name = "Click")
-        assertEquals("@e1", entry.refId)
+        val entry = RefEntry(ref = "@e1", role = "button", name = "Click")
+        assertEquals("@e1", entry.ref)
         assertEquals("button", entry.role)
         assertEquals("Click", entry.name)
         assertNull(entry.cssSelector)
-        assertNull(entry.nth)
     }
 
     @Test
     fun `RefEntry with all fields`() {
-        val entry = RefEntry(refId = "@e2", role = "link", name = "Home", cssSelector = "nav > a", nth = 1)
-        assertEquals("@e2", entry.refId)
+        val entry = RefEntry(ref = "@e2", role = "link", name = "Home", cssSelector = "nav > a")
+        assertEquals("@e2", entry.ref)
         assertEquals("nav > a", entry.cssSelector)
-        assertEquals(1, entry.nth)
     }
 }
 

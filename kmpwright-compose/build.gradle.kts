@@ -3,7 +3,6 @@ import com.vanniktech.maven.publish.DeploymentValidation
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.plugin.compose")
-    id("org.jetbrains.kotlin.plugin.serialization")
     alias(libs.plugins.maven.publish)
 }
 
@@ -40,7 +39,9 @@ publishing {
 
 android {
     namespace = "com.bernaferrari.kmpwright.compose"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
 
     defaultConfig {
         minSdk = 26
@@ -71,25 +72,21 @@ android {
 }
 
 kotlin {
+    // Every public declaration states its visibility. (KGP's ABI validation does not see AGP's
+    // built-in Kotlin compilation yet, so the binary API dump is kept for kmpwright-core only.)
+    explicitApi()
+
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
 dependencies {
-    implementation(project(":kmpwright-core"))
+    // Public signatures expose core types (Page, KmpwrightConfig, NavigationResult).
+    api(project(":kmpwright-core"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
-    implementation(libs.androidx.ui.graphics)
-    implementation(libs.androidx.ui.tooling.preview)
-    implementation(libs.androidx.material3)
-    implementation(libs.androidx.material.icons.extended)
+    // BackHandler
     implementation(libs.androidx.activity.compose)
-
-    testImplementation(libs.junit)
-    testImplementation(libs.kotlinx.coroutines.test)
-    debugImplementation(libs.androidx.ui.tooling)
-    debugImplementation(libs.androidx.ui.test.manifest)
-    debugImplementation(libs.androidx.ui.test.junit4)
 }

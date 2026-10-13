@@ -25,7 +25,7 @@ class WaitForObserverTest {
             evalHandler = { script ->
                 when {
                     script.contains("new Promise") -> "{}"
-                    script.contains("var list = window.__kmpwright_resolveAll") -> (++polls >= 2).toString()
+                    script.contains("/*kmpwright:waitFor*/") -> (++polls >= 2).toString()
                     else -> null
                 }
             }

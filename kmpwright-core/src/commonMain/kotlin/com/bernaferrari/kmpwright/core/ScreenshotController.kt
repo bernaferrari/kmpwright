@@ -1,6 +1,6 @@
 package com.bernaferrari.kmpwright.core
 
-interface ScreenshotController {
+internal interface ScreenshotController {
     /** Backends override this when they support encoding/background options. */
     suspend fun capture(options: ScreenshotOptions): ScreenshotResult {
         require(options.scale.isFinite() && options.scale > 0) { "Screenshot scale must be positive" }
@@ -20,7 +20,25 @@ interface ScreenshotController {
     fun getPageDimensions(): PageDimensions
 }
 
-data class PageDimensions(
+/**
+ * Trims a viewport-relative [clip] to the viewport like Playwright (`trimClipToSize`).
+ * @throws KmpwrightException when nothing of the clip is inside the viewport.
+ */
+internal fun trimScreenshotClip(clip: Rectangle, viewportWidth: Double, viewportHeight: Double): Rectangle {
+    val left = maxOf(clip.x, 0.0)
+    val top = maxOf(clip.y, 0.0)
+    val right = minOf(clip.x + clip.width, viewportWidth)
+    val bottom = minOf(clip.y + clip.height, viewportHeight)
+    if (right - left < 1e-6 || bottom - top < 1e-6) {
+        throw KmpwrightException(
+            "Clipped area is either empty or outside the viewport: clip=(${clip.x}, ${clip.y}, ${clip.width}x${clip.height}), " +
+                "viewport=${viewportWidth}x$viewportHeight"
+        )
+    }
+    return Rectangle(left, top, right - left, bottom - top)
+}
+
+internal data class PageDimensions(
     val contentWidth: Int,
     val contentHeight: Int,
     val viewportWidth: Int,

@@ -19,7 +19,7 @@ import kotlinx.coroutines.withContext
  * Each provider makes an HTTP POST to create a browser session,
  * returning a [ProviderSession] with a CDP WebSocket URL.
  */
-object CloudProviders {
+internal object CloudProviders {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val httpClient = HttpClient.newBuilder()
@@ -33,7 +33,8 @@ object CloudProviders {
     suspend fun resolveWsUrl(config: CdpConfig): ProviderSession {
         // Direct URL takes precedence
         config.websocketUrl?.let {
-            val wsUrl = ChromeDiscovery.resolveCdpEndpoint(it)
+            // Discovery performs blocking HTTP/WebSocket probes; keep them off the caller's dispatcher.
+            val wsUrl = withContext(Dispatchers.IO) { ChromeDiscovery.resolveCdpEndpoint(it) }
                 ?: throw KmpwrightException("Unable to resolve CDP endpoint: $it")
             return ProviderSession(
                 provider = "direct",
@@ -140,7 +141,7 @@ object CloudProviders {
     // --- Auto-connect ---
 
     private suspend fun autoConnect(): ProviderSession {
-        val wsUrl = ChromeDiscovery.discoverChromeWsUrl()
+        val wsUrl = withContext(Dispatchers.IO) { ChromeDiscovery.discoverChromeWsUrl() }
             ?: throw KmpwrightException(
                 "No running Chrome instance found. Start Chrome with --remote-debugging-port=9222"
             )
@@ -168,12 +169,8 @@ object CloudProviders {
                 val apiKey = System.getenv("BROWSER_USE_API_KEY") ?: return
                 httpPatch(stopUrl, """{"action":"stop"}""", mapOf("X-Browser-Use-API-Key" to apiKey), timeoutSeconds = 4)
             } else {
-                // Other providers use DELETE
-                val headers = if (session.provider == "kernel") {
-                    val apiKey = System.getenv("KERNEL_API_KEY") ?: return
-                    mapOf("Authorization" to "Bearer $apiKey")
-                } else emptyMap()
-                httpDelete(stopUrl, headers)
+                // Other providers use DELETE with their own credentials.
+                httpDelete(stopUrl, releaseHeaders(session.provider, System::getenv) ?: return)
             }
         } catch (e: CancellationException) {
             throw e
@@ -207,6 +204,7 @@ object CloudProviders {
             .DELETE()
         headers.forEach { (key, value) -> builder.header(key, value) }
         val response = httpClient.send(builder.build(), java.net.http.HttpResponse.BodyHandlers.ofString())
+        if (response.statusCode() !in 200..299) throw KmpwrightException("Provider API error ${response.statusCode()}")
         response.body()
     }
 
@@ -218,9 +216,22 @@ object CloudProviders {
             .method("PATCH", HttpRequest.BodyPublishers.ofString(body))
         headers.forEach { (key, value) -> builder.header(key, value) }
         val response = httpClient.send(builder.build(), java.net.http.HttpResponse.BodyHandlers.ofString())
+        if (response.statusCode() !in 200..299) throw KmpwrightException("Provider API error ${response.statusCode()}")
         response.body()
     }
 
+}
+
+/**
+ * Headers used to release a provider session via DELETE, or null when the
+ * provider's credential is unavailable. Browserless authenticates its session
+ * endpoints with the same Bearer API key used to create the session; sending
+ * an unauthenticated DELETE would be rejected and leak the cloud session.
+ */
+internal fun releaseHeaders(provider: String, lookup: (String) -> String?): Map<String, String>? = when (provider) {
+    "kernel" -> lookup("KERNEL_API_KEY")?.let { mapOf("Authorization" to "Bearer $it") }
+    "browserless" -> lookup("BROWSERLESS_API_KEY")?.let { mapOf("Authorization" to "Bearer $it") }
+    else -> emptyMap()
 }
 
 internal data class ProviderHttpRequest(val body: String, val headers: Map<String, String>)

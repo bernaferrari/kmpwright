@@ -1,0 +1,280 @@
+---
+title: Compose
+description: Host an automated WebView in Jetpack Compose with the kmpwright-compose module, or share one WebView across Android and iOS in Compose Multiplatform with AndroidView and UIKitView.
+---
+
+```kotlin
+import com.bernaferrari.kmpwright.compose.KmpwrightWebView
+import com.bernaferrari.kmpwright.compose.rememberKmpwrightController
+
+@Composable
+fun Checkout() {
+    val controller = rememberKmpwrightController()
+    val scope = rememberCoroutineScope()
+
+    Column {
+        Text(controller.title ?: "Loading…")
+        if (controller.isLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+        Button(onClick = {
+            scope.launch {
+                val page = controller.page ?: return@launch
+                page.getByLabel("Email").fill("me@example.com")
+                page.getByRole("button", name = "Continue").click()
+            }
+        }) { Text("Autofill") }
+
+        KmpwrightWebView(
+            controller = controller,
+            modifier = Modifier.fillMaxSize(),
+            startUrl = "https://example.com/checkout",
+        )
+    }
+}
+```
+
+`kmpwright-compose` is an **Android-only** Jetpack Compose library. It wraps an Android `WebView` in `AndroidView`, connects a `Browser` to it, and exposes the page and its navigation state as Compose state. For Compose Multiplatform (Android and iOS from shared code), host the WebView yourself as shown in [Compose Multiplatform](#compose-multiplatform).
+
+## Installation
+
+```kotlin
+// build.gradle.kts (Android app module)
+dependencies {
+    implementation("io.github.bernaferrari:kmpwright-compose:<version>")
+}
+```
+
+The module depends on `kmpwright-core` through `api`, so you don't add core separately. It needs `minSdk` 26 and pulls in Compose UI and `activity-compose` (for `BackHandler`). See [Installation](/docs/installation) for the current version.
+
+## KmpwrightWebView
+
+```kotlin
+@Composable
+fun KmpwrightWebView(
+    controller: KmpwrightWebViewController,
+    modifier: Modifier = Modifier,
+    startUrl: String? = null,
+    captureBackPresses: Boolean = true,
+    onCreated: (WebView) -> Unit = {}
+)
+```
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `controller` | | State holder from `rememberKmpwrightController()`. |
+| `modifier` | `Modifier` | Applied to the `AndroidView`. |
+| `startUrl` | `null` | Loaded once per attached WebView, and again if it changes. `null` leaves the page blank. Failures go to `controller.lastError`. |
+| `captureBackPresses` | `true` | While the WebView can go back, the system back gesture navigates its history instead of leaving the screen. |
+| `onCreated` | `{}` | Called with the new `WebView` before KMPwright attaches. Clients you install here keep receiving every callback, because KMPwright delegates to them. |
+
+The composable creates the `WebView` with JavaScript and DOM storage enabled, file and content access disabled, and `MIXED_CONTENT_NEVER_ALLOW`. Change settings in `onCreated` if you need to:
+
+```kotlin
+KmpwrightWebView(
+    controller = controller,
+    onCreated = { webView ->
+        webView.settings.textZoom = 100
+        webView.webViewClient = MyWebViewClient()   // still receives callbacks
+    },
+)
+```
+
+When the composable leaves the composition, the controller detaches, the `Browser` is disposed and the `WebView` is destroyed.
+
+If the WebView's renderer process crashes or is killed, the controller sets `lastError`, and the composable creates a new WebView with a new `Page`. Code that held the old `controller.page` must read it again.
+
+## rememberKmpwrightController
+
+```kotlin
+@Composable
+fun rememberKmpwrightController(config: KmpwrightConfig = KmpwrightConfig()): KmpwrightWebViewController
+```
+
+`config` is read once. Changing it later doesn't recreate the controller. `config.userAgent` is applied to the WebView when it attaches. The controller is kept with `remember`, so it doesn't survive configuration changes such as rotation, unless your activity handles them itself.
+
+## KmpwrightWebViewController
+
+Use every member on the main thread. Properties are Compose snapshot state, so reading them in a composable recomposes it when they change.
+
+| Member | Type | Meaning |
+|---|---|---|
+| `page` | `Page?` | The attached page. null until the WebView attaches and after it is released. Use it for the full [Page API](/docs/reference/page). |
+| `url` | `String?` | Committed URL. |
+| `title` | `String?` | Document title. |
+| `isLoading` | `Boolean` | A navigation is in progress. |
+| `canGoBack` | `Boolean` | History has a previous entry. |
+| `canGoForward` | `Boolean` | History has a next entry. |
+| `lastError` | `Throwable?` | Last failure of a fire-and-forget call, or a renderer crash. |
+| `clearError()` | `Unit` | Sets `lastError` to null. |
+| `goto(url)` | `suspend`, `NavigationResult` | Same as `page.goto(url)`. Throws `KmpwrightException` if no WebView is attached. |
+| `evaluate(script)` | `suspend`, `String` | Same as `page.evaluate(script).value`: strings as is, other values as JSON. |
+| `loadUrl(url)` | `Unit` | Fire-and-forget `goto`. A result with `ok = false` is reported through `lastError`. |
+| `reload()` | `Unit` | Fire-and-forget reload. |
+| `goBack()` | `Unit` | Fire-and-forget history back. |
+| `goForward()` | `Unit` | Fire-and-forget history forward. |
+
+The state comes from `page.androidWebViewState()`, a `StateFlow<AndroidWebViewState>` in `kmpwright-core` that also reports `progress` and `rendererGone`. Collect it yourself if you host a WebView without this module.
+
+```kotlin
+// Toolbar driven by controller state
+Row {
+    IconButton(onClick = controller::goBack, enabled = controller.canGoBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
+    IconButton(onClick = controller::goForward, enabled = controller.canGoForward) { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) }
+    IconButton(onClick = controller::reload) { Icon(Icons.Default.Refresh, null) }
+    Text(controller.url.orEmpty(), maxLines = 1)
+}
+controller.lastError?.let { error ->
+    Snackbar(action = { TextButton(onClick = controller::clearError) { Text("Dismiss") } }) { Text(error.message.orEmpty()) }
+}
+```
+
+## KmpwrightDebugOverlay
+
+Draws rectangles over the WebView, for example element boxes from `locator.boundingBox()`.
+
+```kotlin
+var boxes by remember { mutableStateOf(emptyList<Rectangle>()) }
+
+Box(Modifier.fillMaxSize()) {
+    KmpwrightWebView(controller, Modifier.fillMaxSize())
+    KmpwrightDebugOverlay(highlights = boxes, modifier = Modifier.fillMaxSize())
+}
+
+LaunchedEffect(controller.page) {
+    val page = controller.page ?: return@LaunchedEffect
+    boxes = page.getByRole("button").all().mapNotNull { it.boundingBox() }
+}
+```
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `highlights` | | Rectangles in CSS pixels, relative to the viewport. |
+| `modifier` | `Modifier` | Give it the same size and position as the WebView so both share an origin. |
+| `cssPixelScale` | `1f` | dp per CSS pixel. 1 for pages with `width=device-width` and no pinch zoom. Otherwise multiply by the page zoom (`visualViewport.scale`). |
+| `color` | `Color.Red` | Stroke color. The fill is the same color at 25% alpha. |
+
+Boxes don't follow scrolling on their own. Measure again after the page scrolls.
+
+## Compose Multiplatform
+
+`kmpwright-compose` doesn't target iOS. In a Compose Multiplatform app, create the native web view in platform code, wrap it in a `PlatformContext`, and show it with `AndroidView` or `UIKitView`. The [sample app](/docs/sample-app) (`kmpwright-example-shared`) does this, and the code below follows it.
+
+```kotlin
+// commonMain
+@Composable expect fun rememberPlatformContext(): PlatformContext
+expect fun disposePlatformContext(context: PlatformContext)
+@Composable expect fun WebViewHost(platformContext: PlatformContext, modifier: Modifier = Modifier)
+
+@Composable
+fun BrowserScreen() {
+    val platformContext = rememberPlatformContext()
+    val browser = remember(platformContext) { Browser(platformContext) }
+    val page = remember(browser) { browser.page() }
+    DisposableEffect(browser) {
+        onDispose {
+            browser.dispose()                       // non-suspending teardown for onDispose
+            disposePlatformContext(platformContext)
+        }
+    }
+    LaunchedEffect(page) { page.goto("https://example.com") }
+    WebViewHost(platformContext, Modifier.fillMaxSize())
+}
+```
+
+<Tabs items={['Android', 'iOS']}>
+<Tab value="Android">
+
+```kotlin
+// androidMain
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+actual fun rememberPlatformContext(): PlatformContext {
+    val context = LocalContext.current
+    return remember(context) {
+        val webView = WebView(context).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        }
+        AndroidPlatformContext(context = context, webView = webView)
+    }
+}
+
+actual fun disposePlatformContext(context: PlatformContext) {
+    (context as AndroidPlatformContext).webView?.apply {
+        (parent as? ViewGroup)?.removeView(this)
+        destroy()
+    }
+}
+
+@Composable
+actual fun WebViewHost(platformContext: PlatformContext, modifier: Modifier) {
+    val webView = requireNotNull((platformContext as AndroidPlatformContext).webView)
+    AndroidView(
+        modifier = modifier,
+        factory = {
+            // The same WebView can move between layouts; detach it first.
+            (webView.parent as? ViewGroup)?.removeView(webView)
+            webView
+        },
+        onRelease = { (it.parent as? ViewGroup)?.removeView(it) },
+    )
+}
+```
+
+</Tab>
+<Tab value="iOS">
+
+```kotlin
+// iosMain
+@OptIn(ExperimentalForeignApi::class)
+@Composable
+actual fun rememberPlatformContext(): PlatformContext =
+    remember { IOSPlatformContext(WKWebView()) }
+
+@OptIn(ExperimentalForeignApi::class)
+actual fun disposePlatformContext(context: PlatformContext) {
+    (context as IOSPlatformContext).webView?.apply {
+        stopLoading()
+        removeFromSuperview()
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+@Composable
+actual fun WebViewHost(platformContext: PlatformContext, modifier: Modifier) {
+    val webView = requireNotNull((platformContext as IOSPlatformContext).webView)
+    UIKitView(
+        modifier = modifier,
+        factory = { UIView() },
+        update = { container ->
+            // Adopt the shared WKWebView into this container.
+            if (webView.superview != container) {
+                webView.removeFromSuperview()
+                webView.setFrame(container.bounds)
+                webView.autoresizingMask = UIViewAutoresizingFlexibleWidth or UIViewAutoresizingFlexibleHeight
+                container.addSubview(webView)
+            }
+        },
+    )
+}
+```
+
+</Tab>
+</Tabs>
+
+Things to keep in mind:
+
+- **One web view, one `Browser`.** The web view is created once and lives as long as the composition (`remember`). The layout only reparents it. That way the page, its history and its automation state survive layout changes, such as moving between phone and tablet layouts.
+- **Construct on the main thread.** On Android, `Browser(AndroidPlatformContext(...))` must be created on the main thread. Composition already runs there.
+- **Dispose from `onDispose` with `dispose()`.** `Browser.dispose()` and `Page.dispose()` don't suspend, so they are safe in `onDispose`. Use `close()` when you can suspend.
+- **Storage on iOS.** `WKWebView()` uses the default persistent website data store. If you pass no web view and no data store, KMPwright uses a non-persistent store. See [Storage](/docs/guides/storage#isolation-per-backend).
+- **Native layout wins.** The host layout sizes the web view, so `setViewportSize` can be overridden by your Compose layout. See [Emulation](/docs/guides/emulation#viewport-and-device-scale-factor).
+
+## Related
+
+- [Sample app](/docs/sample-app)
+- [Android platform](/docs/platforms/android)
+- [iOS platform](/docs/platforms/ios)
+- [Page reference](/docs/reference/page)

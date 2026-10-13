@@ -1,0 +1,491 @@
+---
+title: Actions
+description: Click, fill, type, press, check, select, drag and use the mouse, keyboard and touchscreen, with the auto-wait rules each action applies on every backend.
+---
+
+```kotlin
+val search = page.getByRole("searchbox", name = "Search")
+search.fill("kotlin multiplatform")
+search.press("Enter")
+
+page.getByRole("checkbox", name = "Stable releases only").check()
+page.locator("select#sort").selectOption("newest")
+page.getByRole("link", name = "Next").click(ClickOptions(timeoutMs = 5_000))
+
+page.locator("#editor").press("Control+A")
+page.locator("#editor").pressSequentially("Hello", PressSequentiallyOptions(delayMs = 50))
+```
+
+Actions are suspend functions on `Locator`. Each one resolves the locator, waits until the element is ready for that action, performs it, and returns. Nothing is retried after the action runs. To wait for the result, follow up with an [assertion](/docs/guides/assertions) or `page.waitForURL`.
+
+For how locators are built and matched, see [Locators](/docs/guides/locators).
+
+## Auto-waiting
+
+Before an action, KMPwright polls the element until it passes the checks that action needs, or until the action timeout expires. The in-page runtime does this on Android WebView, on iOS WKWebView, and on JVM when `InputMode.JsOnly` is set. The JVM native-input path behaves differently. See [JVM native input](#jvm-native-input).
+
+| Check | Passes when |
+|---|---|
+| Attached | The locator matches an element that is connected to the document. |
+| Visible | The element has a non-empty bounding box and `visibility` is not `hidden` or `collapse`. |
+| Enabled | The element does not match `:disabled`, and neither it nor an ancestor has `aria-disabled="true"`. |
+| Editable | The element is an `input` (not `checkbox`, `radio`, `file`, `button`, `submit`, `reset`, `image`, `hidden`, `range` or `color`), a `textarea`, a `select` or `[contenteditable]`, and is not `readonly` or `aria-readonly="true"`. |
+| Stable | The bounding box is unchanged (within 0.5 px) across two consecutive probes about two animation frames (34 ms) apart. |
+| Receives events | `elementFromPoint` at the action point returns the element, a descendant, a `<label>` whose control is the element, or the element's shadow host. |
+
+When an element is not fully inside the viewport, actions that use a pointer scroll it into view first, centred, before the stable and receives-events checks.
+
+| Action | Attached | Visible | Enabled | Editable | Stable | Receives events | Scrolls |
+|---|---|---|---|---|---|---|---|
+| `click`, `dblclick`, `tap` | yes | yes | yes | | yes | yes | yes |
+| `check`, `uncheck`, `setChecked` | yes | yes | yes | | yes | yes | yes |
+| `hover` | yes | yes | | | yes | yes | yes |
+| `fill`, `clear` | yes | yes | yes | yes | | | yes |
+| `pressSequentially` | yes | yes | yes | | | | yes |
+| `selectOption` | yes | yes | yes | | | | yes |
+| `dragTo` (source) | yes | yes | | | yes | yes | yes |
+| `dragTo` (target) | yes | yes | | | | | |
+| `scrollIntoViewIfNeeded` | yes | yes | | | yes | | |
+| `press`, `focus`, `blur`, `dispatchEvent`, `evaluate` | yes | | | | | | |
+
+`check`, `uncheck` and `setChecked` read the current state before they wait. If nothing matches yet, they throw at once instead of waiting.
+
+Polling backs off over 0, 20, 50, 100, 100, 250 and 500 ms, then repeats every 500 ms. An unstable element is re-probed after 34 ms. When time runs out, the action throws `KmpwrightTimeoutException`. The message names the failing check and the element:
+
+```text
+Element #save is not enabled after 30000ms while trying to click: <button id="save" disabled>Save</button>
+Element .buy would not receive the click: it is covered by <div class="backdrop"></div> (pass force = true only when that is intended) after 30000ms while trying to click: <button class="buy">Buy</button>
+```
+
+Some failures happen immediately: a [strict mode](/docs/guides/locators#strictness) violation, an invalid selector, and filling an element that can never be filled (for example `fill` on a checkbox). Playwright: same.
+
+### force
+
+`force = true` (on `ClickOptions`, `TapOptions`, `HoverOptions`, `FillOptions`, `CheckOptions`, `ActionOptions`) skips the visible, enabled, stable and receives-events checks. For `fill` it also allows `readonly` elements. The element still has to be attached, and `fill` still rejects element types that can't be filled. `press`, `pressSequentially` and `focus` have no `force` option.
+
+### JVM native input
+
+On JVM with the default `InputMode.Hybrid`, `click`, `dblclick`, `tap`, `hover`, `fill`, `clear`, `pressSequentially`, `press` and `dragTo` send trusted Chrome input (`Input.dispatchMouseEvent`, `Input.dispatchKeyEvent`, `Input.insertText`, `Input.dispatchTouchEvent`). These paths check readiness differently:
+
+- They wait for the element to be visible (skipped with `force`). `press` and `dragTo` don't wait.
+- They scroll the element to the centre of the viewport, then check once that it is enabled, inside the viewport and not covered (skipped with `force`). `fill`, `pressSequentially` and `press` instead focus the element and fail if it is disabled, read-only or can't take focus.
+- If one of those checks fails, the action throws `KmpwrightException` right away. It does not retry, and there is no stability check.
+- A timeout throws `KmpwrightException("Timeout performing action on '<selector>'")`.
+
+Catch `KmpwrightException`, the base type, to handle errors from both paths. Set `KmpwrightConfig(inputMode = InputMode.JsOnly)` to use the retrying runtime on JVM, at the cost of untrusted events.
+
+## Timeouts
+
+Every action takes `timeoutMs: Long?`. `null` uses the page's `KmpwrightConfig.timeouts`:
+
+| `TimeoutConfig` field | Default | Used by |
+|---|---|---|
+| `action` | 30 000 ms | Locator actions, `Page` action shortcuts, input-device calls |
+| `waitForSelector` | 30 000 ms | `locator.waitFor`, `page.waitForSelector`, `Page` query shortcuts, assertions |
+| `navigation` | 30 000 ms | `goto`, `reload`, `goBack`, `goForward`, `setContent`, `waitForNavigation` |
+| `default` | 30 000 ms | Script evaluation, screenshots, PDF and other page operations |
+
+```kotlin
+val config = KmpwrightConfig(timeouts = TimeoutConfig(action = 10_000))
+page.getByText("Pay").click(ClickOptions(timeoutMs = 2_000))   // per-call override
+```
+
+A timeout must be positive. `0` or less is rejected with an exception.
+
+## Click and tap
+
+```kotlin
+page.getByRole("button", name = "Save").click()
+page.locator("#canvas").click(ClickOptions(position = Position(10.0, 20.0)))
+page.locator(".row").click(ClickOptions(button = MouseButton.RIGHT))
+page.locator(".word").dblclick()
+page.locator(".card").tap()
+```
+
+### ClickOptions
+
+Used by `click` and `dblclick`.
+
+<TypeTable
+  type={{
+    button: { type: 'MouseButton', description: 'LEFT, MIDDLE or RIGHT. A right click also fires contextmenu; non-left buttons fire auxclick instead of click.', default: 'MouseButton.LEFT' },
+    clickCount: { type: 'Int', description: 'Number of press/release pairs for click. The second pair also fires dblclick. dblclick ignores this field.', default: '1' },
+    delayMs: { type: 'Long', description: 'JVM native input: time between mousedown and mouseup. In-page runtime (Android, iOS, JVM JsOnly): a wait before the click sequence starts.', default: '0' },
+    position: { type: 'Position?', description: 'Point relative to the element\'s top-left corner, in CSS pixels. null uses the centre of the part of the element inside the viewport.', default: 'null' },
+    force: { type: 'Boolean', description: 'Skip the visible, enabled, stable and receives-events checks.', default: 'false' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+On the in-page runtime, a click dispatches the full sequence in this order: `pointerover`, `pointerenter`, `mouseover`, `mouseenter`, `pointermove`, `mousemove`, `pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`. On `mousedown` it focuses the nearest focusable ancestor. A canceled `pointerdown` suppresses `mousedown` and `mouseup` (but not `click`), as in browsers.
+
+### TapOptions
+
+Used by `tap` and `page.touchscreen.tap`.
+
+<TypeTable
+  type={{
+    force: { type: 'Boolean', description: 'Skip the visible, enabled, stable and receives-events checks.', default: 'false' },
+    modifiers: { type: 'Int', description: 'Modifier bitmask (Alt = 1, Control = 2, Meta = 4, Shift = 8). Sent only with JVM CDP touch events; WebViews ignore it.', default: '0' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+On the in-page runtime, `tap` fires `pointerover`, `pointerdown`, `touchstart`, `pointerup`, `touchend` and `pointerout`, then the compatibility `mouseover`, `mousemove`, `mousedown`, `mouseup` and `click` unless the page canceled the touch events.
+
+## Fill and clear
+
+```kotlin
+page.getByLabel("Email").fill("ada@example.com")
+page.getByLabel("Notes").fill("line 1\nline 2")      // textarea
+page.locator("[contenteditable]").fill("Rich text")
+page.locator("input[type=date]").fill("2026-10-12")
+page.getByLabel("Email").clear()                      // same as fill("")
+```
+
+`fill(value)` replaces the whole value of an `input`, `textarea`, `select` or `[contenteditable]` element. Playwright: same, including `select` support.
+
+<TypeTable
+  type={{
+    force: { type: 'Boolean', description: 'Skip the visible and enabled checks and allow readonly elements (in-page runtime). On JVM native input, it only skips the visibility wait.', default: 'false' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+On the in-page runtime (Android, iOS, JVM `JsOnly`), the value is set like this:
+
+1. The element is focused and its content is selected.
+2. A cancelable `beforeinput` is dispatched. If the page cancels it, the value is left unchanged. Date, time, month, week and datetime-local inputs skip this step.
+3. The value is written through the `HTMLInputElement`/`HTMLTextAreaElement`/`HTMLSelectElement` prototype `value` setter, captured when the runtime was installed. React, Vue and other frameworks with controlled inputs track changes through an instance-level setter, so writing through the prototype is how a real edit looks to them.
+4. `input` (with `inputType` `insertText`, or `deleteContentBackward` for an empty value), then `change`, are dispatched.
+
+Per element type:
+
+- `[contenteditable]`: content is selected and replaced with `document.execCommand('insertText')`. If that fails, `textContent` is set and `beforeinput`/`input` are dispatched.
+- `select`: the option is chosen by `value`, then by visible label. `input` and `change` are dispatched. A missing option fails.
+- `input[type=number]`: a non-numeric value fails.
+- `date`, `time`, `month`, `week`, `datetime-local`: the browser must accept the value as-is (for example `2026-10-12`). Otherwise the fill fails with `Malformed value`.
+
+On JVM native input, `fill` focuses the element, selects its content and calls `Input.insertText`. An empty value presses Backspace instead. Chrome's own editing produces trusted `beforeinput`/`input` events, but no `change` event fires until the element loses focus. This path accepts only elements that can be selected as text (`input`, `textarea`, `[contenteditable]`). Use `selectOption` for `select`.
+
+## Typing and key presses
+
+```kotlin
+val input = page.getByLabel("Search")
+input.pressSequentially("kmp", PressSequentiallyOptions(delayMs = 100))
+input.press("Enter")
+input.press("Shift+Tab")
+page.locator("textarea").press("Control+A")
+page.locator("textarea").press("Backspace")
+```
+
+- `fill` sets the value in one step. Use it unless the page reacts to individual keystrokes.
+- `pressSequentially(text)` types one character at a time. Playwright: same name; formerly `type`.
+- `press(key)` presses one key or chord on the element, focusing it first.
+
+<TypeTable
+  type={{
+    'PressSequentiallyOptions.delayMs': { type: 'Long', description: 'Wait between characters.', default: '0' },
+    'PressSequentiallyOptions.timeoutMs': { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+    'PressOptions.delayMs': { type: 'Long', description: 'JVM native input and page.keyboard: time between keydown and keyup. Locator.press on the in-page runtime: a wait before the key press.', default: '0' },
+    'PressOptions.timeoutMs': { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+### Key names
+
+| Kind | Names |
+|---|---|
+| Named keys | `Enter`, `Tab`, `Escape`, `Backspace`, `Delete`, `ArrowLeft`, `ArrowUp`, `ArrowRight`, `ArrowDown`, `Home`, `End`, `PageUp`, `PageDown`, `F1`–`F12`. Case-sensitive: use the DOM `key` spelling. |
+| Characters | Any single character: `"a"`, `"A"`, `"7"`, `"?"`, `" "` (space). |
+| Modifiers | `Shift`, `Control` (`Ctrl`), `Alt` (`Option`), `Meta` (`Cmd`, `Command`). Case-insensitive. |
+| Chords | Modifiers and a key joined by `+`: `"Control+A"`, `"Shift+Tab"`, `"Meta+Shift+K"`. `"Control++"` presses `+`. |
+
+For a space, press `" "`. The name `"Space"` is not mapped to the space character.
+
+`ControlOrMeta` (Meta on macOS, Control elsewhere) works only on JVM native input. Elsewhere it fails with `Unknown modifier`.
+
+Key events carry `key`, `code` and `keyCode` for a US layout. With Shift held, letters become uppercase and digits and punctuation become their shifted characters (`Shift+1` produces `!`). With Control, Alt or Meta held, no text is inserted.
+
+### Default key actions
+
+On the in-page runtime, `press` and `pressSequentially` dispatch `keydown`, `keypress` (for printable keys and Enter) and `keyup`, then perform the browser's default action themselves. Canceling `keydown` skips `keypress` and the default action. Canceling `keypress` skips text insertion.
+
+| Key | Default action |
+|---|---|
+| Printable character | Inserted at the caret with `beforeinput` and `input`. Respects `maxlength`, `readonly` and `disabled`. |
+| `Enter` | `textarea`: inserts a newline. `[contenteditable]`: inserts a paragraph. Text input inside a `form`: implicit submission. If the form has a submit button, the first one is clicked, or nothing happens when it is disabled. Without one, `requestSubmit()` is called. `button`, `a[href]`, `summary`, `input[type=submit\|button\|reset\|image]`: clicks it. |
+| `Backspace` / `Delete` | In a text field: deletes the selection, or one character before/after the caret. |
+| `Tab` / `Shift+Tab` | Moves focus to the next/previous visible tabbable element, in `tabindex` order, wrapping around. |
+| `ArrowLeft`, `ArrowRight`, `Home`, `End` | Move the caret in `input` and `textarea`. |
+| `" "` (space) | On `button`, `summary`, checkbox, radio and button-type inputs, or `role=button\|checkbox\|radio\|switch`: clicks it on keyup instead of inserting a space. |
+| `Control+A` / `Meta+A` | Selects all content of the field or `[contenteditable]`. |
+| Other keys and chords | Events only. |
+
+`pressSequentially` treats `"\n"` as Enter. It does not fire `change`.
+
+On JVM native input, Chrome performs the default actions itself.
+
+## Hover, focus and blur
+
+```kotlin
+page.getByRole("menuitem", name = "File").hover()
+page.getByLabel("Name").focus()
+page.getByLabel("Name").blur()
+```
+
+`hover(HoverOptions(force, timeoutMs))` moves the pointer over the element's centre. On the in-page runtime it dispatches `pointerover`/`pointerenter`/`mouseover`/`mouseenter`/`pointermove`/`mousemove`, plus `pointerout`/`mouseout`/`pointerleave`/`mouseleave` on the previously hovered element. On the runtime, a disabled element can be hovered. On JVM native input, `hover` fails on a disabled element unless `force = true`.
+
+`focus(timeoutMs)` focuses the element without scrolling. `blur(timeoutMs)` waits for the element to be attached and calls `el.blur()`.
+
+## Checkboxes and radio buttons
+
+```kotlin
+page.getByLabel("Accept terms").check()
+page.getByRole("switch", name = "Wi-Fi").setChecked(false)
+page.locator("#newsletter").uncheck(CheckOptions(force = true))
+```
+
+`check`, `uncheck` and `setChecked(Boolean)` work on `input[type=checkbox]`, `input[type=radio]` and elements with `aria-checked`:
+
+1. Read the current state (`indeterminate`/`aria-checked="mixed"` counts as checked). Any other element throws `is not a checkbox or radio button`.
+2. Return if the element is already in the requested state.
+3. Click it with the `force` and `timeoutMs` from `CheckOptions`, using the backend's click.
+4. Read the state again. If it did not change, throw `Clicking … did not check it`.
+
+Unchecking a radio button throws. Check another option in the group instead. Playwright: same.
+
+## Select options
+
+```kotlin
+page.locator("select#country").selectOption("PT")              // by value or label
+page.getByLabel("Toppings").selectOption(listOf("ham", "Olives"))  // multi-select
+page.getByLabel("Toppings").selectOption(emptyList())           // deselect all
+```
+
+`selectOption(value: String, ActionOptions)` and `selectOption(values: List<String>, ActionOptions)` match each value against `option.value` first, then against the option's whitespace-normalised label. Then they set the selection and dispatch `input` and `change`. Every backend uses the in-page runtime for this action.
+
+- The element must be a `select`. Anything else fails immediately.
+- More than one value on a single `select` fails.
+- A disabled option, or an option in a disabled `optgroup`, fails.
+- A value with no matching option is retried until the timeout. The error lists the available options as `value (label)`.
+
+Playwright: `selectOption` also accepts `{ index }` and `{ label }` objects. KMPwright takes strings only.
+
+## File inputs
+
+```kotlin
+page.locator("input[type=file]").setInputFiles(listOf("/tmp/report.pdf"))
+page.locator("input[type=file]").setInputFiles(emptyList())   // clear the selection
+```
+
+| Backend | `setInputFiles(files)` |
+|---|---|
+| JVM (CDP) | Sets the files with `DOM.setFileInputFiles`. Paths are made absolute and must be existing regular files. |
+| Android WebView, iOS WKWebView | Only `emptyList()` works: it clears the value and dispatches `input` and `change`. A non-empty list throws `setInputFiles is not supported in mobile WebView`. |
+
+`setInputFiles` does not run the actionability checks. It ignores the `ActionOptions` you pass. For file chooser dialogs opened by a click, see `page.waitForFileChooser` on [Dialogs and frames](/docs/guides/dialogs-and-frames).
+
+## Drag and drop
+
+```kotlin
+page.locator("#card-1").dragTo(page.locator("#done-column"))
+page.locator(".handle").dragTo(
+    page.locator(".track"),
+    DragOptions(sourcePosition = Position(5.0, 5.0), targetPosition = Position(200.0, 10.0)),
+)
+page.dragAndDrop("#card-1", "#done-column")
+```
+
+<TypeTable
+  type={{
+    sourcePosition: { type: 'Position?', description: 'Grab point relative to the source\'s top-left corner. null uses the visible centre.', default: 'null' },
+    targetPosition: { type: 'Position?', description: 'Drop point relative to the target\'s top-left corner. null uses the visible centre.', default: 'null' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+The target must be a locator from the same page.
+
+- In-page runtime: if the source or an ancestor has `draggable=true`, HTML5 drag events are dispatched with a shared `DataTransfer`, in 8 steps: `dragstart`, `drag`, `dragenter`/`dragleave`, `dragover`, `drop` (only when the last `dragover` was canceled) and `dragend`. Otherwise the drag is a pointer and mouse sequence (`pointerdown`/`mousedown`, 8 moves, `pointerup`/`mouseup`), which drag libraries built on pointer events understand.
+- JVM native input: a trusted mouse move to the source, press, 10-step move to the target, then release.
+
+## Scrolling
+
+```kotlin
+page.locator("#footer").scrollIntoViewIfNeeded()
+page.locator("#row-200").scrollIntoViewIfNeeded(ScrollIntoViewOptions(block = ScrollPosition.Start))
+page.scroll(ScrollDirection.Down, 600.0)
+page.scrollToBottom()
+```
+
+`scrollIntoViewIfNeeded(ScrollIntoViewOptions)` waits for the element to be visible and stable, then calls `scrollIntoView` with the given alignment.
+
+<TypeTable
+  type={{
+    block: { type: 'ScrollPosition', description: 'Vertical alignment: Start, Center, End or Nearest.', default: 'ScrollPosition.Center' },
+    inline: { type: 'ScrollPosition', description: 'Horizontal alignment.', default: 'ScrollPosition.Nearest' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.action.', default: 'null' },
+  }}
+/>
+
+Page-level scrolling uses `window.scrollBy`/`window.scrollTo` on every backend:
+
+| Method | Effect |
+|---|---|
+| `page.scroll(direction: ScrollDirection, amount: Double = 300.0)` | Scrolls the window by exactly `amount` CSS pixels `Up`, `Down`, `Left` or `Right`. `amount` must be finite and non-negative. agent-browser: `scroll down 300`. |
+| `page.scrollToTop()` | `window.scrollTo(0, 0)` |
+| `page.scrollToBottom()` | Scrolls to the bottom of the document. |
+
+To scroll an inner scrollable element, scroll a child into view, or use `page.mouse.wheel` (JVM, iOS) or `page.touchscreen.scroll` over it (see [Input devices](#input-devices)).
+
+## Dispatching events and evaluating
+
+```kotlin
+page.locator("#upload-zone").dispatchEvent("dragenter")
+val width = page.locator("#chart").evaluate("el => el.getBoundingClientRect().width").value
+page.locator("#bug").highlight(HighlightOptions(color = "rgba(0,128,255,0.3)", durationMs = 0))
+```
+
+- `dispatchEvent(type, timeoutMs)` waits for the element to be attached and dispatches a bubbling, cancelable, composed event. The constructor follows the type: `MouseEvent` for `click`, `dblclick`, `mouse*`, `contextmenu` and `auxclick`; `PointerEvent` for `pointer*`; `KeyboardEvent` for `key*`; `FocusEvent` for `focus*`/`blur`; `DragEvent` for `drag*`/`drop`; `TouchEvent` for `touch*`; `InputEvent` for `input`/`beforeinput`; `Event` otherwise. Playwright: there is no `eventInit` argument.
+- `evaluate(expression, timeoutMs)` calls a JavaScript function with the element and returns `JsResult(value, type)`. The function runs synchronously. A returned Promise is not awaited. It throws when `KmpwrightConfig.allowEval = false`.
+- `highlight(HighlightOptions)` draws a fixed-position overlay over the element's current box, for debugging.
+
+<TypeTable
+  type={{
+    color: { type: 'String', description: 'CSS background of the overlay.', default: '"rgba(255, 0, 0, 0.3)"' },
+    borderColor: { type: 'String', description: 'CSS colour of the 2 px border.', default: '"red"' },
+    durationMs: { type: 'Long', description: 'Time before the overlay is removed. 0 keeps it until the next navigation.', default: '3000' },
+  }}
+/>
+
+## Page shortcuts
+
+Each shortcut is `page.locator(selector).<action>(…)`. The selector accepts every engine and snapshot refs. Playwright: same names on `page`.
+
+| Shortcut | Equivalent |
+|---|---|
+| `page.click(selector, ClickOptions)` | `locator(selector).click(…)` |
+| `page.dblclick(selector, ClickOptions)` | `locator(selector).dblclick(…)` |
+| `page.tap(selector, TapOptions)` | `locator(selector).tap(…)` |
+| `page.fill(selector, value, FillOptions)` | `locator(selector).fill(…)` |
+| `page.clear(selector, FillOptions)` | `locator(selector).clear(…)` |
+| `page.type(selector, text, TypeOptions)` | `locator(selector).pressSequentially(text, PressSequentiallyOptions(delayMs, timeoutMs))` |
+| `page.press(selector, key, PressOptions)` | `locator(selector).press(…)` |
+| `page.hover(selector, HoverOptions)` | `locator(selector).hover(…)` |
+| `page.focus(selector, timeoutMs)` | `locator(selector).focus(…)` |
+| `page.check` / `uncheck(selector, CheckOptions)` | `locator(selector).check()` / `uncheck()` |
+| `page.setChecked(selector, checked, CheckOptions)` | `locator(selector).setChecked(…)` |
+| `page.selectOption(selector, value \| values, ActionOptions)` | `locator(selector).selectOption(…)` |
+| `page.setInputFiles(selector, files, ActionOptions)` | `locator(selector).setInputFiles(…)` |
+| `page.dragAndDrop(source, target, DragOptions)` | `locator(source).dragTo(locator(target), …)` |
+| `page.dispatchEvent(selector, type, timeoutMs)` | `locator(selector).dispatchEvent(…)` |
+| `page.highlight(selector, HighlightOptions)` | `locator(selector).highlight(…)` |
+
+The shortcuts are extension functions in `com.bernaferrari.kmpwright.core`. For the read-only shortcuts (`textContent`, `isVisible`, …), see [Locators](/docs/guides/locators#page-shortcuts).
+
+## Input devices
+
+`page.mouse`, `page.keyboard` and `page.touchscreen` act at viewport coordinates (CSS pixels, the same space as `locator.boundingBox()`) or on the focused element. They skip actionability checks.
+
+```kotlin
+val box = page.locator("#map").boundingBox()!!
+page.mouse.move(box.x + 10, box.y + 10, MoveOptions(steps = 5))
+page.mouse.down()
+page.mouse.move(box.x + 200, box.y + 80, MoveOptions(steps = 20))
+page.mouse.up()
+page.mouse.wheel(0.0, 400.0)                       // positive deltaY scrolls down
+
+page.keyboard.down("Shift")
+page.keyboard.press("ArrowLeft")
+page.keyboard.up("Shift")
+page.keyboard.insertText("héllo")                  // no key events
+
+page.touchscreen.swipe(300.0, 600.0, 300.0, 200.0, SwipeOptions(speed = 1200.0))
+page.touchscreen.longTap(120.0, 300.0, LongTapOptions(durationMs = 1_000))
+page.touchscreen.pinch(200.0, 300.0, scale = 2.0)
+```
+
+| Device | Methods |
+|---|---|
+| `Mouse` | `move(x, y, MoveOptions(steps = 1))`, `click(x, y, MouseClickOptions)`, `dblclick(x, y, MouseClickOptions)`, `down(MouseDownOptions(button, clickCount))`, `up(MouseUpOptions(button))`, `wheel(deltaX, deltaY, WheelOptions)`, `drag(startX, startY, endX, endY, DragOptions)` |
+| `Keyboard` | `insertText(text)`, `type(text, TypeOptions(delayMs, timeoutMs))`, `down(key)`, `up(key)`, `press(key, PressOptions)` |
+| `Touchscreen` | `tap(x, y, TapOptions)`, `longTap(x, y, LongTapOptions(durationMs = 750))`, `scroll(x, y, deltaX = 0.0, deltaY = -100.0, ScrollOptions(steps = 5))`, `swipe(x1, y1, x2, y2, SwipeOptions(speed = 500.0))`, `pinch(x, y, scale, PinchOptions)` |
+
+`MouseClickOptions(button = LEFT, clickCount = 1, delayMs = 0, timeoutMs = null)` is used by `mouse.click` and `mouse.dblclick`. Use `clickCount = 3` for a triple click. `Mouse.drag` ignores `DragOptions.sourcePosition`/`targetPosition`. `Touchscreen.scroll` moves the finger by (`deltaX`, `deltaY`), so the default `deltaY = -100.0` drags upward. `SwipeOptions.speed` is in CSS pixels per second. In `pinch`, a `scale` above 1 zooms in.
+
+The `timeoutMs` fields are enforced for `touchscreen.tap`, `keyboard.type`, `keyboard.press` and `mouse.drag` on every backend. Other device calls accept `timeoutMs` but a backend may not enforce it.
+
+With `InputMode.JsOnly`, reading `page.touchscreen` throws `UnsupportedOperationException`. `page.mouse` and `page.keyboard` require `InputMode.Hybrid`, the default, and throw otherwise.
+
+### Device behavior per backend
+
+| Call | Android WebView | iOS WKWebView | JVM (CDP) |
+|---|---|---|---|
+| `touchscreen.tap`, `longTap`, `scroll`, `swipe` | Native `MotionEvent`s through `WebView.dispatchTouchEvent` | Synthetic `TouchEvent`s dispatched in the page at `elementFromPoint` | Trusted `Input.dispatchTouchEvent` with touch emulation enabled |
+| `touchscreen.pinch` | `WebView.zoomBy(scale)`; `x`/`y` are ignored | Throws `UnsupportedOperationException` | Two-finger trusted touch gesture |
+| `mouse.click` | A native touch tap per click; `button` is ignored | Synthetic mouse events plus a synthetic touch tap | Trusted press/release pairs with increasing `clickCount` |
+| `mouse.move` | Synthetic `mousemove` on the element at the point | Synthetic move events, interpolated over `steps` | Trusted `mouseMoved`, interpolated over `steps` |
+| `mouse.down` / `up` | Synthetic `mousedown`/`mouseup` on `document` | Synthetic, at the last position | Trusted, at the last position |
+| `mouse.wheel` | Native `WebView.scrollBy`; no `wheel` event | Synthetic `WheelEvent` at the last position, then scrolls unless prevented | Trusted `mouseWheel` at the last position |
+| `mouse.drag` | Native touch swipe | Synthetic mouse and touch events | Trusted move, press, interpolated moves, release |
+| `keyboard.down` / `up` / `press` | Native `KeyEvent`s; printable characters through the virtual key map | Synthetic `KeyboardEvent`s. `press` also inserts printable characters and applies DOM editing for Backspace, Delete, Enter, Tab, ArrowLeft, ArrowRight, Home and End | Trusted `Input.dispatchKeyEvent` |
+| Chords in `keyboard.press("Control+A")` | Not parsed; use `down`/`press`/`up` | Not parsed; use `down`/`press`/`up` | Parsed, including `ControlOrMeta` |
+| `keyboard.insertText` | `execCommand('insertText')` in the focused field | DOM insertion with `beforeinput`/`input` | Trusted `Input.insertText` |
+| `keyboard.type` | `insertText` per character, no key events | `insertText` per character, no key events | Key events per character |
+
+For chords that work on every backend, use `locator.press("Control+A")`, or hold the modifier with `keyboard.down("Control")`, `keyboard.press("a")`, `keyboard.up("Control")`.
+
+## Per-backend summary
+
+Locator actions on Android and iOS always run in the in-page runtime, whatever the `InputMode`. The events they dispatch are untrusted (`event.isTrusted == false`). Pages that ignore untrusted events need the JVM backend or `page.touchscreen`/`page.keyboard` on Android.
+
+| Locator action | Android WebView, iOS WKWebView | JVM, `InputMode.Hybrid` (default) | JVM, `InputMode.TouchOnly` |
+|---|---|---|---|
+| `click`, `dblclick` | Runtime pointer and mouse events | Trusted mouse | Trusted touch tap |
+| `tap` | Runtime pointer, touch and mouse events | Trusted touch | Trusted touch |
+| `hover`, `fill`, `clear`, `pressSequentially`, `press`, `dragTo` | Runtime | Trusted Chrome input | Runtime |
+| `check`, `uncheck`, `setChecked` | Runtime click | Trusted click | Trusted touch tap |
+| `selectOption`, `focus`, `blur`, `scrollIntoViewIfNeeded`, `dispatchEvent`, `evaluate`, `highlight` | Runtime | Runtime | Runtime |
+| `setInputFiles` | Clear only | `DOM.setFileInputFiles` | `DOM.setFileInputFiles` |
+
+With `InputMode.JsOnly`, the JVM backend uses the runtime for every locator action, like the WebViews.
+
+Each page reports its input support through [capabilities](/docs/platforms/capabilities):
+
+| `PageCapability` | Android | iOS | JVM | What the backend `notes` say |
+|---|---|---|---|---|
+| `TouchInput` | Supported | Partial | Partial | Android dispatches native WebView events. iOS uses touch-first event synthesis. JVM uses CDP touch emulation for taps, swipes, scrolls and pinch. |
+| `MouseInput` | Partial | Partial | Supported | Android mouse "may fall back to hover/tap approximations". JVM uses native CDP Input events. |
+| `KeyboardInput` | Supported | Partial | Supported | iOS has modifier-aware printable keys and DOM text-input fallbacks; "low-level key semantics remain partial". |
+
+```kotlin
+page.capabilities().require(PageCapability.MouseInput)   // throws on Android and iOS
+```
+
+## Action policy
+
+When an `ActionPolicy` is configured, each action is checked against it before it runs. A denied action throws `KmpwrightException`. A `Confirm` result calls the page's confirm callback.
+
+| `ActionType` | Actions |
+|---|---|
+| `Click` | `click`, `dblclick`, `tap`, `check`, `uncheck`, `setChecked`, `dispatchEvent`, `mouse.click`/`dblclick`/`down`/`up`, `touchscreen.tap`/`longTap` |
+| `Fill` | `fill`, `clear`, `setInputFiles` |
+| `Type` | `pressSequentially`, `keyboard.type`, `keyboard.insertText` |
+| `Press` | `press`, `keyboard.press`/`down`/`up` |
+| `Hover` | `hover`, `mouse.move` |
+| `Focus` | `focus`, `blur` |
+| `Select` | `selectOption` |
+| `Drag` | `dragTo`, `mouse.drag`, `touchscreen.swipe` |
+| `Scroll` | `scrollIntoViewIfNeeded`, `page.scroll`/`scrollToTop`/`scrollToBottom`, `mouse.wheel`, `touchscreen.scroll`/`pinch` |
+| `Evaluate` | `evaluate` |
+| `Screenshot` | `screenshot` |
+
+## Related
+
+<Cards>
+  <Card href="/docs/guides/locators" title="Locators" description="Selectors, getBy*, filters and strict mode." />
+  <Card href="/docs/guides/assertions" title="Assertions" description="Wait for the result of an action." />
+  <Card href="/docs/platforms/capabilities" title="Capabilities" description="What each backend supports." />
+  <Card href="/docs/reference/locator" title="Locator reference" description="Every Locator method and option." />
+</Cards>

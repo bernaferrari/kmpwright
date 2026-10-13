@@ -40,7 +40,7 @@ git -C .upstream/agent-browser diff b4f2f37d7b4f954022bc77f8d6dce70e07072b00..d9
 ./scripts/verify-agent-browser-compatibility.sh
 ```
 
-## Local validation (2026-10-11)
+## Historical local validation (2026-10-11)
 
 | Check | Result |
 | --- | --- |
@@ -53,6 +53,12 @@ git -C .upstream/agent-browser diff b4f2f37d7b4f954022bc77f8d6dce70e07072b00..d9
 | Repository | Documentation, comparison metadata, release-version propagation, whitespace, ignored-source, and publication-candidate checks passed. |
 
 Cloud-provider request contracts are tested locally; live vendor sessions were not exercised. Upstream checkouts and local Beads state are retained on disk and excluded from Git tracking. The original in-progress Kmpwright rename is preserved. Changes remain local and uncommitted.
+
+The subsequent 2026-10-13 reliability run passed 947 JVM tests, 85 iOS app-host
+tests and 67 Android instrumentation tests. Actual WKWebView document contracts
+now run both locally and in CI. See [reliability-review.md](reliability-review.md)
+for the follow-up repairs and [validation-checkpoint.json](validation-checkpoint.json)
+for the current validation evidence. The upstream comparison commit is unchanged.
 
 ## Commit dispositions
 

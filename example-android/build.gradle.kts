@@ -5,7 +5,9 @@ plugins {
 
 android {
     namespace = "com.bernaferrari.kmpwright.example.android"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
 
     defaultConfig {
         applicationId = "com.bernaferrari.kmpwright.example.android"

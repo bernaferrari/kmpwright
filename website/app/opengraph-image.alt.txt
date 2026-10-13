@@ -1,0 +1,1 @@
+KMPwright — browser automation for Kotlin Multiplatform. One Kotlin workflow for Android, iOS and Chromium.

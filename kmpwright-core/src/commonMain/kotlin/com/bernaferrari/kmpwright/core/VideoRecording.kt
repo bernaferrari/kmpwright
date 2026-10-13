@@ -1,7 +1,7 @@
 package com.bernaferrari.kmpwright.core
 
 /** Video-only capture of the current page. Encoding requires ffmpeg on the JVM host. */
-data class RecordingOptions(val path: String, val fps: Int = 30, val quality: Int = 85,
+public data class RecordingOptions @Throws(IllegalArgumentException::class) public constructor(val path: String, val fps: Int = 30, val quality: Int = 85,
     val maxWidth: Int = 1920, val maxHeight: Int = 1080, val cursor: Boolean = true,
     val contactSheetPath: String? = null, val contactSheetThreshold: Double = 0.05,
     val maxContactSheetFrames: Int = 100, val overwrite: Boolean = false,
@@ -20,7 +20,9 @@ data class RecordingOptions(val path: String, val fps: Int = 30, val quality: In
     }
 }
 
-data class RecordingContactFrame(val timestampMs: Long, val index: Long)
-data class RecordingResult(val path: String, val fps: Int, val frameCount: Long,
+/** A frame chosen for the contact sheet of a [RecordingResult]. */
+public data class RecordingContactFrame(val timestampMs: Long, val index: Long)
+/** The video written by [Video.stop]. */
+public data class RecordingResult(val path: String, val fps: Int, val frameCount: Long,
     val durationMs: Long, val width: Int, val height: Int, val contactSheetPath: String? = null,
     val contactFrames: List<RecordingContactFrame> = emptyList())

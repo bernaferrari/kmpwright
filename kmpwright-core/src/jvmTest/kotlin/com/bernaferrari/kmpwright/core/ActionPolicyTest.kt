@@ -51,16 +51,33 @@ class ActionPolicyTest {
     fun `denied domain blocks all actions`() {
         val policy = ActionPolicy(deniedDomains = setOf("evil.com"))
         assertEquals(PolicyResult.Deny, policy.check(ActionType.Click, "https://evil.com/page"))
-        assertEquals(PolicyResult.Deny, policy.check(ActionType.Navigate, "http://sub.evil.com"))
+        // Plain entries are exact hosts (agent-browser --allowed-domains semantics).
+        assertEquals(PolicyResult.Allow, policy.check(ActionType.Navigate, "http://sub.evil.com"))
         assertEquals(PolicyResult.Allow, policy.check(ActionType.Click, "https://good.com"))
+        val wildcard = ActionPolicy(deniedDomains = setOf("*.evil.com"))
+        assertEquals(PolicyResult.Deny, wildcard.check(ActionType.Navigate, "http://sub.evil.com"))
+        assertEquals(PolicyResult.Deny, wildcard.check(ActionType.Navigate, "https://evil.com"))
     }
 
     @Test
     fun `allowed domains whitelist acts as filter`() {
         val policy = ActionPolicy(allowedDomains = setOf("trusted.com"))
         assertEquals(PolicyResult.Allow, policy.check(ActionType.Click, "https://trusted.com"))
-        assertEquals(PolicyResult.Allow, policy.check(ActionType.Navigate, "https://sub.trusted.com"))
+        assertEquals(PolicyResult.Deny, policy.check(ActionType.Navigate, "https://sub.trusted.com"))
         assertEquals(PolicyResult.Deny, policy.check(ActionType.Click, "https://untrusted.com"))
+        val wildcard = ActionPolicy(allowedDomains = setOf("*.trusted.com"))
+        assertEquals(PolicyResult.Allow, wildcard.check(ActionType.Navigate, "https://sub.trusted.com"))
+        assertEquals(PolicyResult.Allow, wildcard.check(ActionType.Navigate, "https://trusted.com"))
+    }
+
+    @Test
+    fun `policy domains and setAllowedDomains share one matcher`() {
+        val patterns = setOf("example.com", "*.api.io")
+        val filter = DomainFilter(patterns)
+        val policy = ActionPolicy(allowedDomains = patterns)
+        for (host in listOf("example.com", "www.example.com", "api.io", "v1.api.io", "other.com", "EXAMPLE.com.")) {
+            assertEquals(host, filter.isAllowed(host), policy.check(ActionType.Navigate, "https://${host.trimEnd('.')}/") == PolicyResult.Allow)
+        }
     }
 
     @Test
@@ -152,7 +169,9 @@ class ActionPolicyTest {
         assertTrue(actionTypes.contains(ActionType.SetContent))
         assertTrue(actionTypes.contains(ActionType.AddScriptTag))
         assertTrue(actionTypes.contains(ActionType.AddStyleTag))
-        assertEquals(15, actionTypes.size)
+        assertTrue(actionTypes.containsAll(listOf(ActionType.Focus, ActionType.Select, ActionType.ReadContent,
+            ActionType.Storage, ActionType.Clipboard, ActionType.Network, ActionType.Emulation)))
+        assertEquals(22, actionTypes.size)
     }
 
     @Test

@@ -1,0 +1,257 @@
+---
+title: Security
+description: Limit what automation and agents can do with KmpwrightConfig origin rules and switches, action policies with confirmation, allowed domains, content boundaries, encrypted storage state, and the hardened in-page runtime.
+---
+
+When an LLM drives a browser, the page it reads is untrusted input and the actions it takes have consequences. KMPwright gives you several independent controls. Use them together.
+
+| Control | Scope | Set with |
+| --- | --- | --- |
+| Origin rules | Which origins the main frame may navigate to | `KmpwrightConfig(allowedOriginRules = …)` |
+| Feature switches | Whether evaluation, DOM extraction, trace export and debug mode are available at all | `KmpwrightConfig(allowEval, allowDomExtraction, enableTraceExport, productionMode)` |
+| Action policy | Which kinds of actions are allowed, denied or need confirmation, per domain | `page.setActionPolicy(…)`, `page.setPolicyConfirmCallback { … }` |
+| Allowed domains | Which hosts any request (navigation or subresource) may reach | `page.setAllowedDomains(…)` |
+| Content boundaries | Marking untrusted page content inside tool output | `page.boundedSnapshot()`, `page.boundedContent()` |
+| Encrypted storage state | Session files at rest | `storageState().save(path, password)` |
+
+<Callout type="error">
+**A WebView is not a sandbox.** These are workflow controls for automation you run. Page content remains untrusted, filtering does not isolate the page from your app, and none of these controls replace platform security (process isolation, app permissions, server-side authorization). On Android and iOS the automated page runs inside your app's WebView, with your app's cookies and network identity.
+</Callout>
+
+## KmpwrightConfig
+
+Security-relevant fields of the browser-wide configuration, passed to `Browser(context, config)`, `launchBrowser(options, config)` or `rememberKmpwrightController(config)`:
+
+```kotlin
+val config = KmpwrightConfig(
+    allowedOriginRules = setOf("https://app.example.com", "https://*.example.com"),
+    productionMode = true,
+    allowEval = false,
+    allowDomExtraction = false,
+    enableTraceExport = false,
+)
+val browser = Browser(AndroidPlatformContext(activity, webView), config)
+```
+
+<TypeTable
+  type={{
+    allowedOriginRules: {
+      type: 'Set<String>',
+      description: 'Origins the main frame may load. Each rule is an origin ("https://app.example.com", exact match) or a URL glob matched against the origin ("https://*.example.com"). Empty allows every origin.',
+      default: 'emptySet()',
+    },
+    allowEval: {
+      type: 'Boolean',
+      description: 'When false, page.evaluate, locator.evaluate, waitForFunction, addInitScript, addScriptTag, pushState, webVitals, accessibilityAudit and WebMCP invocation throw KmpwrightException. Locator actions keep working.',
+      default: 'true',
+    },
+    allowDomExtraction: {
+      type: 'Boolean',
+      description: 'When false, reading page content throws KmpwrightException: content(), snapshot(), locator textContent/innerText/innerHTML/getAttribute/inputValue/count/all*Texts/boundingBox, metrics, read, diffUrls, accessibilityAudit, response bodies and HAR capture. Assertions that read text, values or counts fail too.',
+      default: 'true',
+    },
+    enableTraceExport: {
+      type: 'Boolean',
+      description: 'When false, starting a trace with TracingOptions(path = …) throws, so traces are never written to disk.',
+      default: 'true',
+    },
+    productionMode: {
+      type: 'Boolean',
+      description: 'When true, creating a page with debug.enabled = true fails. It does not change other defaults; set the switches above explicitly.',
+      default: 'false',
+    },
+    strictSelectors: {
+      type: 'Boolean',
+      description: 'Locator actions fail when a selector matches more than one element, so an agent cannot act on an ambiguous target.',
+      default: 'true',
+    },
+  }}
+/>
+
+### Origin rules
+
+`allowedOriginRules` is enforced on the main frame:
+
+- `page.goto(url)` throws `KmpwrightException("Navigation origin is not allowed by KmpwrightConfig: …")` before navigating (`about:blank` is always allowed).
+- Navigations the page starts itself (links, redirects, `location` changes) are cancelled in the backend's navigation hook (CDP request interception, WebKit navigation policy, Android `shouldOverrideUrlLoading`). A navigation that still commits to a disallowed origin is reported with `ok = false`.
+- HTTP reads (`page.read`, `HttpReader`) check every URL, including redirects.
+- On Android, document-start init scripts are registered only for these origins.
+
+It does not filter subresources. Use [allowed domains](#allowed-domains) for that.
+
+## Action policies
+
+An `ActionPolicy` decides, for each action, whether it is allowed, denied or needs confirmation. It mirrors agent-browser's `--action-policy` and `--confirm-actions`.
+
+```kotlin
+page.setActionPolicy(
+    ActionPolicy(
+        defaultAction = PolicyResult.Allow,
+        deniedActions = setOf(ActionType.Evaluate, ActionType.AddScriptTag),
+        confirmActions = setOf(ActionType.Fill, ActionType.Navigate),
+        allowedDomains = setOf("example.com"),
+    )
+)
+
+page.setPolicyConfirmCallback { action, url ->
+    askUser("Allow $action on $url?")   // your UI; return true to proceed
+}
+```
+
+<TypeTable
+  type={{
+    defaultAction: { type: 'PolicyResult', description: 'Decision when no other rule applies: Allow, Deny or Confirm.', default: 'PolicyResult.Allow' },
+    allowedActions: { type: 'Set<ActionType>', description: 'When non-empty, actions not in this set are denied.', default: 'emptySet()' },
+    deniedActions: { type: 'Set<ActionType>', description: 'Always denied.', default: 'emptySet()' },
+    confirmActions: { type: 'Set<ActionType>', description: 'Require the confirm callback to return true.', default: 'emptySet()' },
+    allowedDomains: { type: 'Set<String>', description: 'When non-empty, actions on pages whose host is not one of these domains (or a subdomain) are denied.', default: 'emptySet()' },
+    deniedDomains: { type: 'Set<String>', description: 'Actions on these domains and their subdomains are denied.', default: 'emptySet()' },
+  }}
+/>
+
+`policy.check(action, url)` evaluates rules in this order; the first match wins:
+
+1. If any domain list is set and the URL has no HTTP(S) host (for example `about:blank` or `data:`), **deny**.
+2. Host matches `deniedDomains` (exact or subdomain): **deny**.
+3. `allowedDomains` is non-empty and the host does not match: **deny**.
+4. Action in `deniedActions`: **deny**.
+5. Action in `confirmActions`: **confirm**.
+6. `allowedActions` non-empty: **allow** if listed, otherwise **deny**.
+7. Otherwise `defaultAction`.
+
+Policy domain entries match the host and every subdomain (`example.com` covers `api.example.com`). This differs from `setAllowedDomains`, where a plain entry matches only that host.
+
+What happens with each result:
+
+| Result | Effect |
+| --- | --- |
+| `Allow` | The action runs. |
+| `Deny` | The action throws `KmpwrightException("Action denied by policy: <ActionType>")`. |
+| `Confirm` | The confirm callback runs with `(ActionType, url)`. `true` proceeds; `false` throws `"Action denied by user confirmation"`. With no callback set, it throws `"… requires confirmation but no confirm callback is set"`. |
+
+Navigations the page starts on its own (link clicks, redirects) are checked as `Navigate` too: `Deny` cancels them, and `Confirm` only lets through a URL you already approved with `page.goto`. Pass `null` to `setPolicyConfirmCallback` to remove the callback.
+
+### Action types
+
+| `ActionType` | Covers |
+| --- | --- |
+| `Navigate` | `goto`, `reload`, `goBack`, `goForward`, `pushState`, `read`, page-initiated navigations |
+| `Click` | `click`, `dblclick`, `tap`, `check`/`uncheck`/`setChecked`, `dispatchEvent`, mouse button and touch taps |
+| `Fill` | `fill`, `clear`, file inputs and file choosers |
+| `Type` | `pressSequentially`, `keyboard.type`, `keyboard.insertText` |
+| `Press` | `press`, `keyboard.press`/`down`/`up` |
+| `Focus` | `focus`, `blur` |
+| `Select` | `selectOption` |
+| `Hover` | `hover`, `mouse.move` |
+| `Drag` | `dragTo`, `mouse.drag`, `touchscreen.swipe` |
+| `Scroll` | `scroll`, `scrollToTop`/`Bottom`, `scrollIntoViewIfNeeded`, `mouse.wheel`, `touchscreen.pinch` |
+| `Screenshot` | `screenshot` (page and locator), `pdf` |
+| `Evaluate` | `evaluate`, `waitForFunction`, `addInitScript`/`removeInitScript`, `accessibilityAudit`, `webVitals` |
+| `ReadContent` | `content`, `snapshot`, `cookies`, `storageState`, `metrics`, `waitForText` |
+| `SetContent` | `setContent` |
+| `AddScriptTag` / `AddStyleTag` | `addScriptTag` / `addStyleTag` |
+| `SetCookie` / `DeleteCookie` | `addCookies` / `clearCookies` |
+| `Storage` | Writing or clearing `localStorage`/`sessionStorage`, `setStorageState` |
+| `Clipboard` | `clipboard.readText`/`writeText` |
+| `Network` | `setExtraHTTPHeaders`, `setHTTPCredentials`, `setAllowedDomains` |
+| `Emulation` | Viewport, user agent, scale, device, color scheme, geolocation, offline and network conditions |
+
+Because `setAllowedDomains` is itself a `Network` action, a policy that denies `Network` also stops an agent from loosening the domain filter.
+
+## Allowed domains
+
+`page.setAllowedDomains(domains)` restricts the hosts the page may contact, like agent-browser's `--allowed-domains`. It applies to navigations and subresources (fetch, XHR, images, iframes), not just the main frame.
+
+```kotlin
+page.setAllowedDomains(listOf("example.com", "*.static.example.com"))
+page.setAllowedDomains(emptyList())   // remove the restriction
+```
+
+- `example.com` matches exactly that host.
+- `*.example.com` matches `example.com` and every subdomain.
+- Matching is case-insensitive and ignores a trailing dot. An empty list removes the filter.
+- Blocked requests fail as network errors; blocked navigations are cancelled.
+- The filter is remembered and applied to tabs opened from the page with `page.openNewTab`.
+
+Enforcement happens below page JavaScript, but each backend has a different hook. Check `page.capabilities().domainFiltering` and read `page.capabilities().notes`:
+
+| Backend | `domainFiltering` | How | Known gaps |
+| --- | --- | --- | --- |
+| JVM Chromium (CDP) | Supported | CDP Fetch interception: navigations, iframes, redirects and every HTTP(S) subresource | WebSocket handshakes are not visible to Fetch interception and are not filtered. |
+| iOS `WKWebView` | Supported | Navigation policy cancels navigations (including server redirects); a `WKContentRuleList` blocks every subresource (fetch, XHR, images, iframes, WebSockets, redirects) | None reported. |
+| Android `WebView` | Partial | `shouldInterceptRequest` fails disallowed subresources; `loadUrl`/`shouldOverrideUrlLoading` cancel navigations, including main-frame server redirects | No hook for server redirects of subresources (an open redirect on an allowed host reaches its target), WebSocket connections, or requests made by service workers. |
+
+```kotlin
+// Refuse to run where the filter has gaps.
+page.requireCapabilities(PageCapability.DomainFiltering)
+```
+
+## Content boundaries
+
+When you return page text to an LLM, wrap it so the model can tell untrusted page content from your instructions. This mirrors agent-browser's `--content-boundaries`.
+
+```kotlin
+val text = page.boundedSnapshot(SnapshotOptions(interactive = true))
+// --- AGENT_BROWSER_PAGE_CONTENT nonce=3f9c…e1 origin=https://example.com ---
+// @e1 [heading] "Example Domain" [level=1]
+// @e2 [link] "Learn more"
+// --- END_AGENT_BROWSER_PAGE_CONTENT nonce=3f9c…e1 ---
+```
+
+| API | Returns |
+| --- | --- |
+| `page.createContentBoundary()` | A `ContentBoundary` with a fresh 128-bit random `nonce` and the page URL as `origin`. |
+| `page.boundedSnapshot(options, boundary = null)` | The snapshot tree wrapped in boundary markers. |
+| `page.boundedContent(boundary = null)` | The page HTML wrapped in boundary markers. |
+| `boundary.wrap(text)` / `wrapWithSelector(selector, text)` | Wraps any text you extracted yourself. |
+| `boundary.isBounded(text)` / `unwrap(text)` | Checks for and extracts the bounded content. |
+| `ContentBoundary.create(origin)` | A boundary for content that did not come from a page. |
+
+Pass `null` (the default) to get a new nonce per call, or reuse one boundary across a single tool result. The nonce is what makes the markers hard to forge: page text cannot predict it. Tell the model in your system prompt that text between markers is data, not instructions.
+
+`runCommand` output is not wrapped automatically. Wrap it before returning it to the model:
+
+```kotlin
+val boundary = page.createContentBoundary()
+val result = page.runCommand(command)
+return boundary.wrap(result.output)
+```
+
+## Hardened in-page runtime
+
+KMPwright's selector engine, actionability checks, synthetic input and snapshot ref registry run as JavaScript inside the page, which may be hostile. The runtime is built to resist a page that tries to interfere:
+
+- It lives in a closure published under a random, per-process property name defined as non-writable, non-enumerable and non-configurable, so a page cannot replace it or pre-empt a well-known global.
+- It captures the DOM primitives it needs at install time, so later page patches to those primitives do not affect it.
+- The ref registry is private. Changing it requires a secret that only appears in scripts KMPwright evaluates.
+- KMPwright never trusts a pre-existing global. If the slot exists but is not a sealed runtime of the expected version, the operation fails with `KmpwrightException` ("The page replaced or pre-defined the KMPwright runtime slot; refusing to automate this document") instead of using it.
+
+Residual risk: once installed, a page can discover the property name and read (but not modify) the runtime. A page that learned the name could pre-define it in a later document; KMPwright then detects the tampering and refuses to automate that document.
+
+## Encrypted storage state
+
+Storage state contains session cookies. `StorageState.save` therefore requires you to choose explicitly:
+
+```kotlin
+page.storageState().save("state.json", password = statePassword)    // encrypted
+page.setStorageState(StorageState.load("state.json", password = statePassword))
+
+page.storageState().save("state.json", password = null)             // plaintext, opt-in
+```
+
+- On Android and the JVM, the file is encrypted with AES-256 (CBC) and authenticated with HMAC-SHA256, using keys derived from the password with PBKDF2-HMAC-SHA256 (210 000 iterations). iOS uses the platform implementation behind the same API.
+- `load` with a password never falls back to plaintext; a wrong password or a modified file throws `KmpwrightException`.
+- A blank password is rejected; pass `null` for plaintext.
+- `autosaveStorageState(StorageStateAutosaveOptions(path, password, intervalMs))` has the same explicit `password` rule.
+- `StorageState.toString()` prints only cookie counts and storage keys, not values. `HttpCredentials`, `ProxyConfig` and `AuthProfile` also redact passwords in `toString()`.
+
+Keep passwords, provider API keys and state files out of source control.
+
+## Checklist for agent workloads
+
+1. Set `allowedOriginRules` to the origins the agent needs, and call `setAllowedDomains` for every host the page may contact.
+2. Turn off what the agent does not need: `allowEval = false` in most cases. `allowDomExtraction = false` also disables snapshots and locator reads, so it only suits scripted automation that never reads the page.
+3. Add an `ActionPolicy` that denies dangerous action types and routes sensitive ones (`Fill`, `Navigate`, `SetCookie`) through a confirmation callback.
+4. Wrap every piece of page text you return to the model in a content boundary.
+5. `requireCapabilities(PageCapability.DomainFiltering)` if partial filtering is not acceptable.
+6. Encrypt storage state files.

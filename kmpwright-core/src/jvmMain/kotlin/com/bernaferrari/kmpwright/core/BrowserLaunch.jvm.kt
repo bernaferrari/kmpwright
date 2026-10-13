@@ -6,8 +6,10 @@ import java.nio.file.*
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.cancellation.CancellationException
 
-actual suspend fun launchBrowser(options: BrowserLaunchOptions, config: KmpwrightConfig): LaunchedBrowser = withContext(Dispatchers.IO) {
+@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+public actual suspend fun launchBrowser(options: BrowserLaunchOptions, config: KmpwrightConfig): LaunchedBrowser = withContext(Dispatchers.IO) {
     val extensions = options.extensionDirectories.map { path -> Path.of(path).toAbsolutePath().normalize().also { directory ->
         require(Files.isDirectory(directory) && Files.isRegularFile(directory.resolve("manifest.json"))) { "Extension directory must contain manifest.json: $path" }
     }.toString() }
@@ -18,6 +20,7 @@ actual suspend fun launchBrowser(options: BrowserLaunchOptions, config: Kmpwrigh
     var process: Process? = null
     var browser: Browser? = null
     var endpointContents: String? = null
+    var shutdownHook: Thread? = null
     val endpoint = directory.resolve("DevToolsActivePort")
     val before = if (Files.exists(endpoint)) Files.readString(endpoint) else null
     try {
@@ -55,6 +58,9 @@ actual suspend fun launchBrowser(options: BrowserLaunchOptions, config: Kmpwrigh
         }.redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start() }
         catch (error: IOException) { throw KmpwrightException("Could not launch Chromium: ${error.message}") }
         val running = process
+        // If the JVM exits without closeAsync(), still kill Chromium (and its
+        // helper processes) and delete the temporary profile.
+        shutdownHook = registerLaunchShutdownHook(running, directory, ownsProfile, caHome)
         val ws = withTimeout(options.startupTimeoutMs) {
             while (true) {
                 if (!running.isAlive) throw KmpwrightException("Chromium exited before publishing a debugging endpoint (code ${running.exitValue()})")
@@ -72,13 +78,14 @@ actual suspend fun launchBrowser(options: BrowserLaunchOptions, config: Kmpwrigh
             }
             error("Unreachable")
         }
-        val cdp = (config.cdp ?: CdpConfig()).copy(websocketUrl = ws, provider = null)
+        val cdp = (config.cdp ?: CdpConfig()).copy(websocketUrl = ws, provider = null, remoteBrowserSharesFileSystem = true)
         browser = Browser(JvmPlatformContext(), config.copy(cdp = cdp))
-        withTimeout(options.startupTimeoutMs) { browser.versionAsync() }
-        OwnedLaunchedBrowser(browser, running, directory, ownsProfile, endpointContents, caHome)
+        withTimeout(options.startupTimeoutMs) { browser.version() }
+        OwnedLaunchedBrowser(browser, running, directory, ownsProfile, endpointContents, caHome, shutdownHook)
     } catch (error: Throwable) {
         withContext(NonCancellable) {
-            try { browser?.closeAsync() } catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
+            shutdownHook?.let(::removeLaunchShutdownHook)
+            try { browser?.close() } catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
             try { cleanupLaunchedBrowser(process, directory, ownsProfile, endpointContents, caHome) }
             catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
         }
@@ -87,13 +94,15 @@ actual suspend fun launchBrowser(options: BrowserLaunchOptions, config: Kmpwrigh
 }
 
 private class OwnedLaunchedBrowser(override val browser: Browser, private val process: Process,
-    private val directory: Path, private val ownsProfile: Boolean, private val endpointContents: String?, private val caHome: Path?
+    private val directory: Path, private val ownsProfile: Boolean, private val endpointContents: String?, private val caHome: Path?,
+    private val shutdownHook: Thread?
 ) : LaunchedBrowser {
     private val closed = AtomicBoolean(false)
-    override suspend fun closeAsync(): Unit = withContext(NonCancellable + Dispatchers.IO) {
+    override suspend fun close(): Unit = withContext(NonCancellable + Dispatchers.IO) {
         if (!closed.compareAndSet(false, true)) return@withContext
+        shutdownHook?.let(::removeLaunchShutdownHook)
         var failure: Throwable? = null
-        try { browser.closeAsync() } catch (error: Throwable) { failure = error }
+        try { browser.close() } catch (error: Throwable) { failure = error }
         try { cleanupLaunchedBrowser(process, directory, ownsProfile, endpointContents, caHome) }
         catch (error: Throwable) { if (failure == null) failure = error else failure.addSuppressed(error) }
         failure?.let { throw it }
@@ -119,11 +128,41 @@ private fun cleanupLaunchedBrowser(process: Process?, directory: Path, ownsProfi
     failure?.let { throw it }
 }
 
-private fun stopBrowserProcess(process: Process) {
+private fun registerLaunchShutdownHook(process: Process, directory: Path, ownsProfile: Boolean, caHome: Path?): Thread? {
+    val hook = Thread({
+        runCatching { stopBrowserProcess(process, gracefulSeconds = 2) }
+        if (ownsProfile) runCatching { deleteBrowserDirectory(directory) }
+        caHome?.let { runCatching { deleteBrowserDirectory(it) } }
+    }, "kmpwright-browser-shutdown")
+    return try { Runtime.getRuntime().addShutdownHook(hook); hook }
+    catch (_: IllegalStateException) { null } // JVM is already shutting down.
+}
+
+private fun removeLaunchShutdownHook(hook: Thread) {
+    try { Runtime.getRuntime().removeShutdownHook(hook) } catch (_: IllegalStateException) { /* shutting down */ }
+}
+
+/**
+ * Stops Chromium and every helper it spawned (renderer, GPU, utility,
+ * crashpad). Helpers are snapshotted first: once the browser exits they are
+ * re-parented and could no longer be found through it.
+ */
+internal fun stopBrowserProcess(process: Process, gracefulSeconds: Long = 5) {
+    val descendants = runCatching { process.descendants().toList() }.getOrDefault(emptyList())
     process.destroy()
-    if (!process.waitFor(5, TimeUnit.SECONDS)) {
+    if (!process.waitFor(gracefulSeconds, TimeUnit.SECONDS)) {
         process.destroyForcibly()
-        if (!process.waitFor(2, TimeUnit.SECONDS)) throw KmpwrightException("Owned Chromium process did not terminate")
+        if (!process.waitFor(2, TimeUnit.SECONDS)) {
+            descendants.forEach { runCatching { it.destroyForcibly() } }
+            throw KmpwrightException("Owned Chromium process did not terminate")
+        }
+    }
+    descendants.filter { it.isAlive }.forEach { runCatching { it.destroy() } }
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+    for (child in descendants) {
+        val remaining = deadline - System.nanoTime()
+        if (remaining > 0) runCatching { child.onExit().get(remaining, TimeUnit.NANOSECONDS) }
+        if (child.isAlive) runCatching { child.destroyForcibly() }
     }
 }
 

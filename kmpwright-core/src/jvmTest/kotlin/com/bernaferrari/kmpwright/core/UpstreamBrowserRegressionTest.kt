@@ -19,21 +19,21 @@ import java.util.concurrent.TimeUnit
 class UpstreamBrowserRegressionTest {
     private suspend fun verifyTargets(browser: Browser) {
         val owned = browser.pages().filterIsInstance<CdpPage>().mapNotNull { it.targetId }.toSet()
-        val foreign = browser.targetsAsync().first { it.id !in owned }
-        val attached = browser.attachTargetAsync(foreign.id)
-        assertSame(attached, browser.attachTargetAsync(foreign.id))
+        val foreign = browser.targets().first { it.id !in owned }
+        val attached = browser.attachTarget(foreign.id)
+        assertSame(attached, browser.attachTarget(foreign.id))
         attached.setContent("<title>Attached tab</title><div id=state>Keep me</div>")
-        browser.activateTargetAsync(foreign.id)
-        attached.closeAsync()
-        assertTrue(browser.targetsAsync().any { it.id == foreign.id })
-        val reattached = browser.attachTargetAsync(foreign.id)
+        browser.activateTarget(foreign.id)
+        attached.close()
+        assertTrue(browser.targets().any { it.id == foreign.id })
+        val reattached = browser.attachTarget(foreign.id)
         assertEquals("Keep me", reattached.locator("#state").textContent())
-        assertTrue(browser.closeTargetAsync(foreign.id))
-        assertFalse(browser.targetsAsync().any { it.id == foreign.id })
-        val window = browser.newWindowAsync()
+        assertTrue(browser.closeTarget(foreign.id))
+        assertFalse(browser.targets().any { it.id == foreign.id })
+        val window = browser.newWindow()
         window.setContent("<div id=window>New window</div>")
         assertEquals("New window", window.locator("#window").textContent())
-        window.closeAsync()
+        window.close()
         assertEquals(owned, browser.pages().filterIsInstance<CdpPage>().mapNotNull { it.targetId }.toSet())
     }
 
@@ -45,10 +45,10 @@ class UpstreamBrowserRegressionTest {
         val event = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { page.waitForFileChooser(3_000) }
         page.locator("#chooser").click()
         val handle = event.await()
-        assertFalse(handle.multiple)
-        page.setFileChooserFiles(handle, listOf(file.toString()))
+        assertFalse(handle.isMultiple)
+        handle.setFiles(listOf(file.toString()))
         assertEquals("chooser.txt", page.evaluate("document.querySelector('#chooser').files[0].name").value)
-        try { page.setFileChooserFiles(handle, emptyList()); fail("Chooser handle must be single-use") }
+        try { handle.setFiles(emptyList()); fail("Chooser handle must be single-use") }
         catch (error: KmpwrightException) { assertTrue(error.message!!.contains("stale")) }
         page.setFileChooserInterception(false)
     }
@@ -120,7 +120,7 @@ class UpstreamBrowserRegressionTest {
             page.setContent("<style>html,body{margin:0;height:100%;background:blue}</style>")
             page.evaluate("requestAnimationFrame(()=>requestAnimationFrame(()=>window.recordingPaintReady=true))")
             page.waitForFunction("window.recordingPaintReady === true")
-            page.startRecording(RecordingOptions(directory.resolve("capture.mp4").toString(), fps = 30,
+            page.video.start(RecordingOptions(directory.resolve("capture.mp4").toString(), fps = 30,
                 maxWidth = 320, maxHeight = 240, ffmpegExecutable = ffmpeg,
                 contactSheetPath = directory.resolve("contact.png").toString()))
             page.mouse.move(100.0, 80.0)
@@ -130,7 +130,7 @@ class UpstreamBrowserRegressionTest {
             // Another capture has its own session and must not stop the recording.
             verifyScreencast(page)
             delay(200)
-            val result = page.stopRecording()
+            val result = page.video.stop()
             assertEquals(30, result.fps)
             assertTrue(result.frameCount >= 15)
             assertEquals(result.frameCount * 1000 / 30, result.durationMs)
@@ -171,32 +171,32 @@ class UpstreamBrowserRegressionTest {
 
     private suspend fun verifyAxHierarchy(page: Page) {
         page.setContent("<div id=owner role=group aria-label='Owned group' aria-owns=owned></div><button id=owned>Owned button</button><button id=other>Other button</button>")
-        fun flatten(nodes: List<A11yNode>): List<A11yNode> = nodes.flatMap { listOf(it) + flatten(it.children) }
-        val snapshot = page.accessibilitySnapshot()
+        fun flatten(nodes: List<SnapshotNode>): List<SnapshotNode> = nodes.flatMap { listOf(it) + flatten(it.children) }
+        val snapshot = page.snapshot()
         val group = flatten(snapshot.nodes).single { it.role == "group" && it.name == "Owned group" }
         assertTrue(flatten(group.children).any { it.role == "button" && it.name == "Owned button" })
-        assertEquals(1, snapshot.refMap.values.count { it.name == "Owned button" })
-        val scoped = page.accessibilitySnapshot(A11ySnapshotOptions(scopeSelector = "#owner"))
-        assertTrue(scoped.refMap.values.any { it.name == "Owned button" })
-        assertFalse(scoped.refMap.values.any { it.name == "Other button" })
-        val interactive = page.accessibilitySnapshot(A11ySnapshotOptions(interactiveOnly = true))
+        assertEquals(1, snapshot.refs.values.count { it.name == "Owned button" })
+        val scoped = page.snapshot(SnapshotOptions(selector = "#owner"))
+        assertTrue(scoped.refs.values.any { it.name == "Owned button" })
+        assertFalse(scoped.refs.values.any { it.name == "Other button" })
+        val interactive = page.snapshot(SnapshotOptions(interactive = true))
         assertEquals(setOf("Owned button", "Other button"), flatten(interactive.nodes).filter { it.role == "button" }.map { it.name }.toSet())
-        val button = page.accessibilitySnapshot(A11ySnapshotOptions(scopeSelector = "#owned"))
-        assertEquals(1, button.refMap.size)
+        val button = page.snapshot(SnapshotOptions(selector = "#owned"))
+        assertEquals(1, button.refs.size)
     }
 
     private suspend fun verifyNativeRoles(page: Page) {
         page.setContent("""<label>Volume<input type=range id=volume></label><label>Amount<input type=number id=amount></label>
             <input type=search id=search aria-label="Search"><a id=ignored>Ignored</a>
             <div id=shadow></div><script>document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<input type=range id=shadowSlider aria-label=Brightness>'</script>""")
-        assertEquals("volume", page.findByRole("slider").first().getAttribute("id"))
-        assertEquals("amount", page.findByRole("spinbutton").getAttribute("id"))
-        assertEquals("search", page.findByRole("searchbox").getAttribute("id"))
-        assertEquals("shadowSlider", page.findByRole("slider").last().getAttribute("id"))
-        assertEquals("0", page.evaluate("window.__kmpwright_byRole(document, 'link').length").value)
+        assertEquals("volume", page.getByRole("slider").first().getAttribute("id"))
+        assertEquals("amount", page.getByRole("spinbutton").getAttribute("id"))
+        assertEquals("search", page.getByRole("searchbox").getAttribute("id"))
+        assertEquals("shadowSlider", page.getByRole("slider").last().getAttribute("id"))
+        assertEquals(0, page.locator("role=link").count())
         page.evaluate("setTimeout(()=>document.body.insertAdjacentHTML('beforeend','<progress id=laterRole value=50 max=100></progress>'),100)")
-        page.findByRole("progressbar").waitFor(timeoutMs = 3_000)
-        assertEquals("laterRole", page.findByRole("progressbar").getAttribute("id"))
+        page.getByRole("progressbar").waitFor(timeoutMs = 3_000)
+        assertEquals("laterRole", page.getByRole("progressbar").getAttribute("id"))
     }
 
     private suspend fun verifyInitialContracts(page: Page, directory: java.nio.file.Path): java.nio.file.Path {
@@ -218,30 +218,30 @@ class UpstreamBrowserRegressionTest {
             val results = (1..25).map { value -> async { page.evaluate("$value").value } }.awaitAll()
             assertEquals((1..25).map(Int::toString), results)
         }
-        val before = page.accessibilitySnapshot()
-        val oneRef = before.refMap.values.single { it.name == "One" }.refId
+        val before = page.snapshot()
+        val oneRef = before.refs.values.single { it.name == "One" }.ref
         page.evaluate("document.body.insertAdjacentHTML('afterbegin', '<button id=zero>Zero</button>')")
-        val after = page.accessibilitySnapshot()
-        assertEquals(oneRef, after.refMap.values.single { it.name == "One" }.refId)
-        page.locatorByRef(oneRef).click()
+        val after = page.snapshot()
+        assertEquals(oneRef, after.refs.values.single { it.name == "One" }.ref)
+        page.locator(oneRef).click()
         // Native input changes focus; compare two captures after the interaction.
-        page.accessibilitySnapshot()
-        val diff = page.diffNow()
+        page.snapshot()
+        val diff = page.diffSnapshot("__baseline__")
         assertFalse(diff.changed)
         page.evaluate("document.querySelector('#one').textContent='Changed'")
-        assertTrue(page.diffNow().changed)
-        try { page.accessibilitySnapshot(A11ySnapshotOptions(scopeSelector = "#absent")); fail("Scope must exist") }
+        assertTrue(page.diffSnapshot("__baseline__").changed)
+        try { page.snapshot(SnapshotOptions(selector = "#absent")); fail("Scope must exist") }
         catch (e: KmpwrightException) { assertTrue(e.message!!.contains("#absent")) }
-        val annotated = page.annotatedScreenshot()
-        assertTrue(annotated.labels.isNotEmpty())
-        assertTrue(annotated.screenshot.bytes.isNotEmpty())
+        val annotated = page.screenshot(ScreenshotOptions(annotate = true))
+        assertTrue(annotated.annotations.isNotEmpty())
+        assertTrue(annotated.bytes.isNotEmpty())
         page.evaluate("document.querySelector('#one').remove()")
-        try { page.locatorByRef(oneRef).click(); fail("Removed ref must not click a replacement") }
-        catch (e: KmpwrightException) { assertTrue(e.message!!.contains("No element found")) }
-        page.evaluate(DomainFilter(setOf("*.example.com")).injectionScript())
+        try { page.locator(oneRef).click(); fail("Removed ref must not click a replacement") }
+        catch (e: KmpwrightException) { assertTrue(e.message, e.message!!.contains("is no longer attached")) }
+        page.evaluate(EmulationScripts.script(EmulationState(allowedDomains = setOf("*.example.com"))))
         assertEquals("SecurityError", page.evaluate("""(function(){ try { new RTCPeerConnection(); return 'allowed'; } catch(e){ return e.name; } })()""").value)
         assertEquals("SecurityError", page.evaluate("""(function(){ try { new WebSocket('wss://evil123.com'); return 'allowed'; } catch(e){ return e.name; } })()""").value)
-        page.evaluate(DomainFilter().injectionScript())
+        page.evaluate(EmulationScripts.script(EmulationState()))
         page.evaluate("""(function(){ var frame = document.createElement('iframe'); frame.id='embedded'; document.body.appendChild(frame); frame.contentDocument.body.innerHTML='<input id=inside><button>Inside</button>'; })()""")
         val frame = page.frameLocator("#embedded")
         frame.locator("#inside").fill("Frame value")
@@ -252,7 +252,7 @@ class UpstreamBrowserRegressionTest {
         Files.writeString(upload, "hello")
         page.locator("#file").setInputFiles(listOf(upload.toString()))
         assertEquals("upload.txt", page.evaluate("document.querySelector('#file').files[0].name").value)
-        page.locator("#file").clearInputFiles()
+        page.locator("#file").setInputFiles(emptyList())
         assertEquals("0", page.evaluate("document.querySelector('#file').files.length").value)
         try { page.locator("#never").waitFor(timeoutMs = 100); fail("Missing selector must time out") }
         catch (e: KmpwrightException) { assertTrue(e.message, e.message!!.contains("Timeout")) }
@@ -276,7 +276,7 @@ class UpstreamBrowserRegressionTest {
             check(Files.exists(endpoint)) { "Chrome did not start: " + Files.readString(directory.resolve("chrome.log")) }
             val lines = Files.readAllLines(endpoint)
             browser = Browser(JvmPlatformContext(), KmpwrightConfig(cdp = CdpConfig(
-                websocketUrl = "ws://127.0.0.1:${lines[0]}${lines[1]}")))
+                remoteBrowserSharesFileSystem = true, websocketUrl = "ws://127.0.0.1:${lines[0]}${lines[1]}")))
             val page = browser.newPage()
             verifyTargets(browser)
             val upload = verifyInitialContracts(page, directory)
@@ -297,10 +297,10 @@ class UpstreamBrowserRegressionTest {
             try {
                 verifyAuthLogin(page, server.address.port)
                 verifyReaderAndNetworkHistory(page, server.address.port)
-                page.startHarCapture()
+                page.network.startHar()
                 page.goto("http://127.0.0.1:${server.address.port}/")
                 page.evaluate("fetch('/api').then(function(r){return r.text()})")
-                val har = page.stopHarCapture()
+                val har = page.network.stopHar()
                 assertTrue(har.contains("HAR fixture 雪"))
                 assertTrue(kotlinx.serialization.json.Json.parseToJsonElement(har).jsonObject.containsKey("log"))
             } finally { server.stop(0) }
@@ -322,15 +322,16 @@ class UpstreamBrowserRegressionTest {
             assertEquals("[true]", page.evaluate("JSON.stringify(inputs)").value)
             page.locator("#edit").press("Backspace")
             assertEquals("ne", page.locator("#edit").inputValue())
-            page.locator("#edit").type("雪😀")
+            page.locator("#edit").pressSequentially("雪😀")
             assertEquals("ne雪😀", page.locator("#edit").inputValue())
             page.locator("#edit").fill("")
             assertEquals("", page.locator("#edit").inputValue())
             page.locator("#rich").fill("editable")
             assertEquals("editable", page.locator("#rich").innerText())
             page.evaluate("var overlay=document.createElement('div'); overlay.id='overlay'; overlay.style='position:fixed;inset:0;z-index:999;background:white'; document.body.appendChild(overlay)")
-            try { page.locator("#trusted").click(); fail("Overlay must intercept") }
-            catch (e: KmpwrightException) { assertTrue(e.message, e.message!!.contains("intercepted")) }
+            // Native (CDP) clicks retry the hit-target check like the WebView path and report a readable error.
+            try { page.locator("#trusted").click(ClickOptions(timeoutMs = 500)); fail("Overlay must intercept") }
+            catch (e: KmpwrightTimeoutException) { assertTrue(e.message, e.message!!.contains("is covered by <div id=\"overlay\">")) }
             assertEquals("[true]", page.evaluate("JSON.stringify(clicks)").value)
             val init = page.addInitScript("window.early = 'ready';")
             page.setContent("""<script>window.seenEarly = window.early</script><iframe srcdoc="&lt;script>window.seenEarly=window.early&lt;/script>"></iframe>""")
@@ -351,11 +352,11 @@ class UpstreamBrowserRegressionTest {
                 <input id="slider" type="range" aria-labelledby="ax-label">
                 <input id="quantity" type="number" aria-label="Quantity"><div id="shadow"></div>
                 <script>document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<button>Shadow action</button>'</script>""")
-            val nativeSnapshot = page.accessibilitySnapshot()
-            assertTrue(nativeSnapshot.refMap.values.any { it.role == "slider" && it.name == "Browser name" })
-            assertTrue(nativeSnapshot.refMap.values.any { it.role == "spinbutton" && it.name == "Quantity" })
-            val shadowRef = nativeSnapshot.refMap.values.single { it.name == "Shadow action" }.refId
-            page.locatorByRef(shadowRef).click()
+            val nativeSnapshot = page.snapshot()
+            assertTrue(nativeSnapshot.refs.values.any { it.role == "slider" && it.name == "Browser name" })
+            assertTrue(nativeSnapshot.refs.values.any { it.role == "spinbutton" && it.name == "Quantity" })
+            val shadowRef = nativeSnapshot.refs.values.single { it.name == "Shadow action" }.ref
+            page.locator(shadowRef).click()
             page.setContent("<button id=prompt onclick=\"window.promptAnswer=prompt('Name','default')\">Prompt</button>")
             val dialogHandler = page.onDialog { event ->
                 assertEquals(DialogType.Prompt, event.type)
@@ -461,7 +462,7 @@ class UpstreamBrowserRegressionTest {
                 val invocation = page.webMcp.invoke("greet", kotlinx.serialization.json.buildJsonObject { put("name", kotlinx.serialization.json.JsonPrimitive("Kotlin")) })
                 assertEquals(WebMcpInvocationStatus.Completed, invocation.status)
                 assertTrue(invocation.output.toString().contains("Hello Kotlin"))
-                page.startHarCapture()
+                page.network.startHar()
                 page.goto("http://127.0.0.1:${toolsServer.address.port}/audit")
                 page.waitForLoadState(LoadState.Load)
                 page.evaluate("Object.defineProperty(window,'axe',{value:{pageOwned:true},configurable:false});window.define=function(){throw new Error('Page AMD loader must not be called')};window.define.amd={}")
@@ -476,15 +477,15 @@ class UpstreamBrowserRegressionTest {
                 assertTrue(crossFrame.url()!!.contains("localhost"))
                 assertEquals("nestedChild", crossFrame.name())
                 verifyFrameNetworkHistory(page)
-                val frameHar = kotlinx.serialization.json.Json.parseToJsonElement(page.stopHarCapture()).jsonObject["log"]!!.jsonObject["entries"]!!.jsonArray
+                val frameHar = kotlinx.serialization.json.Json.parseToJsonElement(page.network.stopHar()).jsonObject["log"]!!.jsonObject["entries"]!!.jsonArray
                 val childHar = frameHar.single { it.jsonObject["request"]!!.jsonObject["url"]!!.jsonPrimitive.content.contains("://localhost:") && it.jsonObject["request"]!!.jsonObject["url"]!!.jsonPrimitive.content.endsWith("/frame-history") }.jsonObject
                 assertEquals("child network body", childHar["response"]!!.jsonObject["content"]!!.jsonObject["text"]!!.jsonPrimitive.content)
                 verifyFrameRoles(crossFrame)
                 crossFrame.locator("#field").fill("Cross process 雪😀")
                 assertEquals("Cross process 雪😀", crossFrame.locator("#field").inputValue())
                 page.evaluate("var ancestorOverlay=document.createElement('div');ancestorOverlay.id='ancestorOverlay';ancestorOverlay.style='position:fixed;inset:0;z-index:99999;background:white';document.body.appendChild(ancestorOverlay)")
-                try { crossFrame.locator("#trusted").click(); fail("Ancestor overlay must intercept frame input") }
-                catch (error: KmpwrightException) { assertTrue(error.message.orEmpty().contains("intercepted")) }
+                try { crossFrame.locator("#trusted").click(ClickOptions(timeoutMs = 1_000)); fail("Ancestor overlay must intercept frame input") }
+                catch (error: KmpwrightException) { assertTrue(error.message, error.message.orEmpty().contains("intercepted")) }
                 page.evaluate("document.querySelector('#ancestorOverlay').remove()")
                 crossFrame.locator("#trusted").click()
                 assertEquals("true", crossFrame.locator("#trusted").getAttribute("data-trusted"))
@@ -492,7 +493,7 @@ class UpstreamBrowserRegressionTest {
                 coroutineScope {
                     val chooser = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { page.waitForFileChooser(3_000) }
                     crossFrame.locator("#upload").click()
-                    page.setFileChooserFiles(chooser.await(), listOf(upload.toString()))
+                    chooser.await().setFiles(listOf(upload.toString()))
                 }
                 page.setFileChooserInterception(false)
                 crossFrame.locator("#upload").setInputFiles(listOf(upload.toString()))

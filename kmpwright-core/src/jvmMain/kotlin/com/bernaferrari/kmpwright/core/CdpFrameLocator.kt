@@ -5,6 +5,15 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
 
+/**
+ * One frame hop: the frame owner matched by [selector], looked up inside the elements of [scopeSteps]
+ * (a locator's runtime steps, for `Locator.frameLocator`) or in the whole parent document.
+ */
+internal data class CdpFrameStep(val selector: String, val scopeSteps: String? = null)
+
+internal fun cdpFrameSteps(selector: String, scopeSteps: String? = null): List<CdpFrameStep> =
+    splitSelectorChain(selector).filter { it.isNotEmpty() }.mapIndexed { index, part -> CdpFrameStep(part, scopeSteps.takeIf { index == 0 }) }
+
 /** Frame contexts are resolved afresh so reloads, process swaps and detached owners cannot reuse stale DOM. */
 internal class CdpFrameRuntime(private val transport: CdpSessionTransport, private val rootSession: String?,
     private val rootController: WebViewController, private val config: KmpwrightConfig,
@@ -14,12 +23,12 @@ internal class CdpFrameRuntime(private val transport: CdpSessionTransport, priva
     private val mutex = Mutex()
     private val objects = mutableMapOf<String, String?>()
     private var closed = false
-    private data class Resolved(val world: CdpFrameWorlds.World, val parents: List<Pair<CdpFrameWorlds.World, String>>)
+    private data class Resolved(val world: CdpFrameWorlds.World, val parents: List<Pair<CdpFrameWorlds.World, CdpFrameStep>>)
 
-    private suspend fun resolve(path: List<String>): Resolved {
+    private suspend fun resolve(path: List<CdpFrameStep>): Resolved {
         check(!closed) { "Frame runtime is closed" }
         var world = worlds.root()
-        val parents = mutableListOf<Pair<CdpFrameWorlds.World, String>>()
+        val parents = mutableListOf<Pair<CdpFrameWorlds.World, CdpFrameStep>>()
         for (selector in path) {
             parents += world to selector
             world = worlds.child(world, owner(selector))
@@ -32,22 +41,35 @@ internal class CdpFrameRuntime(private val transport: CdpSessionTransport, priva
         return Resolved(world, parents)
     }
 
-    private fun owner(selector: String) = """
+    private fun owner(step: CdpFrameStep): String {
+        val selector = step.selector
+        val lookup = if (step.scopeSteps == null) "Array.from(document.querySelectorAll(${jsStringLiteral(selector)}))" else """(function(){
+              var H = ${PageHelpers.runtimeExpression};
+              if (!H) { ${PageHelpers.installScript()}; H = ${PageHelpers.runtimeExpression}; }
+              if (!H) throw new Error('KMPwright page runtime is unavailable');
+              return H.resolveAll(${step.scopeSteps.removeSuffix("]")}${if (step.scopeSteps == "[]") "" else ","}${jsStringLiteral(selector)}]);
+            })()"""
+        return ownerScript(selector, lookup)
+    }
+
+    private fun ownerScript(selector: String, lookup: String) = """
         (function(){
-          var el = document.querySelector(${jsStringLiteral(selector)});
+          var matches = $lookup;
+          if (${config.strictSelectors} && matches.length > 1) throw new Error('Strict frame selector matched ' + matches.length + ' elements');
+          var el = matches[0];
           if (!el) throw new Error('Frame not found: ' + ${jsStringLiteral(selector)});
           if (!/^(IFRAME|FRAME)$/.test(el.tagName)) throw new Error('Selected element is not a frame');
           return el;
         })()
     """.trimIndent()
 
-    suspend fun evaluate(path: List<String>, script: String): String? = mutex.withLock {
+    suspend fun evaluate(path: List<CdpFrameStep>, script: String): String? = mutex.withLock {
         val expression = if (script.trimStart().startsWith("return ")) "(function(){$script})()" else script
         val value = worlds.evaluate(resolve(path).world, expression)["value"]
         when (value) { null, JsonNull -> null; is JsonPrimitive -> value.content; else -> value.toString() }
     }
 
-    suspend fun command(path: List<String>, method: String, params: Map<String, Any?>): CdpResponse = mutex.withLock {
+    suspend fun command(path: List<CdpFrameStep>, method: String, params: Map<String, Any?>): CdpResponse = mutex.withLock {
         if (method.startsWith("Input.")) return@withLock (rootController as CdpInputBridge).sendCdpCommand(method, params)
         val objectId = params["objectId"] as? String
         val world = if (objectId != null && objects.containsKey(objectId)) null else resolve(path).world
@@ -77,7 +99,7 @@ internal class CdpFrameRuntime(private val transport: CdpSessionTransport, priva
     private suspend fun send(session: String?, method: String, params: Map<String, Any?>): CdpResponse =
         if (session == null) transport.send(method, params) else transport.sendSession(session, method, params)
 
-    suspend fun point(path: List<String>, x: Double, y: Double, force: Boolean, scroll: Boolean): Pair<Double, Double> = mutex.withLock {
+    suspend fun point(path: List<CdpFrameStep>, x: Double, y: Double, force: Boolean, scroll: Boolean): Pair<Double, Double> = mutex.withLock {
         var pointX = x
         var pointY = y
         val resolved = resolve(path)
@@ -105,7 +127,7 @@ internal class CdpFrameRuntime(private val transport: CdpSessionTransport, priva
         pointX to pointY
     }
 
-    fun controller(path: List<String>): WebViewLocatorController = object : WebViewLocatorController,
+    fun controller(path: List<CdpFrameStep>): WebViewLocatorController = object : WebViewLocatorController,
         WebViewCaptureController by rootController, CdpInputBridge {
         override val inputState get() = (rootController as CdpInputBridge).inputState
         override val nativeAccessibility: Boolean get() = true
@@ -129,7 +151,7 @@ internal class CdpFrameRuntime(private val transport: CdpSessionTransport, priva
 
     }
 
-    suspend fun ownerInfo(path: List<String>, body: String): String? {
+    suspend fun ownerInfo(path: List<CdpFrameStep>, body: String): String? {
         if (path.isEmpty()) return null
         return evaluate(path.dropLast(1), "(function(){var el=${owner(path.last())};$body})()")
     }
@@ -150,13 +172,15 @@ internal class CdpFrameRuntime(private val transport: CdpSessionTransport, priva
     }
 }
 
-internal class CdpFrameLocator(private val runtime: CdpFrameRuntime, private val path: List<String>,
+internal class CdpFrameLocator(private val runtime: CdpFrameRuntime, private val path: List<CdpFrameStep>,
     private val config: KmpwrightConfig, private val lifetime: Deferred<Unit>? = null, private val policy: suspend (ActionType, String?) -> Unit) : FrameLocator {
     private val controller = runtime.controller(path)
     override fun locator(selector: String): Locator = CdpLocator(controller, selector,
-        config.copy(installMode = if (config.installMode == InstallMode.Disabled) InstallMode.Disabled else InstallMode.AlwaysEvaluate))
+        config.copy(installMode = if (config.installMode == InstallMode.Disabled) InstallMode.Disabled else InstallMode.AlwaysEvaluate),
+        frameFactory = { frameSelector, scope -> CdpFrameLocator(runtime, path + cdpFrameSteps(frameSelector, scope), config, lifetime, policy) })
         .also { it.policyChecker = { action -> policy(action, url()) }; it.lifetime = lifetime }
-    override fun frameLocator(selector: String): FrameLocator = CdpFrameLocator(runtime, path + selector, config, lifetime, policy)
+    /** `>>` separates nested frames, exactly like `Page.frameLocator`. */
+    override fun frameLocator(selector: String): FrameLocator = CdpFrameLocator(runtime, path + cdpFrameSteps(selector), config, lifetime, policy)
     override suspend fun url(): String? = runtime.evaluate(path, "location.href")
     override suspend fun name(): String? = runtime.ownerInfo(path, "return el.getAttribute('name') || el.id || null;")
     override suspend fun boundingBox(): Rectangle? {

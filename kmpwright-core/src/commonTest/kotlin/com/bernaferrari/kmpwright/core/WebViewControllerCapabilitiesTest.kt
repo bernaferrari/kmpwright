@@ -90,18 +90,9 @@ class WebViewControllerCapabilitiesTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) = Unit
         override fun addDialogListener(listener: DialogListener) = Unit
         override fun removeDialogListener(listener: DialogListener) = Unit
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) = Unit
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) = Unit
         override fun removeRouteHandler(urlPattern: String) = Unit
         override fun removeAllRouteHandlers() = Unit
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) = Unit
-        override fun abortRoute(requestId: String, errorCode: String) = Unit
-        override fun continueRoute(requestId: String, options: ContinueOptions) = Unit
-        override fun interceptRequest(
-            url: String,
-            method: String,
-            headers: Map<String, String>,
-            onResult: (RouteAction?) -> Unit
-        ) = Unit
     }
 
     private class NavigationOnlyController : WebViewNavigationController {

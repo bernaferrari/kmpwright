@@ -8,18 +8,49 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.*
 
-/** Enrich DOM snapshots without replacing the registry that gives locators stable references. */
+/**
+ * Enrich DOM snapshots without replacing the registry that gives locators stable references.
+ *
+ * The browser accessibility data is stored inside the sealed page runtime ([PageHelpers]) through its
+ * seal-protected `nativeAX` entry point, never in page-visible globals: a hostile page could otherwise
+ * pre-define those globals and forge roles/names or remap AX node ids to different elements (so a ref
+ * described as "Cancel" would act on "Delete").
+ */
 internal object CdpAccessibility {
+    private val seal get() = jsStringLiteral(PageHelpers.seal)
+
+    /** Function body run with the element as `this`; `window` is the element's own realm. */
+    private val attachFunction: String get() = """
+        function(data, seal) {
+          var H = ${PageHelpers.runtimeExpression};
+          if (!H) throw new Error('KMPwright page runtime is not installed');
+          return H.nativeAX(seal, 'attach', this, data);
+        }
+    """.trimIndent()
+
+    private suspend fun runtimeCall(bridge: CdpInputBridge, body: String, what: String) {
+        val response = bridge.sendCdpCommand("Runtime.evaluate", mapOf(
+            "expression" to "(function(){var H=${PageHelpers.runtimeExpression};if(!H)throw new Error('KMPwright page runtime is not installed');$body})()",
+            "returnByValue" to true
+        ))
+        response.error?.let { throw KmpwrightException("$what: ${it.message}") }
+        response.result?.get("exceptionDetails")?.let { throw KmpwrightException("$what: $it") }
+    }
+
+    private suspend fun ensureRuntime(bridge: CdpInputBridge) {
+        val response = bridge.sendCdpCommand("Runtime.evaluate", mapOf("expression" to PageHelpers.installScript(), "returnByValue" to true))
+        response.error?.let { throw KmpwrightException("Could not install the KMPwright page runtime: ${it.message}") }
+        val value = response.result?.get("result")?.jsonObject?.get("value")?.jsonPrimitive?.contentOrNull
+        if (value == PageHelpers.TAMPERED) throw KmpwrightException("The page replaced or pre-defined the KMPwright runtime slot; refusing to automate this document")
+    }
+
     suspend fun prepare(bridge: CdpInputBridge) {
         val response = bridge.sendCdpCommand("Accessibility.getFullAXTree")
         response.error?.let { throw KmpwrightException("Could not read the browser accessibility tree: ${it.message}") }
         val nodes = response.result?.get("nodes")?.jsonArray
             ?: throw KmpwrightException("Browser returned no accessibility tree")
-        val reset = bridge.sendCdpCommand("Runtime.evaluate", mapOf(
-            "expression" to "void(window.__kmpwright_browserAX = new WeakMap(), window.__kmpwright_browserAXNodes = new Map(), window.__kmpwright_browserAXTree = null)",
-            "returnByValue" to false
-        ))
-        reset.error?.let { throw KmpwrightException("Could not initialize accessibility metadata: ${it.message}") }
+        ensureRuntime(bridge)
+        runtimeCall(bridge, "H.nativeAX($seal, 'reset');", "Could not initialize accessibility metadata")
         if (nodes.size > 50_000 || nodes.toString().length > 16 * 1024 * 1024) throw KmpwrightException("Accessibility tree exceeds its node or metadata budget")
         val objects = nodes.map { it.jsonObject }
             .filter { it["backendDOMNodeId"] != null }
@@ -28,9 +59,7 @@ internal object CdpAccessibility {
         for (batch in objects.chunked(16)) coroutineScope {
             batch.map { node -> async { attach(bridge, node) } }.awaitAll()
         }
-        val tree = bridge.sendCdpCommand("Runtime.evaluate", mapOf("expression" to
-            "void(window.__kmpwright_browserAXTree = $nodes)", "returnByValue" to false))
-        tree.error?.let { throw KmpwrightException("Could not retain accessibility hierarchy: ${it.message}") }
+        runtimeCall(bridge, "H.nativeAX($seal, 'tree', $nodes);", "Could not retain accessibility hierarchy")
     }
 
     private suspend fun attach(bridge: CdpInputBridge, node: JsonObject) {
@@ -60,8 +89,8 @@ internal object CdpAccessibility {
             }
             val result = bridge.sendCdpCommand("Runtime.callFunctionOn", mapOf(
                 "objectId" to id,
-                "functionDeclaration" to "function(data) { var w = this.nodeType === 9 ? this.defaultView : this.ownerDocument.defaultView; if (!w.__kmpwright_browserAXNodes) w.__kmpwright_browserAXNodes = new Map(); w.__kmpwright_browserAXNodes.set(data.id, new WeakRef(this)); if (this.nodeType === 1 && !data.ignored) { if (!w.__kmpwright_browserAX) w.__kmpwright_browserAX = new WeakMap(); w.__kmpwright_browserAX.set(this, data); } }",
-                "arguments" to listOf(mapOf("value" to metadata)),
+                "functionDeclaration" to attachFunction,
+                "arguments" to listOf(mapOf("value" to metadata), mapOf("value" to PageHelpers.seal)),
                 "returnByValue" to true
             ))
             result.error?.let { throw KmpwrightException("Could not apply browser accessibility metadata: ${it.message}") }

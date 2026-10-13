@@ -32,22 +32,20 @@ class StateTest {
     }
 
     @Test
-    fun `save and load state roundtrip`() {
+    fun `storageState and setStorageState roundtrip`() {
         runBlocking {
             controller.currentUrl = "https://example.com/app"
             controller.cookies.add(Cookie("session", "abc", "example.com"))
             controller.localStorage["key1"] = "val1"
             controller.sessionStorage["skey1"] = "sval1"
 
-            page.saveState("test-state")
-            assertTrue(page.stateNames().contains("test-state"))
+            val saved = page.storageState()
 
             controller.cookies.clear()
             controller.localStorage.clear()
             controller.sessionStorage.clear()
 
-            val loaded = page.loadState("test-state")
-            assertTrue(loaded)
+            page.setStorageState(saved)
             assertEquals(1, controller.cookies.size)
             assertEquals("abc", controller.cookies[0].value)
             assertEquals("val1", controller.localStorage["key1"])
@@ -56,67 +54,40 @@ class StateTest {
     }
 
     @Test
-    fun `loadState returns false for missing state`() {
-        runBlocking {
-            val loaded = page.loadState("nonexistent")
-            assertFalse(loaded)
-        }
-    }
-
-    @Test
-    fun `deleteState removes saved state`() {
-        runBlocking {
-            page.saveState("to-delete")
-            assertTrue(page.stateNames().contains("to-delete"))
-            page.deleteState("to-delete")
-            assertFalse(page.stateNames().contains("to-delete"))
-        }
-    }
-
-    @Test
-    fun `deleteState is no-op for missing name`() {
-        runBlocking {
-            page.deleteState("nonexistent") // should not throw
-            assertTrue(page.stateNames().isEmpty())
-        }
-    }
-
-    @Test
     fun `multiple states are independent`() {
         runBlocking {
             controller.currentUrl = "https://state1.kmpwright.test/app"
             controller.localStorage["a"] = "1"
-            page.saveState("state1")
+            val state1 = page.storageState()
 
             controller.currentUrl = "https://state2.kmpwright.test/app"
             controller.localStorage.clear()
             controller.localStorage["b"] = "2"
-            page.saveState("state2")
+            val state2 = page.storageState()
 
             controller.localStorage.clear()
-            page.loadState("state1")
+            page.setStorageState(state1)
             assertEquals("1", controller.localStorage["a"])
 
             controller.localStorage.clear()
-            page.loadState("state2")
+            page.setStorageState(state2)
             assertEquals("2", controller.localStorage["b"])
         }
     }
 
     @Test
-    fun `loadState navigates back to saved url before restoring storage`() {
+    fun `setStorageState navigates back to saved url before restoring storage`() {
         runBlocking {
             controller.currentUrl = "https://saved.kmpwright.test/app"
             controller.localStorage["token"] = "abc"
             controller.sessionStorage["tab"] = "1"
-            page.saveState("saved")
+            val saved = page.storageState()
 
             controller.currentUrl = "https://other.kmpwright.test/dashboard"
             controller.localStorage.clear()
             controller.sessionStorage.clear()
 
-            val loaded = page.loadState("saved")
-            assertTrue(loaded)
+            page.setStorageState(saved)
             assertEquals("https://saved.kmpwright.test/app", controller.currentUrl)
             assertEquals("abc", controller.localStorage["token"])
             assertEquals("1", controller.sessionStorage["tab"])
@@ -125,35 +96,21 @@ class StateTest {
     }
 
     @Test
-    fun `loadState refuses to restore storage without a restorable url`() {
+    fun `setStorageState refuses to restore storage without a restorable url`() {
         runBlocking {
             controller.localStorage["token"] = "abc"
-            page.saveState("saved")
+            val saved = page.storageState()
 
             controller.localStorage.clear()
 
             try {
-                page.loadState("saved")
+                page.setStorageState(saved)
                 org.junit.Assert.fail("Expected loadState to reject storage restore without a navigable URL")
             } catch (e: KmpwrightException) {
                 assertTrue(e.message?.contains("localStorage/sessionStorage") == true)
             }
 
             assertNull(controller.localStorage["token"])
-        }
-    }
-
-    @Test
-    fun `stateNames returns all saved names`() {
-        runBlocking {
-            page.saveState("alpha")
-            page.saveState("beta")
-            page.saveState("gamma")
-            val names = page.stateNames()
-            assertTrue(names.contains("alpha"))
-            assertTrue(names.contains("beta"))
-            assertTrue(names.contains("gamma"))
-            assertEquals(3, names.size)
         }
     }
 
@@ -167,7 +124,7 @@ class StateTest {
                 override suspend fun evaluateJavaScriptAsync(script: String): String? = null
             }
 
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
     }
@@ -255,13 +212,9 @@ class StateTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
         override fun removeRouteHandler(urlPattern: String) {}
         override fun removeAllRouteHandlers() {}
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
 
         override fun setCookie(cookie: Cookie) {
             cookies.add(cookie)

@@ -8,7 +8,7 @@ import platform.CoreGraphics.*
 import platform.UIKit.UIImage
 
 @OptIn(ExperimentalForeignApi::class)
-actual fun ScreenshotResult.toRgbaImage(): RgbaImage? {
+public actual fun ScreenshotResult.toRgbaImage(): RgbaImage? {
     if (bytes.isEmpty()) return null
     val image = UIImage.imageWithData(bytes.toNSData()) ?: return null
     val cgImage = CGImageRetain(image.CGImage ?: return null) ?: return null

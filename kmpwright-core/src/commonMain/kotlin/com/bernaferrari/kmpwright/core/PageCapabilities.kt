@@ -1,6 +1,7 @@
 package com.bernaferrari.kmpwright.core
 
-enum class BackendKind {
+/** The engine behind a [Page]. */
+public enum class BackendKind {
     Unknown,
     AndroidWebView,
     IOSWebView,
@@ -12,7 +13,7 @@ enum class BackendKind {
  * support-level properties on [PageCapabilities]. Using a closed set makes a
  * workflow requirement reviewable and prevents stringly-typed preflight checks.
  */
-enum class PageCapability {
+public enum class PageCapability {
     RouteInterception,
     TouchInput,
     MouseInput,
@@ -37,17 +38,20 @@ enum class PageCapability {
     HttpRead,
     NetworkHistory,
     Screencast,
-    VideoRecording
+    VideoRecording,
+    /** Locating and acting inside cross-origin (out-of-process) iframes through [Page.frameLocator]. */
+    CrossOriginFrames
 }
 
-enum class SupportLevel {
+/** How completely a backend supports a capability. */
+public enum class SupportLevel {
     Supported,
     Partial,
     Unsupported
 }
 
 /** A minimum support level a portable workflow needs from a page. */
-data class PageCapabilityRequirement(
+public data class PageCapabilityRequirement(
     val capability: PageCapability,
     val minimum: SupportLevel = SupportLevel.Supported,
     val reason: String? = null
@@ -57,15 +61,16 @@ data class PageCapabilityRequirement(
 }
 
 /** Short alias for callers that do not need the more explicit type name. */
-typealias CapabilityRequirement = PageCapabilityRequirement
+public typealias CapabilityRequirement = PageCapabilityRequirement
 
 /** A capability that did not satisfy a workflow's preflight requirement. */
-data class MissingPageCapability(
+public data class MissingPageCapability(
     val requirement: PageCapabilityRequirement,
     val actual: SupportLevel
 )
 
-data class PageCapabilities(
+/** Support levels of every [PageCapability] for one backend; see [Page.capabilities]. */
+public data class PageCapabilities(
     val backend: BackendKind = BackendKind.Unknown,
     val routeInterception: SupportLevel = SupportLevel.Unsupported,
     val touchInput: SupportLevel = SupportLevel.Unsupported,
@@ -92,11 +97,12 @@ data class PageCapabilities(
     val networkHistory: SupportLevel = SupportLevel.Unsupported,
     val screencast: SupportLevel = SupportLevel.Unsupported,
     val videoRecording: SupportLevel = SupportLevel.Unsupported,
+    val crossOriginFrames: SupportLevel = SupportLevel.Unsupported,
     val notes: List<String> = emptyList()
 )
 
 /** Returns the advertised support level for a typed capability. */
-fun PageCapabilities.supportLevel(capability: PageCapability): SupportLevel = when (capability) {
+public fun PageCapabilities.supportLevel(capability: PageCapability): SupportLevel = when (capability) {
     PageCapability.RouteInterception -> routeInterception
     PageCapability.TouchInput -> touchInput
     PageCapability.MouseInput -> mouseInput
@@ -122,10 +128,11 @@ fun PageCapabilities.supportLevel(capability: PageCapability): SupportLevel = wh
     PageCapability.NetworkHistory -> networkHistory
     PageCapability.Screencast -> screencast
     PageCapability.VideoRecording -> videoRecording
+    PageCapability.CrossOriginFrames -> crossOriginFrames
 }
 
 /** Whether a particular capability meets the requested minimum level. */
-fun PageCapabilities.supports(
+public fun PageCapabilities.supports(
     capability: PageCapability,
     minimum: SupportLevel = SupportLevel.Supported
 ): Boolean = supportLevel(capability).meets(minimum)
@@ -135,11 +142,11 @@ fun PageCapabilities.supports(
  * PageCapabilities property without adding it here is a compile-time review
  * point and makes contract tests fail loudly.
  */
-fun PageCapabilities.supportLevels(): Map<PageCapability, SupportLevel> =
+public fun PageCapabilities.supportLevels(): Map<PageCapability, SupportLevel> =
     PageCapability.values().associateWith(::supportLevel)
 
 /** Requirements that this page cannot satisfy, preserving caller order. */
-fun PageCapabilities.missing(
+public fun PageCapabilities.missing(
     requirements: Iterable<PageCapabilityRequirement>
 ): List<MissingPageCapability> = requirements.mapNotNull { requirement ->
     val actual = supportLevel(requirement.capability)
@@ -150,8 +157,10 @@ fun PageCapabilities.missing(
  * Fails before a workflow starts if any required capability is unavailable.
  * Partial support satisfies a Partial requirement, while only full support
  * satisfies the default Supported requirement.
+ * @throws KmpwrightUnsupportedException listing every unmet requirement.
  */
-fun PageCapabilities.require(
+@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class)
+public fun PageCapabilities.require(
     requirements: Iterable<PageCapabilityRequirement>
 ): PageCapabilities {
     val missing = missing(requirements)
@@ -160,38 +169,46 @@ fun PageCapabilities.require(
             val reason = item.requirement.reason?.let { " ($it)" }.orEmpty()
             "${item.requirement.capability}: requires ${item.requirement.minimum}, actual ${item.actual}$reason"
         }
-        throw KmpwrightException("Page capability requirements are not satisfied: $details")
+        throw KmpwrightUnsupportedException("Page capability requirements are not satisfied: $details")
     }
     return this
 }
 
-fun PageCapabilities.requireCapabilities(
+/** @throws KmpwrightUnsupportedException unless every requirement is met. */
+@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class)
+public fun PageCapabilities.requireCapabilities(
     vararg requirements: PageCapabilityRequirement
 ): PageCapabilities = require(*requirements)
 
-fun PageCapabilities.require(
+/** @throws KmpwrightUnsupportedException unless every requirement is met; returns these capabilities. */
+@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class)
+public fun PageCapabilities.require(
     vararg requirements: PageCapabilityRequirement
 ): PageCapabilities = require(requirements.asList())
 
 /** Convenience for workflows that only need fully-supported capabilities. */
-fun PageCapabilities.require(
+@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class)
+public fun PageCapabilities.require(
     vararg capabilities: PageCapability
 ): PageCapabilities = require(capabilities.map { PageCapabilityRequirement(it) })
 
-fun PageCapability.require(
+/** A requirement for this capability at [minimum] level. */
+public fun PageCapability.require(
     minimum: SupportLevel = SupportLevel.Supported,
     reason: String? = null
 ): PageCapabilityRequirement = PageCapabilityRequirement(this, minimum, reason)
 
 /** Minimum-level comparison used by workflow preflight checks. */
-fun SupportLevel.meets(minimum: SupportLevel): Boolean = when (minimum) {
+public fun SupportLevel.meets(minimum: SupportLevel): Boolean = when (minimum) {
     SupportLevel.Unsupported -> true
     SupportLevel.Partial -> this == SupportLevel.Partial || this == SupportLevel.Supported
     SupportLevel.Supported -> this == SupportLevel.Supported
 }
 
-fun PageCapabilities.supports(level: SupportLevel): Boolean =
-    level == SupportLevel.Supported || level == SupportLevel.Partial
+/** Whether every [PageCapability] of this backend reaches [level]. */
+public fun PageCapabilities.supports(level: SupportLevel): Boolean =
+    PageCapability.entries.all { supportLevel(it).meets(level) }
 
-val SupportLevel.isAvailable: Boolean
+/** Whether the capability can be used at all (Supported or Partial). */
+public val SupportLevel.isAvailable: Boolean
     get() = this == SupportLevel.Supported || this == SupportLevel.Partial

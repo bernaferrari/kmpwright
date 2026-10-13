@@ -10,6 +10,33 @@ import java.nio.file.Files
 import javax.imageio.ImageIO
 
 class VideoRecordingTest {
+    @Test fun `frames use arrival time rather than the remote capture clock`() = runBlocking<Unit> {
+        val directory = Files.createTempDirectory("kmpwright-recording-clock-")
+        val change = kotlinx.coroutines.CompletableDeferred<Unit>()
+        fun frame(color: Color, time: Double): ScreencastFrame {
+            val image = BufferedImage(80, 40, BufferedImage.TYPE_INT_RGB)
+            image.createGraphics().let { g -> try { g.color = color; g.fillRect(0, 0, 80, 40) } finally { g.dispose() } }
+            val bytes = java.io.ByteArrayOutputStream().also { ImageIO.write(image, "jpeg", it) }.toByteArray()
+            return ScreencastFrame(bytes, time, 80.0, 40.0, 1.0, 0.0, 0.0)
+        }
+        val source = flow {
+            emit(frame(Color.BLUE, 1_000.0))
+            change.await()
+            // A remote clock adjustment must not hold a received frame for a day.
+            emit(frame(Color.ORANGE, 86_401_000.0))
+            kotlinx.coroutines.awaitCancellation()
+        }
+        try {
+            val recorder = CdpVideoRecorder.start(source, RecordingOptions(directory.resolve("video.mp4").toString(),
+                cursor = false, contactSheetPath = directory.resolve("contacts.png").toString()), RecordingCursorTimeline())
+            kotlinx.coroutines.delay(100)
+            change.complete(Unit)
+            kotlinx.coroutines.delay(250)
+            val result = recorder.stop()
+            assertTrue("The visual change and final frame must both be represented: ${result.contactFrames}", result.contactFrames.size >= 3)
+        } finally { directory.toFile().deleteRecursively() }
+    }
+
     @Test fun `missing encoder fails before capture or output directory creation`() = runBlocking<Unit> {
         val directory = Files.createTempDirectory("kmpwright-preflight-")
         var captured = false

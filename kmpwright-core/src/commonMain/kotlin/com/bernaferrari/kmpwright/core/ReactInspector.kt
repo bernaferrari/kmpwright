@@ -6,40 +6,70 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
+import kotlin.coroutines.cancellation.CancellationException
 
-interface ReactInspector {
+/**
+ * React DevTools-based inspection (agent-browser `react`). A null `timeoutMs` uses [TimeoutConfig.default].
+ */
+public interface ReactInspector {
     /** Install DevTools before app scripts. Reload an already mounted app to let its renderer discover the hook. */
-    suspend fun enable(reload: Boolean = false)
-    suspend fun disable()
-    suspend fun tree(timeoutMs: Long = 30_000): List<ReactComponent>
-    suspend fun inspect(id: Long, timeoutMs: Long = 30_000): ReactInspection
-    suspend fun suspense(timeoutMs: Long = 30_000): List<ReactSuspenseBoundary>
-    suspend fun startRenderProfile()
-    suspend fun stopRenderProfile(): ReactRenderProfile
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun enable(reload: Boolean = false)
+
+    /** Removes the DevTools hook. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun disable()
+
+    /** The mounted component tree. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun tree(timeoutMs: Long? = null): List<ReactComponent>
+
+    /** Props, state and hooks of component [id]. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun inspect(id: Long, timeoutMs: Long? = null): ReactInspection
+
+    /** Suspense boundaries and what they wait for. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun suspense(timeoutMs: Long? = null): List<ReactSuspenseBoundary>
+
+    /** Starts recording renders. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun startRenderProfile()
+
+    /** Stops recording and returns the render profile; [timeoutMs] null uses [TimeoutConfig.default]. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun stopRenderProfile(timeoutMs: Long? = null): ReactRenderProfile
 }
 
+/** A mounted React component. */
 @Serializable
-data class ReactComponent(val id: Long, val type: Int, val name: String?, val key: String?, val parent: Long)
+public data class ReactComponent(val id: Long, val type: Int, val name: String?, val key: String?, val parent: Long)
+/** Props, state and hooks of a component. */
 @Serializable
-data class ReactInspection(val text: String, val source: JsonArray? = null)
+public data class ReactInspection(val text: String, val source: JsonArray? = null)
+/** A Suspense boundary and what it waits for. */
 @Serializable
-data class ReactSuspenseBoundary(val id: Long, val parentID: Long, val name: String?, val isSuspended: Boolean,
+public data class ReactSuspenseBoundary(val id: Long, val parentID: Long, val name: String?, val isSuspended: Boolean,
     val environments: List<String>, val suspendedBy: List<JsonObject>, val unknownSuspenders: String? = null,
     val owners: List<JsonObject>, val jsxSource: JsonArray? = null)
+/** Frame rate during a render profile. */
 @Serializable
-data class ReactFrameRate(val avg: Int, val min: Int, val max: Int, val drops: Int)
+public data class ReactFrameRate(val avg: Int, val min: Int, val max: Int, val drops: Int)
+/** Why a component re-rendered. */
 @Serializable
-data class ReactRenderChange(val type: String, val name: String? = null, val prev: String? = null, val next: String? = null)
+public data class ReactRenderChange(val type: String, val name: String? = null, val prev: String? = null, val next: String? = null)
+/** Render statistics of one component. */
 @Serializable
-data class ReactRenderComponent(val name: String, val count: Long, val mounts: Long, val reRenders: Long,
+public data class ReactRenderComponent(val name: String, val count: Long, val mounts: Long, val reRenders: Long,
     val instanceCount: Int, val totalTime: Double, val selfTime: Double, val domMutations: Long,
     val changes: List<ReactRenderChange>, val changeSummary: Map<String, Int>)
+/** Result of a render profile. */
 @Serializable
-data class ReactRenderProfile(val elapsed: Double, val fps: ReactFrameRate, val totalRenders: Long,
+public data class ReactRenderProfile(val elapsed: Double, val fps: ReactFrameRate, val totalRenders: Long,
     val totalMounts: Long, val totalReRenders: Long, val totalComponents: Int, val components: List<ReactRenderComponent>)
 
 internal class PageReactInspector(private val page: Page, private val controller: WebViewController,
-    private val check: suspend (Boolean) -> Unit) : ReactInspector {
+    private val defaultTimeoutMs: Long = 30_000, private val check: suspend (Boolean) -> Unit) : ReactInspector {
     private val mutex = Mutex()
     private val task = PageScriptTask(controller)
     private val json = Json { ignoreUnknownKeys = true }
@@ -48,9 +78,9 @@ internal class PageReactInspector(private val page: Page, private val controller
     private var profileRegistration: String? = null
 
     private fun script(raw: String): String = raw.replace("__AB", key)
-    private suspend fun <T> read(raw: String, timeoutMs: Long, decode: (String) -> T): T {
+    private suspend fun <T> read(raw: String, timeoutMs: Long?, decode: (String) -> T): T {
         check(true)
-        val value = task.evaluate(script(raw), timeoutMs) ?: throw KmpwrightException("React inspection returned no result")
+        val value = task.evaluate(script(raw), timeoutMs ?: defaultTimeoutMs) ?: throw KmpwrightException("React inspection returned no result")
         return decode(value)
     }
 
@@ -68,14 +98,14 @@ internal class PageReactInspector(private val page: Page, private val controller
         Unit
     }
 
-    override suspend fun tree(timeoutMs: Long): List<ReactComponent> = mutex.withLock {
+    override suspend fun tree(timeoutMs: Long?): List<ReactComponent> = mutex.withLock {
         read(reactTreeScript(), timeoutMs) { json.decodeFromString(it) }
     }
-    override suspend fun inspect(id: Long, timeoutMs: Long): ReactInspection = mutex.withLock {
+    override suspend fun inspect(id: Long, timeoutMs: Long?): ReactInspection = mutex.withLock {
         require(id > 0) { "React component id must be positive" }
         read(reactInspectScript().replace("{{ID}}", id.toString()), timeoutMs) { json.decodeFromString(it) }
     }
-    override suspend fun suspense(timeoutMs: Long): List<ReactSuspenseBoundary> = mutex.withLock {
+    override suspend fun suspense(timeoutMs: Long?): List<ReactSuspenseBoundary> = mutex.withLock {
         read(reactSuspenseScript(), timeoutMs) { json.decodeFromString(it) }
     }
 
@@ -96,10 +126,10 @@ internal class PageReactInspector(private val page: Page, private val controller
         }
     }
 
-    override suspend fun stopRenderProfile(): ReactRenderProfile = mutex.withLock {
+    override suspend fun stopRenderProfile(timeoutMs: Long?): ReactRenderProfile = mutex.withLock {
         check(false)
         if (profileRegistration == null) throw KmpwrightException("React render profile is not active")
-        try { read(reactRendersStopScript(), 30_000) { json.decodeFromString(it) } }
+        try { read(reactRendersStopScript(), timeoutMs ?: defaultTimeoutMs) { json.decodeFromString(it) } }
         finally {
             withContext(NonCancellable) { withTimeoutOrNull(1_000) { runCatching {
                 controller.evaluateJavaScriptAsync(cleanupProfileScript())

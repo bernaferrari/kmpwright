@@ -6,7 +6,9 @@ plugins {
 
 android {
     namespace = "com.bernaferrari.kmpwright.test"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
 
     defaultConfig {
         applicationId = "com.bernaferrari.kmpwright.test"
@@ -69,6 +71,7 @@ dependencies {
     }
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     implementation(libs.junit)
     androidTestImplementation(libs.kotlinx.coroutines.test)

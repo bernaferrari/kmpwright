@@ -4,7 +4,7 @@
   <img src="docs/assets/kmpwright-opengraph-v3.jpg" alt="KMPwright — Browser automation for Kotlin Multiplatform. One Kotlin workflow connects Android, iOS and Chromium browsers." width="1200" />
 </p>
 
-Write browser automation in shared Kotlin with a Playwright-inspired page and
+Write browser automation in shared Kotlin with a Playwright-style page and
 locator API. Run it against your application's Android `WebView` or iOS
 `WKWebView`, or launch and connect to Chromium on JVM.
 
@@ -13,7 +13,7 @@ import com.bernaferrari.kmpwright.core.*
 
 suspend fun checkExample(page: Page): ScreenshotResult {
     page.goto("https://example.com")
-    page.locator("h1").expect().toHaveText("Example Domain")
+    expect(page.locator("h1")).toHaveText("Example Domain")
     return page.screenshot()
 }
 ```
@@ -24,8 +24,10 @@ suspend fun checkExample(page: Page): ScreenshotResult {
 > coverage may change before the first release.
 
 [Try the demo](#try-the-demo) · [Installation](#installation) ·
-[Connect a browser](#connect-a-browser) · [Recipes](#recipes) ·
-[Platform support](#platform-support) · [Build and test](#build-and-test)
+[Connect a browser](#connect-a-browser) ·
+[Coming from Playwright / agent-browser](#coming-from-playwright--agent-browser) · [Recipes](#recipes) ·
+[Platform support](#platform-support) · [Build and test](#build-and-test) ·
+[Documentation website](website/README.md)
 
 ## What you can do
 
@@ -34,7 +36,7 @@ suspend fun checkExample(page: Page): ScreenshotResult {
 - **Capture results:** viewport, element and full-page screenshots; visual diffs; CDP video with cursors and contact sheets.
 - **Work with data:** cookies, storage, saved sessions, HTTP Markdown reading, request history and HAR export.
 - **Choose your browser:** embedded mobile WebViews, owned Chromium processes, existing CDP targets or cloud providers.
-- **Set boundaries:** allowed origins, domain filters, action policies and encrypted session files.
+- **Set boundaries:** allowed origins, allowed domains, action policies and encrypted storage-state files.
 
 Features follow each backend's capabilities. The [platform overview](#platform-support)
 and [browser feature guide](docs/browser-features.md) explain where behavior differs.
@@ -42,7 +44,7 @@ and [browser feature guide](docs/browser-features.md) explain where behavior dif
 ## Try the demo
 
 The shared Compose Multiplatform app puts automation controls beside a live
-browser. Explore selectors, input, screenshots, cookies, session snapshots,
+browser. Explore selectors, input, screenshots, cookies, storage state,
 network capture and page inspection without writing a test harness.
 
 <p align="center">
@@ -123,7 +125,8 @@ arm64 device and arm64 simulator, with iOS 15 as the minimum.
 
 ## Connect a browser
 
-Navigation, actions, assertions and async cleanup are suspending APIs. Run the
+Navigation, actions, assertions, `newPage()` and `close()` are suspending APIs;
+`dispose()` is the non-suspending best-effort teardown. Run the
 examples below in a coroutine; create and operate mobile WebViews on the main thread.
 The `checkExample(page)` function above works with each backend.
 
@@ -136,7 +139,7 @@ val browser = Browser(AndroidPlatformContext(activity, webView))
 try {
     checkExample(browser.page())
 } finally {
-    browser.closeAsync()
+    browser.close()
 }
 ```
 
@@ -149,7 +152,7 @@ val browser = Browser(IOSPlatformContext(webView = webView))
 try {
     checkExample(browser.page())
 } finally {
-    browser.closeAsync()
+    browser.close()
 }
 ```
 
@@ -166,10 +169,10 @@ it headless by default and owns the process and temporary profile:
 suspend fun checkInChromium(executablePath: String): ScreenshotResult {
     val launched = launchBrowser(BrowserLaunchOptions(executablePath))
     try {
-        val page = launched.browser.newPageAsync()
+        val page = launched.browser.newPage()
         return checkExample(page)
     } finally {
-        launched.closeAsync()
+        launched.close()
     }
 }
 ```
@@ -190,9 +193,9 @@ val browser = Browser(
     ))
 )
 try {
-    checkExample(browser.newPageAsync())
+    checkExample(browser.newPage())
 } finally {
-    browser.closeAsync()
+    browser.close()
 }
 ```
 
@@ -210,6 +213,25 @@ process environment:
 These providers use the same `CdpConfig(provider = …)` entry point.
 Browserbase also accepts `BROWSERBASE_PROJECT_ID` when your account requires a project.
 
+## Coming from Playwright / agent-browser
+
+KMPwright follows one naming rule set, so existing knowledge transfers:
+
+- **Playwright JS names and shapes** first: `goto`, `goBack`, `locator`, `getByRole`, `fill`, `pressSequentially`, `expect(locator)`, `route.fulfill`, `storageState()`.
+- **Playwright-Java names** where Kotlin can't use the JS name: `route.resume()` for `route.continue()`.
+- **agent-browser names** for agent features: `page.snapshot()`, `@e3` refs in `page.locator("@e3")`, `setAllowedDomains`, `runCommand`.
+- **Kotlin idioms** only where required: `suspend` instead of Promise, option data classes and default arguments instead of option objects, `StateFlow`/`SharedFlow` (`page.events`) instead of `page.on(...)`, and `timeoutMs: Long?` where `null` means the configured default.
+
+```kotlin
+// Playwright (TypeScript)                        // KMPwright (Kotlin)
+// await page.getByRole('button', { name: 'Save' }).click();
+page.getByRole("button", name = "Save").click()
+// await page.route('**/api', r => r.fulfill({ json: '{}' }));
+page.route("**/api") { route -> route.fulfill(json = "{}") }
+// await expect(page).toHaveURL(/done/);
+expect(page).toHaveURL(Regex("done"))
+```
+
 ## Recipes
 
 The snippets below assume an open `page` and the core imports shown above.
@@ -220,31 +242,33 @@ The snippets below assume an open `page` and the core imports shown above.
 page.locator("label=Email").fill("reader@example.com")
 page.locator("label=Password").fill(passwordFromSecretStore)
 page.locator("button[type=submit]").click()
-page.locator(".notice").expect().toContainText("Welcome")
+expect(page.locator(".notice")).toContainText("Welcome")
 
 page.locator("#terms").check()
 page.locator("select").selectOption("pro")
 page.locator("input").press("Enter")
-page.locator(".result").expect().toHaveCount(5)
+expect(page.locator(".result")).toHaveCount(5)
 ```
 
 Use semantic selectors for user-facing controls and CSS or XPath for structure:
 
 | Selector | Example |
 | --- | --- |
-| Role | `role=button` |
+| Role | `role=button` or `role=button[name="Save"]` (accessible name, case-insensitive substring; add ` s` for exact) |
 | Label | `label=Email` |
-| Text | `text=Continue` or `text:Continue` |
+| Text | `text=Continue` (case-insensitive substring), `text="Continue"` (exact), `text=/contin/i` (regex); `text:Continue` also works |
 | Exact text | `exact_text=Submit order` |
-| Placeholder | `placeholder=Search` |
-| Image alternative text | `alt=Company logo` |
-| Title | `title=Close` |
-| Test ID | `testid=checkout` |
+| Placeholder | `placeholder=Search` (case-insensitive substring), `placeholder="Search"` (exact), `placeholder=/sea/i` (regex) |
+| Image alternative text | `alt=Company logo` (same matching as `placeholder=`) |
+| Title | `title=Close` (same matching as `placeholder=`) |
+| Test ID | `testid=checkout` (exact, or `testid=/check/` regex) |
 | CSS | `.results > article` |
 | XPath | `xpath=//main//button` |
 
-Chain locators or use `.nth(index)` with a zero-based index to narrow a result. Snapshot references can
-also be addressed with `page.locatorByRef(refId)`.
+The Playwright finders build the same selectors: `getByRole`, `getByText`, `getByLabel`,
+`getByPlaceholder`, `getByAltText`, `getByTitle` and `getByTestId` are available on pages,
+locators and frame locators. Chain locators or use `.nth(index)` with a zero-based index to
+narrow a result. Snapshot references can also be addressed with `page.locator("@e3")`.
 
 ### Wait for the result you need
 
@@ -270,9 +294,30 @@ that an application has finished updating.
 val viewport = page.screenshot()
 val fullPage = page.screenshot(ScreenshotOptions(fullPage = true))
 val chart = page.locator(".chart").screenshot()
-val snapshot = page.accessibilitySnapshot(A11ySnapshotOptions(interactiveOnly = true))
+val snapshot = page.snapshot(SnapshotOptions(interactive = true))
+val annotated = page.screenshot(ScreenshotOptions(annotate = true)) // labels each @eN ref
 val audit = page.accessibilityAudit(AccessibilityAuditOptions(tags = setOf("wcag2aa")))
 ```
+
+`snapshot.tree` uses [agent-browser's snapshot format](https://agent-browser.dev/snapshots),
+so prompts written for agent-browser work unchanged. With `interactive = true`
+(`snapshot -i`) it is a flat list of refs, with iframe content indented beneath
+its iframe; `urls = true` (`-u`) adds link targets:
+
+```text
+@e1 [heading] "Example Domain" [level=1]
+@e2 [button] "Submit"
+@e3 [input type="email"] placeholder="Email"
+@e4 [checkbox] "Remember me" [checked]
+@e5 [link] "Learn more" url="https://example.com/more"
+@e6 [Iframe] "payment-frame"
+  @e7 [input] "Card number"
+  @e8 [button] "Pay"
+```
+
+The full tree (no `-i`) adds unreferenced structure and text, such as
+`[paragraph]` and `[StaticText] "…"` lines, indented two spaces per level.
+`screenshot --annotate` prints a legend such as `[2] @e2 button "Submit"`.
 
 CDP snapshots use Chromium's accessibility tree. Mobile snapshots use DOM
 heuristics; audits report skipped child frames. Full-page capture also differs
@@ -285,9 +330,9 @@ by backend—check the [feature guide](docs/browser-features.md) for coverage.
 val document = HttpReader().read("https://example.com")
 println(document.content)
 
-page.startHarCapture()
+page.network.startHar()
 page.goto("https://example.com")
-val archive = page.stopHarCapture()
+val archive = page.network.stopHar()
 val recentRequests = page.network.requests(limit = 10)
 ```
 
@@ -299,19 +344,19 @@ can make CDP bodies unavailable.
 
 ```kotlin
 page.requireCapabilities(PageCapability.VideoRecording)
-page.startRecording(RecordingOptions(
+page.video.start(RecordingOptions(
     path = "capture.mp4",
     fps = 30,
     contactSheetPath = "contact.png"
 ))
 page.locator("button").click()
-val recording = page.stopRecording()
+val recording = page.video.stop()
 ```
 
 Recording requires FFmpeg and supports MP4 or WebM at 1–60 FPS. It preserves the
 current page's state and can include cursor feedback and a clean contact sheet.
 
-For React inspection, WebMCP tools, routing, init scripts, login, encrypted state,
+For React inspection, WebMCP tools, routing, init scripts, login, encrypted storage state,
 autosave and private certificate trust, see the [browser feature recipes](docs/browser-features.md).
 
 ## Platform support
@@ -353,12 +398,18 @@ val config = KmpwrightConfig(
 )
 ```
 
-Use `page.setDomainFilter(setOf("example.com", "*.static.example.com"))` for
-request filtering, and `page.createContentBoundary()` / `page.boundedSnapshot()`
+Use `page.setAllowedDomains(listOf("example.com", "*.static.example.com"))` for
+request filtering (enforced below JavaScript on every backend: CDP Fetch interception, an iOS
+navigation policy plus a WKContentRuleList, and Android `shouldInterceptRequest`/`shouldOverrideUrlLoading`;
+check `page.capabilities().domainFiltering` and its `notes` for the gaps — CDP does not see WebSocket
+handshakes, and Android cannot see subresource redirects, WebSockets or service-worker requests), and `page.createContentBoundary()` / `page.boundedSnapshot()`
 for marked content extraction. These are workflow controls; page content remains
 untrusted, and filtering does not make a WebView a security sandbox.
 
-Encrypted session-file saves require an explicit password. Keep credentials,
+Storage-state files are encrypted when you pass a password:
+`page.storageState().save(path, password = statePassword)`, restored with
+`page.setStorageState(StorageState.load(path, password = statePassword))`. The password
+parameter has no default; pass `password = null` to opt in to a plaintext file. Keep credentials,
 provider keys and session files out of source control. See the
 [configuration API](kmpwright-core/src/commonMain/kotlin/com/bernaferrari/kmpwright/core/KmpwrightConfig.kt)
 and [feature guide](docs/browser-features.md) for the available options.
@@ -369,11 +420,13 @@ and [feature guide](docs/browser-features.md) for the available options.
 # Build core/examples, run JVM tests and lint; also link iOS frameworks on macOS.
 ./scripts/ci-build.sh
 
-# Android instrumentation: one activity, fresh WebViews, visible test/count progress.
+# Android instrumentation: reuse each class's activity, fresh WebViews, visible test/count progress.
 ./scripts/run-android-tests.sh DEVICE_SERIAL
 
 # iOS backend contracts and shared example framework (macOS only).
 ./gradlew :kmpwright-core:iosSimTest :kmpwright-example-shared:linkReleaseFrameworkIosSim
+# Run the complete suite in an app host, including actual WKWebView documents.
+./scripts/run-ios-webkit-tests.sh
 
 # Documentation and upstream comparison metadata.
 ./scripts/verify-documentation.sh
@@ -390,8 +443,7 @@ export KMPWRIGHT_TEST_REACT_BUNDLE="$PWD/.upstream/react-fixture/app.bundle.js"
 ./gradlew :kmpwright-core:jvmTest
 ```
 
-[Dependency versions](docs/dependencies.md), [implementation notes](KMP_README.md)
-and [release verification](docs/releasing.md) describe the tested toolchain and
+[Dependency versions](docs/dependencies.md) and [release verification](docs/releasing.md) describe the tested toolchain and
 artifact checks.
 
 ## Project layout

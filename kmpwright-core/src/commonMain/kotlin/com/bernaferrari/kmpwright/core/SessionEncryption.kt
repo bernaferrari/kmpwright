@@ -8,7 +8,7 @@ import kotlinx.serialization.json.Json
  * Mirrors agent-browser's named session feature with AES-256 encryption.
  */
 @Serializable
-data class SessionState(
+internal data class SessionState(
     val name: String,
     val url: String? = null,
     val cookies: List<SessionCookie> = emptyList(),
@@ -18,7 +18,7 @@ data class SessionState(
 )
 
 @Serializable
-data class SessionCookie(
+internal data class SessionCookie(
     val name: String,
     val value: String,
     val domain: String,
@@ -32,8 +32,15 @@ data class SessionCookie(
 )
 
 /**
- * Platform-specific encryption/decryption.
- * All platforms use a versioned, password-derived authenticated-encryption format.
+ * Header of the one encrypted file format shared by every platform: `WW2:` followed by Base64 of
+ * salt(16) | iv(16) | AES-256-CBC/PKCS7 ciphertext | HMAC-SHA256 tag(32), with the AES and HMAC keys
+ * derived by PBKDF2-HMAC-SHA256 (210,000 rounds, 64 bytes) from the password and salt. A file written
+ * on JVM, Android or iOS decrypts on all of them.
+ */
+internal const val ENCRYPTION_FORMAT_PREFIX: String = "WW2:"
+
+/**
+ * Platform-specific encryption/decryption of the [ENCRYPTION_FORMAT_PREFIX] format.
  */
 internal expect fun platformEncrypt(plainText: String, password: String): String
 internal expect fun platformDecrypt(cipherText: String, password: String): String?
@@ -41,16 +48,9 @@ internal expect fun platformDecrypt(cipherText: String, password: String): Strin
 /**
  * Utilities for saving and loading named browser sessions with optional encryption.
  *
- * Usage:
- * ```kotlin
- * val state = page.captureSession("login-session")
- * SessionManager.save(state)
- *
- * val loaded = SessionManager.load("login-session")
- * page.restoreSession(loaded)
- * ```
+ * [StorageState.save] and [StorageState.load] build on these helpers.
  */
-object SessionManager {
+internal object SessionManager {
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -105,5 +105,20 @@ object SessionManager {
     fun decrypt(cipherText: String, password: String? = null): String? {
         if (password.isNullOrBlank()) return null
         return platformDecrypt(cipherText, password)
+    }
+
+    /**
+     * Decrypts [cipherText] read from [description], explaining why it fails.
+     * @throws KmpwrightException for a non-WW2 file (plaintext, or a pre-release format) or a wrong password.
+     */
+    fun decryptOrThrow(cipherText: String, password: String, description: String): String {
+        if (!cipherText.trimStart().startsWith(ENCRYPTION_FORMAT_PREFIX)) {
+            throw KmpwrightException(
+                "$description is not in the KMPwright encrypted format (no $ENCRYPTION_FORMAT_PREFIX header): pass password = null " +
+                    "for a plaintext file; files written by pre-release versions must be saved again"
+            )
+        }
+        return platformDecrypt(cipherText.trim(), password)
+            ?: throw KmpwrightException("Could not decrypt $description (wrong password?)")
     }
 }

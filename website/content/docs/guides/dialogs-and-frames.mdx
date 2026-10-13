@@ -1,0 +1,206 @@
+---
+title: Dialogs and frames
+description: Answer alert, confirm, prompt and beforeunload dialogs with onDialog, wait for dialogs without races, and locate elements inside iframes with frameLocator.
+---
+
+```kotlin
+// Accept the next confirm() and check its message
+val handler = page.onDialog { DialogResponse.Accept }
+val dialog = page.waitForDialog {
+    getByRole("button", name = "Delete project").click()
+}
+check(dialog.type == DialogType.Confirm)
+check(dialog.message == "Delete this project?")
+handler.close()
+
+// Fill a field inside an iframe
+val checkout = page.frameLocator("iframe#checkout")
+checkout.getByLabel("Card holder").fill("Ada Lovelace")
+expect(checkout.getByRole("button", name = "Pay")).toBeEnabled()
+```
+
+## Dialogs
+
+JavaScript `alert()`, `confirm()`, `prompt()` and `beforeunload` dialogs block the page until they're answered. KMPwright answers them with handlers you register through `onDialog`.
+
+```kotlin
+fun onDialog(handler: suspend (DialogEvent) -> DialogResponse): DialogHandler
+```
+
+The handler receives a `DialogEvent` and returns a `DialogResponse`. `onDialog` returns a `DialogHandler`; call `close()` on it to remove that handler.
+
+```kotlin
+val handler = page.onDialog { dialog ->
+    when (dialog.type) {
+        DialogType.Prompt -> DialogResponse.Text("Ada")
+        DialogType.BeforeUnload -> DialogResponse.Accept   // leave the page
+        else -> DialogResponse.Accept
+    }
+}
+// …
+handler.close()
+```
+
+Playwright: `page.on('dialog', d => d.accept())`. In KMPwright the handler returns its answer instead of calling `accept()` or `dismiss()`, and it is registered with `onDialog`, not through `page.events.dialog` (that flow only observes).
+
+### Handler stack
+
+Handlers form a stack: the most recently registered open handler answers every dialog. Closing a handler removes exactly that registration, so the previous one answers again. Use this to override the answer for one step:
+
+```kotlin
+val default = page.acceptDialogs()                 // for the whole test
+val once = page.dismissDialogs()                   // newest wins
+page.getByRole("button", name = "Discard").click() // dismissed
+once.close()                                       // back to accepting
+```
+
+Convenience extensions:
+
+| Function | Equivalent |
+|---|---|
+| `page.acceptDialogs()` | `onDialog { DialogResponse.Accept }` |
+| `page.dismissDialogs()` | `onDialog { DialogResponse.Dismiss }` |
+| `page.acceptDialogsIf(predicate)` | Accepts dialogs for which `predicate(event)` is true, dismisses the rest. |
+
+A handler that throws, or doesn't return within the timeout, dismisses the dialog. The timeout is `TimeoutConfig.default` on Android and iOS, and a fixed 30 000 ms on JVM.
+
+### DialogEvent
+
+<TypeTable
+  type={{
+    type: { type: 'DialogType', description: 'Alert, Confirm, Prompt or BeforeUnload.' },
+    message: { type: 'String', description: 'The message shown by the dialog.' },
+    defaultPrompt: { type: 'String?', description: 'The default value of a prompt() dialog; null for other types.', default: 'null' },
+  }}
+/>
+
+### DialogResponse
+
+| Response | `alert` | `confirm` | `prompt` | `beforeunload` |
+|---|---|---|---|---|
+| `DialogResponse.Accept` | Closes it | Returns `true` | Returns the default value (Android, iOS) | Leaves the page |
+| `DialogResponse.Dismiss` | Closes it | Returns `false` | Returns `null` | Stays on the page |
+| `DialogResponse.Text(text)` | Closes it | Returns `true` | Returns `text` | Leaves the page |
+
+### Default behavior without a handler
+
+| Backend | No handler registered |
+|---|---|
+| JVM (CDP) | The dialog is emitted on `page.events.dialog`, then dismissed. |
+| iOS (WKWebView) | The dialog is emitted on `page.events.dialog`, then dismissed. |
+| Android (WebView) | KMPwright doesn't intercept it. The dialog goes to your app's `WebChromeClient`, or to WebView's default handling if you have none. It is **not** emitted on `page.events.dialog`. |
+
+On Android, register a handler before any step that opens a dialog, including before `waitForDialog`.
+
+### Dialog types per backend
+
+| `DialogType` | Android | iOS | JVM |
+|---|---|---|---|
+| `Alert`, `Confirm`, `Prompt` | Yes | Yes | Yes |
+| `BeforeUnload` | Yes (when a handler is registered) | Not reported | Yes |
+
+WKWebView doesn't expose `beforeunload` prompts to its UI delegate, so iOS never sees them.
+
+### Waiting for a dialog
+
+```kotlin
+suspend fun Page.waitForDialog(timeoutMs: Long? = null, action: suspend Page.() -> Unit): DialogEvent
+suspend fun Page.waitForDialog(timeoutMs: Long? = null): DialogEvent
+```
+
+`waitForDialog` returns the next `DialogEvent`. It doesn't answer the dialog: the newest `onDialog` handler does (or the default above). Register a handler first if you want to accept it.
+
+The action-scoped form starts listening before it runs the action, so a dialog opened by the action can't be missed. Prefer it over calling `waitForDialog()` after the action. `timeoutMs = null` uses `TimeoutConfig.default`; on timeout it throws `KmpwrightTimeoutException`.
+
+```kotlin
+page.acceptDialogs()
+val alert = page.waitForDialog { getByRole("button", name = "Save").click() }
+println(alert.message)
+```
+
+To observe every dialog, collect the flow:
+
+```kotlin
+scope.launch {
+    page.events.dialog.collect { println("${it.type}: ${it.message}") }
+}
+```
+
+## Frames
+
+```kotlin
+fun frameLocator(selector: String): FrameLocator
+fun mainFrame(): FrameLocator
+```
+
+`frameLocator(selector)` returns a `FrameLocator` for the `<iframe>` (or `<frame>`) matched by the CSS `selector`. It is lazy, like a locator: the iframe is looked up each time you use something from it.
+
+A `FrameLocator` has the same finders as a page:
+
+| Member | Returns |
+|---|---|
+| `locator(selector)` | `Locator` inside the frame |
+| `getByRole`, `getByText`, `getByLabel`, `getByPlaceholder`, `getByAltText`, `getByTitle`, `getByTestId` | `Locator` inside the frame, with the same parameters as on `Page` |
+| `frameLocator(selector)` | `FrameLocator` for an iframe nested inside this frame |
+| `suspend name()` | The iframe's `name` attribute, or its `id`, or `null` |
+| `suspend url()` | The URL of the frame's document |
+| `suspend boundingBox()` | The iframe element's box as a `Rectangle` |
+
+Locators from a frame support every [action](/docs/guides/actions) and [assertion](/docs/guides/assertions).
+
+```kotlin
+val editor = page.frameLocator("iframe[title='Editor']")
+editor.locator("[contenteditable]").fill("Hello")
+println(editor.url())
+```
+
+### Nested frames
+
+Chain `frameLocator` calls, or separate frame selectors with `>>`:
+
+```kotlin
+page.frameLocator("#outer").frameLocator("#inner").getByText("Done")
+page.frameLocator("#outer >> #inner").getByText("Done")
+```
+
+### Frame selectors
+
+The frame selector is passed to `document.querySelector`, so it must be CSS. Snapshot refs (`@e3`), `text=` and the other selector engines are not accepted for the iframe itself; use them for elements inside the frame.
+
+If no element matches the frame selector, operations fail with `KmpwrightException` (`Frame not found`) instead of waiting for the iframe. When the iframe is added dynamically, wait for it first:
+
+```kotlin
+page.waitForSelector("iframe#checkout", SelectorState.Attached)
+page.frameLocator("iframe#checkout").getByLabel("Card number").fill(testCard)
+```
+
+### mainFrame
+
+`mainFrame()` returns a `FrameLocator` scoped to the top-level document. Its finders behave like the page's own, `url()` returns the top-level URL, and `name()` and `boundingBox()` return `null`. It's useful for code that takes a `FrameLocator` and should also work on the main document.
+
+Playwright: `page.mainFrame()` returns a `Frame` with navigation and evaluation methods. KMPwright has no `Frame` type; `mainFrame()` only offers the `FrameLocator` finders.
+
+### Cross-origin frames
+
+| Backend | Same-origin iframes | Cross-origin iframes |
+|---|---|---|
+| JVM (CDP) | Yes | Yes, including out-of-process iframes |
+| Android (WebView) | Yes | No |
+| iOS (WKWebView) | Yes | No |
+
+On Android and iOS, frames are reached through the parent document's `contentDocument`, which the browser hides for cross-origin frames. Using a locator in a cross-origin frame fails with `KmpwrightException` (`Cross-origin frames require a backend frame session`).
+
+On JVM, each frame gets its own isolated execution context through CDP, so cross-origin and out-of-process frames work like same-origin ones. Additional JVM behavior:
+
+- The frame's URL must pass `KmpwrightConfig.allowedOriginRules`, otherwise operations throw `KmpwrightException` (`Frame origin is not allowed by KmpwrightConfig`).
+- Mouse and touch input is mapped through iframe borders and scaling into the root viewport. Input into a rotated or 3D-transformed iframe throws.
+- `boundingBox()` is in root-viewport coordinates. On Android and iOS it's relative to the viewport of the document that contains the iframe, which differs for nested frames.
+
+There is no `PageCapability` for frames. Check `page.capabilities().backend == BackendKind.JvmCdp` if a workflow needs cross-origin frames. See [Capabilities](/docs/platforms/capabilities).
+
+## Related
+
+- [Locators](/docs/guides/locators): finders available on `FrameLocator`.
+- [Navigation and waiting](/docs/guides/navigation): action-scoped waits.
+- [Capabilities](/docs/platforms/capabilities)
+- [Errors](/docs/reference/errors)

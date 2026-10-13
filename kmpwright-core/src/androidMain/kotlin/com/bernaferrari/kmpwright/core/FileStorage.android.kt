@@ -41,4 +41,5 @@ internal actual fun mkdirs(path: String) {
     File(path).mkdirs()
 }
 
-internal actual fun platformHomeDir(): String = System.getProperty("user.home") ?: "/data/local/tmp"
+/** `user.home` is empty on Android; the app-private files directory is the home equivalent. */
+internal actual fun platformHomeDir(): String = AndroidAppStorage.requireFilesDir().absolutePath

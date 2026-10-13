@@ -1,0 +1,280 @@
+---
+title: Coming from agent-browser
+description: How agent-browser CLI commands and flags map to page.runCommand (same command grammar) and to the typed Kotlin API, including what is partial, unsupported or intentionally out of scope.
+---
+
+KMPwright adapts [agent-browser](https://github.com/vercel-labs/agent-browser) to a Kotlin library. There are two ways to use what you know:
+
+1. **`page.runCommand("…")`** accepts agent-browser command lines for the core agent loop (open, snapshot, act on `@e` refs, read, wait). Hand it to an LLM as a single tool.
+2. **The typed Kotlin API** covers almost every agent-browser command, including the ones `runCommand` does not parse (network, tabs, state, recording, diffs and more).
+
+```kotlin
+// agent-browser                       // KMPwright
+// agent-browser open example.com      page.runCommand("open example.com")
+// agent-browser snapshot -i           page.runCommand("snapshot -i")
+// agent-browser click @e2             page.runCommand("click @e2")
+//                                     // or, typed:
+//                                     page.locator("@e2").click()
+```
+
+The comparison was made against agent-browser 0.39.0. The machine-readable inventory is [`compatibility/agent-browser-compatibility.json`](https://github.com/bernaferrari/kmpwright/blob/main/compatibility/agent-browser-compatibility.json).
+
+## Out of scope
+
+KMPwright is a library you embed. These agent-browser parts are intentionally not included:
+
+- the CLI executable and its daemon (sessions, `--session`, `--namespace`, `--idle-timeout`, `--json`, `batch`, `get cdp-url`),
+- the MCP stdio server (`mcp`),
+- executable plugins (`plugin`, `--plugins`),
+- the chat gateway (`chat`, `--model`),
+- installation management (`install`, `upgrade`, `doctor`, `skills`).
+
+Your Kotlin code owns browser and page lifetimes, output formatting and tool wiring instead.
+
+## `runCommand`: the supported grammar
+
+`page.runCommand(command)` parses one command line. Arguments are split on whitespace; single or double quotes group words; a backslash escapes the next character. It returns `AgentCommandResult(command, output, snapshot, screenshot)`: `output` is plain text for a person or a model; `snapshot` and `screenshot` carry structured data when the command produces it. Unknown or malformed commands throw `KmpwrightException` with a usage hint.
+
+A target is a snapshot ref (`@e3`, `e3`, `ref=e3`) or any selector that [`page.locator`](/docs/guides/locators) accepts: CSS, `text=Save`, `role=button[name="Save"]`, `label=Email`, `xpath=…`.
+
+### Navigation
+
+| Command | Does | Typed equivalent |
+| --- | --- | --- |
+| `open <url>` (aliases `goto`, `navigate`) | Navigates; adds `https://` to bare hosts, `http://` to `localhost`, `127.0.0.1` and `10.0.2.2`. Throws when the navigation fails. Output: `Opened <url> — <title>`. | `page.goto(url)` |
+| `back` | History back. | `page.goBack()` |
+| `forward` | History forward. | `page.goForward()` |
+| `reload` | Reloads. | `page.reload()` |
+
+### Observe
+
+| Command | Flags | Typed equivalent |
+| --- | --- | --- |
+| `snapshot` | `-i` / `--interactive`, `-u` / `--urls`, `-c` / `--compact`, `-d` / `--depth <n>`, `-s` / `--selector <sel>`, `-C` / `--cursor` | `page.snapshot(SnapshotOptions(interactive, urls, compact, maxDepth, selector, cursor))` (named arguments) |
+| `screenshot` | `--full` / `-f`, `--annotate` / `-a` | `page.screenshot(ScreenshotOptions(fullPage, annotate))` |
+
+`snapshot` output is the snapshot text and `result.snapshot` holds the `Snapshot`. The text uses agent-browser's format, one element per line; elements that can be targeted start with their ref, children are indented two spaces, and page text is printed as JSON string literals:
+
+```text
+@e1 [heading] "Example Domain" [level=1]
+@e2 [button] "Submit"
+@e3 [input type="email"] placeholder="Email"
+@e4 [checkbox] "Remember me" [checked]
+@e5 [link] "Learn more" url="https://example.com/more"
+```
+
+- `-i` prints only elements with refs (buttons, links, inputs, iframes, and named headings and landmarks) as a flat list; refs nested inside a ref, such as iframe content, are indented.
+- `-u` adds each link's resolved `href` as `url="…"`.
+- `-c` drops structural nodes that contain no refs or values.
+- `-C` also includes elements that are interactive only through `cursor: pointer` or `onclick`.
+- With no output, the text is `(no interactive elements)` for `-i` and `(empty page)` otherwise.
+
+`screenshot` output is `Screenshot <width>×<height>`, followed with `--annotate` by one `@eN role: name` line per drawn ref; the image is in `result.screenshot`. No path argument: write `result.screenshot!!.bytes` yourself.
+
+### Act
+
+| Command | Typed equivalent |
+| --- | --- |
+| `click <target>` | `locator(target).click()` |
+| `dblclick <target>` | `locator(target).dblclick()` |
+| `tap <target>` | `locator(target).tap()` |
+| `hover <target>` | `locator(target).hover()` |
+| `focus <target>` | `locator(target).focus()` |
+| `check <target>` / `uncheck <target>` | `locator(target).check()` / `uncheck()` |
+| `highlight <target>` | `locator(target).highlight()` |
+| `scrollintoview <target>` (alias `scrollinto`) | `locator(target).scrollIntoViewIfNeeded()` |
+| `fill <target> <text>` | `locator(target).fill(text)`. Remaining words are joined with spaces; an empty text clears. |
+| `type <target> <text>` | `locator(target).pressSequentially(text)` |
+| `press <key> [target]` (alias `key`) | `locator(target).press(key)`, or `page.keyboard.press(key)` without a target |
+| `select <target> <value>` | `locator(target).selectOption(value)` (single value) |
+| `drag <source> <target>` | `locator(source).dragTo(locator(target))` |
+| `scroll <up\|down\|left\|right> [px]` | `page.scroll(ScrollDirection.Down, px)`; default 300 px, exactly that amount |
+| `scroll <top\|bottom>` | `page.scrollToTop()` / `page.scrollToBottom()` |
+
+### Query
+
+| Command | Output | Typed equivalent |
+| --- | --- | --- |
+| `get title` / `get url` | Current title / URL | `page.title.value` / `page.url.value` |
+| `get text <target>` | Rendered text | `locator.innerText()` |
+| `get html <target>` | Inner HTML | `locator.innerHTML()` |
+| `get value <target>` | Input value | `locator.inputValue()` |
+| `get attr <target> <name>` | Attribute or `null` | `locator.getAttribute(name)` |
+| `get count <selector>` | Match count | `locator.count()` |
+| `get box <target>` | `x=… y=… width=… height=…` or `null` | `locator.boundingBox()` |
+| `is visible\|enabled\|checked\|focused\|editable <target>` | `true` / `false` | `isVisible()`, `isEnabled()`, `isChecked()`, `isFocused()`, `isEditable()` |
+
+### Wait
+
+| Command | Typed equivalent |
+| --- | --- |
+| `wait <ms>` | `page.waitForTimeout(ms)` |
+| `wait <target>` | `locator(target).waitFor(SelectorState.Visible)` |
+| `wait --text <text>` | `page.waitForText(text)` |
+| `wait --load <load\|domcontentloaded\|networkidle>` | `page.waitForLoadState(state)`; `dom` and `idle` are accepted as short forms |
+| `wait --fn <js>` | `page.waitForFunction(js)` |
+
+Every `wait` form accepts `--timeout <ms>`. The default is 10 000 ms for `runCommand` waits (not the configured `TimeoutConfig`). Put the target or milliseconds first: `wait @e3 --timeout 5000`.
+
+### Page
+
+| Command | Output | Typed equivalent |
+| --- | --- | --- |
+| `eval <js>` | The value as text | `page.evaluate(js).value` |
+| `console` | `[type] text` per message | `page.consoleMessages()` |
+| `errors` | One error per line | `page.pageErrors()` |
+| `cookies` (or `cookies list`, `cookies get`) | `name=value  (domain/path)` per cookie | `page.cookies()` |
+| `cookies clear` | | `page.clearCookies()` |
+| `storage local\|session` | `key=value` per entry | `page.localStorage.entries()` / `page.sessionStorage.entries()` |
+| `storage local\|session clear` | | `page.localStorage.clear()` / `page.sessionStorage.clear()` |
+| `help` | The command reference | `AgentCommands.HELP` |
+
+Helpers on `AgentCommands`: `HELP` (the reference text, suitable for a tool description), `tokenize(command)` and `normalizeUrl(input)`.
+
+### Not parsed by `runCommand`
+
+These agent-browser commands are not part of the `runCommand` grammar. Use the typed API (next section) and, if your agent needs them, expose them as additional tools: `find`, `upload`, `pdf`, `read`, `keyboard`, `mouse`, `clipboard`, `set …`, `network …`, `tab`, `window`, `frame`, `dialog`, `diff …`, `trace`, `profiler`, `pushstate`, `react`, `vitals`, `addinitscript`, `removeinitscript`, `auth`, `state`, `stream`, `a11y`, `webmcp`, `record`, `cookies set`, `storage … set`. `runCommand` also has no `--json` output mode.
+
+## Every command, mapped to the Kotlin API
+
+Status comes from the compatibility inventory: **Supported** means the documented core behavior has a public entry point; **Partial** means one exists but backend, lifecycle, output or option semantics differ; **Unsupported** means there is none.
+
+### Navigation and interaction
+
+| agent-browser | Status | KMPwright | Notes |
+| --- | --- | --- | --- |
+| `open` / `goto` / `navigate` | Supported | `browser.newPage()`, `page.goto(url)` | |
+| `back` / `forward` / `reload` | Supported | `page.goBack()`, `goForward()`, `reload()` | |
+| `pushstate` | Supported | `page.pushState(url)` | Next.js router when present, else `history.pushState`; origin policy enforced. |
+| `click` | Partial | `locator.click()` | JVM dispatches trusted CDP input with shadow/label hit testing and cross-process frames. Mobile uses DOM input semantics. |
+| `dblclick`, `focus`, `hover`, `check`, `uncheck`, `drag` | Supported | `dblclick()`, `focus()`, `hover()`, `check()`, `uncheck()`, `dragTo(target)` | |
+| `type` | Supported | `locator.pressSequentially(text)` | |
+| `fill` | Supported | `locator.fill(value)` | |
+| `press` / `key` | Supported | `locator.press(key)` | |
+| `keyboard` | Supported | `page.keyboard.type`, `insertText`, `press`, `down`, `up` | |
+| `mouse` | Supported | `page.mouse.move`, `down`, `up`, `wheel`, `drag` | |
+| `select` | Supported | `locator.selectOption(value)` | Matches value first, then normalized visible label; rejects unmatched or disabled choices before changing anything. |
+| `scroll` | Supported | `page.scroll(direction, amount)`, `locator.scrollIntoViewIfNeeded()` | |
+| `scrollintoview` / `scrollinto` | Supported | `locator.scrollIntoViewIfNeeded()` | |
+| `upload` | Partial | `locator.setInputFiles(paths)` | JVM uses `DOM.setFileInputFiles`. Unsupported on mobile WebViews. |
+| `highlight` | Supported | `locator.highlight()` | |
+| `clipboard` | Supported | `page.clipboard.readText()`, `writeText(text)`, `page.paste()` | |
+| `find` | Partial | `page.locator(...)`, `getByRole`, `getByText`, …, `first()`, `last()`, `nth()` | Shared role/name matching approximates ARIA; not identical to browser-computed accessibility roles and names. |
+| `wait` | Partial | `locator.waitFor`, `page.waitForText`, `waitForFunction`, `waitForLoadState`, `waitForTimeout`, `waitForURL` | JVM awaits Promise-based conditions; mobile Promise semantics may differ. |
+| `dialog` | Supported | `page.onDialog { … }` | |
+| `frame` | Partial | `page.frameLocator(sel)` | CDP handles nested cross-origin/process frames; mobile WebViews are limited to same-origin frames. |
+
+### Observation and content
+
+| agent-browser | Status | KMPwright | Notes |
+| --- | --- | --- | --- |
+| `snapshot` | Supported | `page.snapshot(SnapshotOptions(...))`, then `page.locator("@e3")` | CDP follows Chromium's accessibility tree; mobile and `includeHidden` use bounded DOM traversal. |
+| `screenshot` | Supported | `page.screenshot(...)`, `locator.screenshot()` | |
+| `pdf` | Supported | `page.pdf(PdfOptions(...))` | Capability is Partial on every backend. |
+| `get` | Supported | `page.title.value`, `page.url.value`, `textContent()`, `innerHTML()`, `getAttribute()`, `inputValue()`, `count()`, `boundingBox()`, `evaluate()` | |
+| `is` | Supported | `isVisible()`, `isEnabled()`, `isChecked()` | |
+| `eval` | Partial | `page.evaluate(js)` | Blocked when `KmpwrightConfig.allowEval = false` or by an action policy. |
+| `read` | Supported | `page.read(url, ReadOptions(...))`, `HttpReader(config).read(url)` | Independent HTTP client without browser cookies; redirects and links pass origin/domain checks; bounded budgets. |
+| `console` / `errors` | Supported | `page.consoleMessages()` / `page.pageErrors()` | |
+| `diff snapshot` | Supported | `page.diffSnapshot(name)`, `page.diffSnapshot(before, after)` | |
+| `diff url` | Supported | `page.diffUrls(url1, url2)` | |
+| `diff screenshot` | Partial | `page.visualDiff(expected, actual)`, `VisualDiff.compareRgba(...)` | An API over image bytes, not a baseline-file workflow. |
+| `a11y` | Partial | `page.accessibilityAudit(AccessibilityAuditOptions(...))` | Bundled axe-core 4.14.0. CDP merges isolated frame results; mobile reports skipped child frames. |
+| `vitals` | Supported | `page.webVitals()` | Bundled web-vitals 6.2.3. |
+| `react` | Supported | `page.react` (`enable`, `tree`, `inspect`, `suspense`, `startRenderProfile`, `stopRenderProfile`) | |
+| `webmcp` | Partial | `page.webMcp` (`discover`, `context`, `invoke`, `awaitInvocation`, `cancelInvocation`) | Experimental; CDP only, depends on the Chromium build. |
+
+### Browser settings
+
+| agent-browser | Status | KMPwright |
+| --- | --- | --- |
+| `set viewport` | Supported | `page.setViewportSize(w, h)`, `page.setDeviceScaleFactor(scale)` |
+| `set device` | Supported | `page.emulateDevice(Devices.iPhone15)`; `Devices.all` |
+| `set geo` | Supported | `page.setGeolocation(Geolocation(lat, lon))` |
+| `set offline` | Supported | `page.setOffline(true)` |
+| `set headers` | Supported | `page.setExtraHTTPHeaders(map)` |
+| `set credentials` | Supported | `page.setHTTPCredentials(HttpCredentials(user, pass))` |
+| `set media` | Supported | `page.emulateMedia(ColorScheme.Dark)` |
+
+### Network, storage and state
+
+| agent-browser | Status | KMPwright | Notes |
+| --- | --- | --- | --- |
+| `network route` | Partial | `page.route(url) { route -> … }`, `page.unroute(url)` | Backend dependent; WebView interception is not full browser-network parity. |
+| `network requests` / `network request` | Partial | `page.network.requests(filter, limit)`, `detail(id)`, `responseBody(id)` | At most 500 hops within 4 MiB of metadata, kept across navigations. Mobile response bodies throw unsupported. |
+| `network har` | Partial | `page.network.startHar()` / `stopHar()` | HAR 1.2. CDP includes available bodies; mobile has partial metadata. |
+| `cookies` | Supported | `page.cookies()`, `addCookies()`, `clearCookies()` | |
+| `storage local` / `storage session` | Supported | `page.localStorage` / `page.sessionStorage` (`entries`, `get`, `set`, `remove`, `clear`) | |
+| `state` | Partial | `page.storageState().save(path, password)`, `StorageState.load(path, password)`, `page.setStorageState(state)`, `page.autosaveStorageState(...)` | Authenticated encryption, atomic file replacement; no daemon session protocol. |
+| `auth` | Partial | `AuthManager.save/load/list/delete`, `page.login(profile)` | Encrypted profiles; synthetic input; no vault or plugin protocols. |
+| `session` / `profile` | Partial | `KmpwrightConfig(cdp = …)`, `BrowserLaunchOptions(userDataDirectory, profileSnapshot)` | No daemon session ids. |
+
+### Tabs, windows and recording
+
+| agent-browser | Status | KMPwright | Notes |
+| --- | --- | --- | --- |
+| `tab` | Partial | `browser.tabList()`, `switchToTab(i)`, `closeTab(i)`, `page.openNewTab(url)`, `browser.targets()`, `attachTarget(id)`, `activateTarget(id)`, `closeTarget(id)` | Tabs opened from a page inherit its headers, credentials, routes, emulation and init scripts. Attaching to an existing CDP tab does not take ownership. |
+| `window new` | Partial | `browser.newWindow()` | CDP only. |
+| `addinitscript` / `removeinitscript` | Partial | `page.addInitScript(script)` → id, `page.removeInitScript(id)` | Android depends on the installed WebView supporting document-start scripts. |
+| `trace` | Partial | `page.tracing.start()` / `stop()` | CDP only. |
+| `profiler` | Partial | `page.profiler.start()` / `stop()` | CDP only. |
+| `record` | Partial | `page.video.start(RecordingOptions(...))` / `stop()` | CDP + FFmpeg, 1–60 FPS, cursor overlay, contact sheets. |
+| `stream` | Partial | `page.screencast(ScreencastOptions(...))` | A `Flow` of frames; you supply the display or transport. CDP only. |
+
+### Unsupported commands
+
+| agent-browser | Why |
+| --- | --- |
+| `batch` | No CLI process; call APIs in sequence. |
+| `get cdp-url` | No daemon endpoint to expose. |
+| `install`, `upgrade`, `doctor`, `skills` | Installation management of the CLI. |
+| `mcp`, `chat`, `plugin` | Out of scope (see above). |
+
+## Global flags
+
+| agent-browser flag | Status | KMPwright |
+| --- | --- | --- |
+| `--headed` | Partial | `BrowserLaunchOptions(headless = false)` (JVM launch only) |
+| `--executable-path` | Partial | `BrowserLaunchOptions(executablePath)` |
+| `--args` | Partial | `BrowserLaunchOptions(arguments)` |
+| `--extension` | Partial | `BrowserLaunchOptions(extensionDirectories)` |
+| `--profile` | Partial | `BrowserLaunchOptions(profileSnapshot = ChromeProfileSource(...))`, `ChromeProfiles` |
+| `--ignore-https-errors` | Partial | `BrowserLaunchOptions(ignoreHttpsErrors)` |
+| `--webgpu` / `--no-webmcp` / `--enable` | Partial | `BrowserLaunchOptions(webGpu, webMcp)` |
+| `--ca-cert` / `--clear-ca-cert` | Partial | `BrowserLaunchOptions(caCertificatePath)`, `ReadOptions(caCertificatePath)`; closing the launched browser removes its trust store |
+| `--use-system-ca` | Partial | `ReadOptions(useSystemCa)` |
+| `--cdp` | Supported | `CdpConfig(websocketUrl)` |
+| `--auto-connect` | Supported | `CdpConfig(provider = CloudProvider.AutoConnect)` |
+| `--provider` | Supported | `CdpConfig(provider = CloudProvider.Browserbase \| Browserless \| BrowserUse \| Kernel)` |
+| `--proxy` / `--proxy-bypass` | Supported | `KmpwrightConfig(proxy = ProxyConfig(url, bypass, username, password))` |
+| `--hide-scrollbars` | Supported | `CdpConfig(hideScrollbars)` |
+| `--headers` | Supported | `page.setExtraHTTPHeaders(map)` |
+| `--user-agent` | Supported | `KmpwrightConfig(userAgent)`, `page.setUserAgent(ua)` |
+| `--device` | Supported | `page.emulateDevice(device)` |
+| `--color-scheme` | Supported | `page.emulateMedia(scheme)` |
+| `--download-path` | Supported | `page.setDownloadPath(dir)` |
+| `--init-script` | Supported | `page.addInitScript(script)` |
+| `--allowed-domains` | Supported | `page.setAllowedDomains(list)`, `KmpwrightConfig(allowedOriginRules)` |
+| `--action-policy` | Supported | `page.setActionPolicy(ActionPolicy(...))` |
+| `--confirm-actions` | Supported | `page.setPolicyConfirmCallback { action, url -> … }` |
+| `--content-boundaries` | Supported | `page.boundedContent()`, `page.boundedSnapshot()` |
+| `--no-auto-dialog` | Supported | `page.onDialog { … }` |
+| `--debug` | Supported | `KmpwrightConfig(debug = DebugConfig(enabled = true))` |
+| `--annotate` | Supported | `ScreenshotOptions(annotate = true)` |
+| `--screenshot-quality` / `--screenshot-format` | Partial | `ScreenshotOptions(quality, format)`; encoding depends on the backend |
+| `--screenshot-dir` | Partial | You write `ScreenshotResult.bytes` where you want |
+| `--state` / `--restore` | Partial | `StorageState.load(path, password)` + `page.setStorageState(state)` |
+| `--restore-save` | Partial | `page.autosaveStorageState(...)` |
+| `--restore-check-url` / `-text` / `-fn` | Partial | Compose your own check with `waitForFunction` / `waitForText` |
+| `--session` | Partial | No daemon session id; configure each `Browser` |
+| `--engine` | Partial | The backend is chosen by platform; read `page.capabilities().backend` |
+| `--allow-file-access` | Partial | Only platform WebView settings expose related controls |
+| `--max-output`, `--json`, `--namespace`, `--session-name`, `--pin-tab`, `--confirm-interactive`, `--idle-timeout`, `--model`, `--plugins` | Unsupported | CLI, daemon, chat and plugin options; typed APIs return values instead of formatted output |
+
+## Behavior differences
+
+- **Refs are per snapshot.** A ref resolves against the latest snapshot of that page. `page.locator("@e3")` does not take a new snapshot for you; take one after the page changes.
+- **Errors are exceptions.** `runCommand` throws `KmpwrightException` (or `KmpwrightTimeoutException`) instead of printing an error and exiting. Catch it and return the message to the model.
+- **No implicit session.** There is no daemon keeping a browser alive between calls. Keep your `Browser` and `Page` for as long as the agent runs, and close them when done.
+- **Capabilities vary by backend.** The same command can be Supported on JVM and Partial or Unsupported on a mobile WebView. Check `page.capabilities()` and its `notes`; see [Capabilities](/docs/platforms/capabilities).
+- **Security flags are APIs.** See [Security](/docs/security) for `setAllowedDomains`, action policies, confirmation callbacks and content boundaries.

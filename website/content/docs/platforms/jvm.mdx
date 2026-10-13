@@ -1,0 +1,248 @@
+---
+title: JVM
+description: Run KMPwright on the JVM against Chromium over CDP, by launching a local Chrome, connecting to an existing endpoint or a cloud provider, plus tabs, windows, browser farms and certificate trust.
+---
+
+On the JVM, KMPwright talks the Chrome DevTools Protocol (CDP) to a Chromium-based browser. You either launch one (`launchBrowser`) or connect to one that is already running (`CdpConfig`).
+
+```kotlin
+import com.bernaferrari.kmpwright.core.*
+import kotlinx.coroutines.runBlocking
+
+fun main() = runBlocking {
+    val launched = launchBrowser(BrowserLaunchOptions(executablePath = "/usr/bin/chromium"))
+    try {
+        val page = launched.browser.newPage()
+        page.goto("https://example.com")
+        expect(page.locator("h1")).toHaveText("Example Domain")
+    } finally {
+        launched.close()
+    }
+}
+```
+
+Playwright: `chromium.launch()` downloads and manages its own browsers. KMPwright does not download a browser; you pass the path of an installed Chrome or Chromium (Chrome for Testing works).
+
+There is no thread affinity on the JVM. CDP work runs on `Dispatchers.IO`.
+
+## Launch a local Chromium
+
+```kotlin
+public suspend fun launchBrowser(
+    options: BrowserLaunchOptions,
+    config: KmpwrightConfig = KmpwrightConfig()
+): LaunchedBrowser
+
+public interface LaunchedBrowser {
+    public val browser: Browser
+    public suspend fun close()
+}
+```
+
+`launchBrowser` starts the executable with a loopback-only debugging endpoint on a random port, waits for Chromium to publish it (`DevToolsActivePort` in the profile directory), connects a `Browser` and checks it with `browser.version()`. The returned `Browser` uses `config` with `cdp.websocketUrl` set to the launched endpoint and `remoteBrowserSharesFileSystem = true` for the local process; other `CdpConfig` fields keep their configured values.
+
+On Android and iOS, `launchBrowser` throws `KmpwrightUnsupportedException`: "Desktop browser process launch requires the JVM backend".
+
+### `BrowserLaunchOptions`
+
+<TypeTable
+  type={{
+    executablePath: { type: 'String', description: 'Path of the Chrome or Chromium executable. Must not be blank.', required: true },
+    headless: { type: 'Boolean', description: 'Adds --headless=new.', default: 'true' },
+    userDataDirectory: { type: 'String?', description: 'A writable profile directory that survives close() and can be reused. Created if missing. When null, KMPwright creates a temporary kmpwright-browser-* directory and deletes it on close. Mutually exclusive with profileSnapshot.', default: 'null' },
+    arguments: { type: 'List<String>', description: 'Extra Chromium flags, each passed as a separate process argument. Flags starting with --remote-debugging- or --user-data-dir, or containing NUL, are rejected. --enable-features= values are merged with the features KMPwright adds.', default: 'emptyList()' },
+    webGpu: { type: 'Boolean', description: 'WebGPU preset: adds --enable-unsafe-webgpu. On Linux also enables the Vulkan feature and --use-angle=vulkan, --use-vulkan=swiftshader, --use-webgpu-adapter=swiftshader, --disable-vulkan-surface. Actual GPU availability depends on the host.', default: 'false' },
+    webMcp: { type: 'Boolean', description: 'Enables the WebMCPTesting and DevToolsWebMCPSupport features used by page.webMcp.', default: 'true' },
+    useSystemKeychain: { type: 'Boolean', description: 'When false (and no profileSnapshot), adds --password-store=basic and --use-mock-keychain so Chromium does not prompt for the OS keychain.', default: 'false' },
+    ignoreHttpsErrors: { type: 'Boolean', description: 'Adds --ignore-certificate-errors.', default: 'false' },
+    extensionDirectories: { type: 'List<String>', description: 'Unpacked extensions to load (--load-extension). Each directory must contain manifest.json; paths must not contain commas. Branded Chrome may refuse; Chromium or Chrome for Testing usually works.', default: 'emptyList()' },
+    startupTimeoutMs: { type: 'Long', description: 'How long to wait for the debugging endpoint and the first version() call. Must be 1000..120000.', default: '30_000' },
+    profileSnapshot: { type: 'ChromeProfileSource?', description: 'Copy an existing Chrome profile into the temporary profile and launch with it. The source is never written. Mutually exclusive with userDataDirectory, and arguments must not contain --profile-directory.', default: 'null' },
+    caCertificatePath: { type: 'String?', description: 'Trust a private CA (PEM bundle or one DER certificate) in an isolated NSS database. Linux only, needs certutil, and requires a temporary profile (no userDataDirectory or profileSnapshot) and ignoreHttpsErrors = false.', default: 'null' },
+  }}
+/>
+
+KMPwright always adds `--remote-debugging-port=0`, `--remote-debugging-address=127.0.0.1`, `--user-data-dir=<profile>`, `--no-first-run` and `--no-default-browser-check`, and opens `about:blank`. On Linux it adds `--disable-dev-shm-usage` when `/dev/shm` has less than 256 MiB, or cannot be measured inside a Docker or Podman container. Chromium's stdout and stderr are discarded.
+
+The options are validated in the constructor, which throws `IllegalArgumentException` with messages such as "Startup timeout must be between one and 120 seconds" or "A profile snapshot and a writable profile directory are mutually exclusive".
+
+### Cleanup and the shutdown hook
+
+`LaunchedBrowser.close()` closes the browser, stops Chromium and every helper process it spawned (renderer, GPU, utility), and deletes the temporary profile and CA directory. It is idempotent and runs even if the calling coroutine is cancelled. A `userDataDirectory` you passed is preserved.
+
+`launchBrowser` also registers a JVM shutdown hook. If the JVM exits without `close()`, the hook kills Chromium and deletes the temporary profile. `close()` removes the hook.
+
+Launch failures throw `KmpwrightException`: "Could not launch Chromium: …" when the process cannot start, or "Chromium exited before publishing a debugging endpoint (code N)". Everything started so far is cleaned up first.
+
+### Existing Chrome profiles
+
+```kotlin
+val dir = ChromeProfiles.discoverUserDataDirectory() ?: error("Chrome not found")
+ChromeProfiles.list(dir).forEach { println("${it.directory}: ${it.name}") }  // Default: Person 1
+
+val launched = launchBrowser(BrowserLaunchOptions(
+    executablePath = "/path/to/chromium",
+    profileSnapshot = ChromeProfileSource(userDataDirectory = dir, profile = "Work"),
+))
+```
+
+| API | Behavior |
+|---|---|
+| `ChromeProfiles.discoverUserDataDirectory()` | The first Chrome or Chromium user data directory with a `Local State` file in the platform's default location, or null. |
+| `ChromeProfiles.list(userDataDirectory)` | `List<ChromeProfile(directory, name)>` read from `Local State`, sorted by directory. |
+| `ChromeProfiles.resolve(source)` | Matches an exact directory, then an unambiguous display name (case-insensitive), then a case-insensitive directory. Throws `IllegalArgumentException` otherwise. |
+
+Snapshots skip caches, `Singleton*` lock files and symbolic links, and fail beyond 20,000 files, 2 GiB or 30 seconds. Encrypted Chrome cookies still need the OS keychain to decrypt them.
+
+## Connect to a running browser
+
+Create a `Browser` with `JvmPlatformContext()` and a `CdpConfig`. The connection opens lazily on the first call that needs it (`newPage()`, `page()`, `version()`, `targets()`...); `isConnected` is false until then.
+
+```kotlin
+val browser = Browser(
+    JvmPlatformContext(),
+    KmpwrightConfig(cdp = CdpConfig(websocketUrl = "http://127.0.0.1:9222"))
+)
+val page = browser.newPage()
+```
+
+Pages KMPwright creates (`newPage()`, `newWindow()`, `context.newPage()`) get `KmpwrightConfig.viewport` (size, scale factor, mobile, touch) and `KmpwrightConfig.userAgent` applied. Tabs you attach to with `attachTarget` are left as they are.
+
+`websocketUrl` accepts:
+
+- a `ws://` or `wss://` URL, used as is,
+- an `http://` or `https://` DevTools endpoint such as `http://127.0.0.1:9222` or `https://host/path?token=…`: KMPwright reads `/json/version` (then `/json/list`, then tries `/devtools/browser`) and keeps the query string.
+
+Precedence: `websocketUrl` wins over `provider`. With neither set, connecting throws "No CDP connection configured. Set cdp.websocketUrl or cdp.provider in KmpwrightConfig." With `cdp = null`, it throws "No CDP config provided".
+
+See [Configuration](/docs/reference/configuration#cdpconfig) for every `CdpConfig` field.
+
+### `CloudProvider.AutoConnect`
+
+`CdpConfig(provider = CloudProvider.AutoConnect)` finds a Chrome you started yourself with `--remote-debugging-port`. It reads `DevToolsActivePort` from the default Chrome, Chrome Canary, Chromium and Brave profiles on macOS and Linux, then probes `localhost` ports 9222, 9229 and 9333. If nothing answers: "No running Chrome instance found. Start Chrome with --remote-debugging-port=9222".
+
+## Cloud providers
+
+`CdpConfig(provider = CloudProvider.X)` creates a remote browser session over the provider's HTTP API, connects to its CDP WebSocket and releases the session on `browser.close()`. Credentials come only from environment variables.
+
+```kotlin
+// export BROWSERBASE_API_KEY=... BROWSERBASE_PROJECT_ID=...
+val browser = Browser(JvmPlatformContext(), KmpwrightConfig(cdp = CdpConfig(provider = CloudProvider.Browserbase)))
+```
+
+| Provider | Required | Optional environment variables | Release |
+|---|---|---|---|
+| `Browserbase` | `BROWSERBASE_API_KEY` | `BROWSERBASE_PROJECT_ID` (sent as `projectId`) | `PATCH` with `REQUEST_RELEASE` |
+| `Browserless` | `BROWSERLESS_API_KEY` | `BROWSERLESS_API_URL` (default `https://production-sfo.browserless.io`), `BROWSERLESS_BROWSER_TYPE` (default `chromium`), `BROWSERLESS_STEALTH=true` (adds `--disable-blink-features=AutomationControlled`) | `DELETE` |
+| `BrowserUse` | `BROWSER_USE_API_KEY` | `BROWSER_USE_PROFILE_ID`, `BROWSER_USE_PROXY_COUNTRY` (`none`/`direct` disables the proxy), `BROWSER_USE_ENABLE_RECORDING` | `PATCH` with `stop` |
+| `Kernel` | `KERNEL_API_KEY` | `KERNEL_ENDPOINT` (default `https://api.onkernel.com`), `KERNEL_HEADLESS` (default true), `KERNEL_STEALTH`, `KERNEL_TIMEOUT_SECONDS` (default 300), `KERNEL_PROFILE_NAME`, `KERNEL_PROFILE_SAVE_CHANGES` | `DELETE` |
+
+A missing key throws, for example, "BROWSERBASE_API_KEY environment variable not set". A non-2xx API response throws `Provider API error <status>`. Session release is best effort.
+
+## Targets, windows and tabs
+
+With a **browser-scoped** endpoint (`/devtools/browser/…`, which `launchBrowser`, `AutoConnect` and the cloud providers give you), the `Browser` can see and manage every tab, including ones KMPwright did not create:
+
+| API | Behavior |
+|---|---|
+| `browser.newPage()` | Opens a new tab. |
+| `browser.newWindow()` | Opens a page in a new browser window. |
+| `browser.targets()` | `List<BrowserTarget(id, title, url, attached, browserContextId)>` for every page target. |
+| `browser.attachTarget(targetId)` | Attaches to an existing tab without owning it. `page.close()` detaches; the tab stays open. Throws "No browser page target: id" for an unknown id. |
+| `browser.activateTarget(targetId)` | Brings a tab to the front. |
+| `browser.closeTarget(targetId)` | Closes a tab; true when it existed. |
+| `browser.newContext()` | An isolated `BrowserContext` (`Target.createBrowserContext`): separate cookies, storage and cache. `clearData()` clears cookies and every storage type for the origins its pages have loaded. |
+| `page.openNewTab(url)` | A new tab that inherits this page's routes and emulation. |
+| `browser.tabList()`, `switchToTab(i)`, `closeTab(i)` | agent-browser style tab helpers over `browser.pages()`. |
+
+With a **page-scoped** endpoint (`/devtools/page/…`), the browser manages exactly one page. A second `newPage()` throws `KmpwrightUnsupportedException`: "This CDP endpoint is page-scoped. Open a browser-scoped endpoint to manage multiple pages." Target APIs throw "Target management requires a browser-scoped CDP endpoint".
+
+<Callout type="warn">
+`browser.page()` is synchronous. On the JVM, when no page exists yet, it opens one with `runBlocking`. Call `newPage()` from coroutines instead.
+</Callout>
+
+## What CDP gives you that WebViews don't
+
+The JVM backend reports `Supported` for most capabilities (see [Capabilities](/docs/platforms/capabilities)). Features that only exist here:
+
+| Feature | API | Notes |
+|---|---|---|
+| Trusted input | `page.mouse`, `page.keyboard`, locator actions | With `InputMode.Hybrid` (default), locator clicks, hovers, typing, key presses and drags go through CDP `Input` events, so the page sees `isTrusted = true`. `TouchOnly` uses touch emulation; `JsOnly` falls back to DOM events. |
+| Tracing | `page.tracing.start(TracingOptions(...))` / `stop()` | Chrome trace JSON. Writing `TracingOptions.path` requires `KmpwrightConfig.enableTraceExport`. One page per browser can trace at a time. |
+| Profiler | `page.profiler.start()` / `stop()` | V8 CPU profile JSON. |
+| Video | `page.video.start(RecordingOptions(path = "run.mp4"))` / `stop()` | Encoded with `ffmpeg`, which must be installed (`RecordingOptions.ffmpegExecutable`). Optional cursor overlay and contact sheet. See [Recording](/docs/guides/recording). |
+| Screencast | `page.screencast(ScreencastOptions())` | Experimental `Flow<ScreencastFrame>` of JPEG frames. |
+| Cross-origin iframes | `page.frameLocator(...)` | Reaches out-of-process iframes through their CDP target sessions (`CrossOriginFrames` = Supported). WebViews only reach same-origin frames. |
+| Response bodies | `Response.body/text/json`, `page.network.responseBody(...)` | Readable while the browser retains them. WebViews have none. |
+| Native accessibility tree | `page.snapshot()` | Snapshots are enriched with Chromium's own accessibility tree (roles and names as computed by the browser), not only the DOM heuristics WebViews use. |
+| Accessibility audit | `page.accessibilityAudit()` | Audits each frame in an isolated world (up to 128 frames) and merges the reports. WebViews audit one document. |
+| Downloads, file chooser | `waitForDownload`, `setDownloadPath`, `setDownloadBehavior`, `setFileChooserInterception` + `waitForFileChooser` | |
+| Service workers | `page.serviceWorkers()` | |
+| Network emulation | `emulateNetworkConditions(NetworkConditions.Slow3G)` | Latency and throughput, not only offline. |
+| WebMCP | `page.webMcp` | Needs a Chromium with the experimental WebMCP DevTools domain (`BrowserLaunchOptions.webMcp`). |
+| Transparent screenshots | `ScreenshotOptions(omitBackground = true)` | PNG or WEBP with a transparent background. Scrollbars are hidden in headless screenshots unless `CdpConfig.hideScrollbars = false`. |
+
+The domain filter (`setAllowedDomains`) uses Fetch interception for navigations, iframes, redirects and every HTTP(S) subresource. WebSocket handshakes are not visible to it.
+
+## Browser farms
+
+`BrowserFarmScheduler` hands out exclusive leases on a fixed set of browsers. It is a library-level scheduler, not a hosted service: your application owns process lifetime, admission and metrics export.
+
+```kotlin
+val farm = BrowserFarmScheduler(listOf(
+    browserFarmSlot(
+        id = "local-1",
+        metadata = mapOf("platform" to "linux", "costUsdPerHour" to "0.00"),
+        connect = { launchBrowser(BrowserLaunchOptions("/usr/bin/chromium")).browser },
+    ),
+    browserFarmSlot(
+        id = "remote-1",
+        metadata = mapOf("provider" to "browserbase", "costUsdPerHour" to "0.12"),
+        connect = { Browser(JvmPlatformContext(), KmpwrightConfig(cdp = CdpConfig(provider = CloudProvider.Browserbase))) },
+    ),
+))
+
+try {
+    farm.withLease(selector = BrowserFarmSelector(maxCostUsdPerHour = 0.05)) { lease ->
+        lease.resource.newPage().goto("https://example.com")
+    }
+} finally {
+    farm.close()
+}
+```
+
+<Callout type="warn">
+The `local-1` slot above drops the `LaunchedBrowser`, so `browserFarmSlot`'s default `close` (`browser.close()`) closes the connection but leaves process cleanup to the shutdown hook. Keep the `LaunchedBrowser` and pass `close = { launched.close() }` when you need the process gone immediately.
+</Callout>
+
+- **Isolation.** Each lease runs in a fresh `BrowserContext` on that browser; `newPage()` on the leased browser opens pages in it. Releasing the lease closes every page and context the borrower created. Android WebView cannot provide this and rejects farm leases.
+- **`browserFarmSlot(id, metadata, connect, prepare = {}, close = { it.close() })`** builds a slot. `connect` runs lazily on the first lease.
+- **`withLease(timeoutMs = 30_000, selector, markBrokenOnException = true) { lease -> }`** releases the lease afterwards. An exception marks the slot broken (quarantined) unless `markBrokenOnException = false`.
+- **`acquire(timeoutMs, selector)`** returns a `ResourceLease`; call `release()` or `markBroken(reason)`. Waiting past `timeoutMs` throws "Timed out waiting for an available pooled resource."
+- **`BrowserFarmSelector(requiredMetadata, maxCostUsdPerHour, predicate)`** matches metadata exactly. A cost limit only matches slots whose `costUsdPerHour` (or `cost`) metadata is a finite, non-negative number.
+- **`healthCheck(id, timeoutMs) { browser -> Boolean }`** runs your probe on one slot; a false result or exception quarantines it.
+- **`quarantine(id, reason)`** takes an idle slot out of rotation.
+- **`events`** is a `SharedFlow<BrowserFarmEvent>` (`Acquired`, `Released`, `Quarantined`, `HealthCheckFailed`, `AcquisitionFailed`) with slot ids and reasons, never browsers. **`metrics()`** returns capacity, available, busy, initialized and quarantined counts, acquisition/release/failure totals and total wait time. **`snapshots()`** returns per-slot state.
+
+The scheduler does not replace quarantined slots or run a background supervisor. The lower-level `BrowserFarm` (`ResourcePool<Browser>`) also offers `restore(id)` to return a quarantined slot to service, and retries slots whose connect failed after `transientFailureCooldownMs` (default 30 s).
+
+`resetBrowserForReuse(browser)` and `resetPageForReuse(page)` clear routes, allowed domains, credentials, headers, cookies, local and session storage and navigate to `about:blank` for same-owner reuse. They are not an isolation boundary.
+
+The type aliases: `BrowserFarmScheduler = ResourceScheduler<Browser>`, `BrowserFarmSelector = ResourceSelector`, `BrowserFarmMetrics = ResourceSchedulerMetrics`, `BrowserFarmEvent = ResourceSchedulerEvent`, `BrowserFarm = ResourcePool<Browser>`, `BrowserFarmSlot = PooledResource<Browser>`, `BrowserLease = ResourceLease<Browser>`.
+
+## Certificate trust
+
+Two separate mechanisms, neither of which changes JVM-wide SSL defaults:
+
+| For | Option | Behavior |
+|---|---|---|
+| The launched Chromium | `BrowserLaunchOptions.caCertificatePath` | Linux only. KMPwright creates a private NSS database with `certutil` (package `libnss3-tools` or `nss-tools`), imports the certificates as trusted CAs and points Chromium's `HOME` at it. Accepts a PEM bundle (up to 128 certificates) or one DER certificate, at most 4 MiB. Errors: "Isolated Chromium CA trust is supported only on Linux", "Isolated CA trust requires NSS certutil (libnss3-tools/nss-tools): …". |
+| `page.read(url)` and `HttpReader` | `ReadOptions(caCertificatePath = …, useSystemCa = true)` | A per-reader trust manager that accepts the system CAs (when `useSystemCa`) and your certificates. Hostname verification stays on. |
+
+`BrowserLaunchOptions.ignoreHttpsErrors = true` turns certificate verification off entirely; it cannot be combined with `caCertificatePath`.
+
+## Related
+
+- [Capabilities](/docs/platforms/capabilities)
+- [Configuration](/docs/reference/configuration) for `CdpConfig`, `ProxyConfig` and timeouts.
+- Source: [BrowserLaunch.jvm.kt](https://github.com/bernaferrari/kmpwright/blob/main/kmpwright-core/src/jvmMain/kotlin/com/bernaferrari/kmpwright/core/BrowserLaunch.jvm.kt), [CloudProviders.kt](https://github.com/bernaferrari/kmpwright/blob/main/kmpwright-core/src/jvmMain/kotlin/com/bernaferrari/kmpwright/core/CloudProviders.kt)

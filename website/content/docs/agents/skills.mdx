@@ -1,0 +1,97 @@
+---
+title: Skills for coding agents
+description: Teach Claude Code, Cursor, Codex and other coding agents to write correct KMPwright code with llms.txt, Markdown pages and the kmpwright skill file.
+---
+
+This page is about agents that write KMPwright code for you, not agents that drive a page at runtime (for those, see [Build an agent](/docs/agents)). Coding agents know Playwright well and will guess Playwright-for-JavaScript signatures. Give them the KMPwright docs and they write Kotlin that compiles.
+
+## Docs in Markdown
+
+Every docs page is available as Markdown, built from the same source as the HTML.
+
+| URL | Content |
+|---|---|
+| [`/llms.txt`](/llms.txt) | Index of every page with its title, URL and description |
+| [`/llms-full.txt`](/llms-full.txt) | Every page's Markdown in one file |
+| `/docs/<page>.md` | One page as Markdown, for example [`/docs/agents/commands.md`](/docs/agents/commands.md) |
+| `/docs/<page>` with `Accept: text/markdown` | The same Markdown, chosen by content negotiation |
+
+```bash
+curl https://kmpwright.dev/docs/agents/snapshots.md
+curl -H 'Accept: text/markdown' https://kmpwright.dev/docs/agents/snapshots
+```
+
+On each page, **Copy Markdown** (under the title) copies the page for pasting into a chat. The menu next to it can view the Markdown or open the page in ChatGPT, Claude, Cursor or Scira.
+
+Ways to use them:
+
+- Paste `https://kmpwright.dev/llms-full.txt` into a chat, or ask the agent to fetch it, before a larger task.
+- Point the agent at the one page it needs (`…/docs/agents/commands.md`) to save context.
+- Reference `llms.txt` from your project instructions (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules`) so the agent knows where to look.
+
+## The kmpwright skill
+
+The repository ships a skill file at [`skills/kmpwright/SKILL.md`](https://github.com/bernaferrari/kmpwright/blob/main/skills/kmpwright/SKILL.md). It is a short, self-contained brief: install, how to get a `Page` on each platform, the most-used calls, the snapshot-and-ref agent loop, the gotchas that trip agents up (main thread, `suspend`, `timeoutMs = null`, per-backend capabilities, ref lifetime), and links to these pages.
+
+It uses the Claude skill format: a folder with a `SKILL.md` whose YAML frontmatter has a `name` and a `description` that tells the agent when to load it.
+
+```markdown
+---
+name: kmpwright
+description: Write Kotlin code that automates web pages with KMPwright … Use when a project
+  depends on kmpwright-core or kmpwright-compose, when the user wants to automate or test an
+  in-app WebView from Kotlin, or when building an LLM agent that drives a WebView …
+---
+```
+
+### Install for Claude Code
+
+Claude Code loads skills from `.claude/skills/<name>/SKILL.md` in your project, or from `~/.claude/skills/<name>/SKILL.md` for every project.
+
+<Tabs items={['Project', 'Personal']}>
+<Tab value="Project">
+
+```bash
+mkdir -p .claude/skills/kmpwright
+curl -fsSL https://raw.githubusercontent.com/bernaferrari/kmpwright/main/skills/kmpwright/SKILL.md \
+  -o .claude/skills/kmpwright/SKILL.md
+```
+
+Commit it so everyone working on the project gets it.
+
+</Tab>
+<Tab value="Personal">
+
+```bash
+mkdir -p ~/.claude/skills/kmpwright
+curl -fsSL https://raw.githubusercontent.com/bernaferrari/kmpwright/main/skills/kmpwright/SKILL.md \
+  -o ~/.claude/skills/kmpwright/SKILL.md
+```
+
+</Tab>
+</Tabs>
+
+Claude Code reads the `description` and loads the skill when a task matches, for example "add a test that fills the signup form in our WebView".
+
+### Other agents
+
+The file is plain Markdown, so any agent can use it.
+
+| Agent | How |
+|---|---|
+| Agents with skill support | Copy the `kmpwright` folder into the directory your agent loads skills from |
+| Cursor | Save the body as a project rule under `.cursor/rules/`, or reference the file from an existing rule |
+| Codex and other `AGENTS.md` readers | Add a line to `AGENTS.md`: "For KMPwright code, read `skills/kmpwright/SKILL.md` and https://kmpwright.dev/llms.txt" |
+| Any chat | Paste the file, or its raw GitHub URL, at the start of the conversation |
+
+Keep the copy up to date with the KMPwright version you depend on; the API is pre-1.0 and names can change between releases.
+
+## What to tell the agent
+
+Whichever mechanism you use, these points prevent most mistakes:
+
+- The package is `com.bernaferrari.kmpwright.core`, and every page and locator method is `suspend`.
+- Names follow Playwright (`goto`, `goBack`, `getByRole`, `pressSequentially`, `waitForSelector`), but options are Kotlin data classes (`ClickOptions(force = true)`), not JavaScript option objects.
+- `timeoutMs = null` uses the configured default (`TimeoutConfig`), it does not disable the timeout.
+- Some features depend on the backend; check `page.capabilities()` (see [Capabilities](/docs/platforms/capabilities)).
+- For agents that drive pages, refs such as `@e3` come from the latest `snapshot()` and must be refreshed after the page changes (see [Snapshots and refs](/docs/agents/snapshots)).

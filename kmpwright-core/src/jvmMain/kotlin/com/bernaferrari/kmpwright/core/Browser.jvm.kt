@@ -24,6 +24,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlin.coroutines.resume
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.cancellation.CancellationException
 
 internal data class CdpBootstrap(
     val connection: CdpConnection,
@@ -31,7 +32,7 @@ internal data class CdpBootstrap(
     val endpointScope: CdpEndpointScope
 )
 
-actual class Browser actual constructor(
+public actual class Browser public actual constructor(
     private val context: PlatformContext,
     private val config: KmpwrightConfig
 ) {
@@ -45,26 +46,29 @@ actual class Browser actual constructor(
     }
 
     internal actual suspend fun endIndependentLease() {
-        ownedContexts.toList().forEach { it.closeAsync() }
+        ownedContexts.toList().forEach { it.close() }
         ownedContexts.clear()
         leaseContext = null
         val owned = pagesMutex.withLock { _pages.toList() }
-        owned.forEach { it.closeAsync() }
+        owned.forEach { it.close() }
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     private val _isConnected = MutableStateFlow(false)
-    actual val isConnected: StateFlow<Boolean> = _isConnected
+    public actual val isConnected: StateFlow<Boolean> = _isConnected
 
     private val _connectionError = MutableStateFlow<String?>(null)
-    actual val connectionError: StateFlow<String?> = _connectionError
+    public actual val connectionError: StateFlow<String?> = _connectionError
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + kotlinx.coroutines.CoroutineExceptionHandler { _, error ->
+        _connectionError.value = error.message ?: error.toString()
+        kmpwrightLogWarning("Browser background task failed", error)
+    })
 
     @Volatile private var _pages = persistentListOf<Page>()
-    private var connection: CdpConnection? = null
-    private var providerSession: ProviderSession? = null
-    private var endpointScope: CdpEndpointScope? = null
-    private var connectionMonitor: kotlinx.coroutines.Job? = null
+    @Volatile private var connection: CdpConnection? = null
+    @Volatile private var providerSession: ProviderSession? = null
+    @Volatile private var endpointScope: CdpEndpointScope? = null
+    @Volatile private var connectionMonitor: kotlinx.coroutines.Job? = null
     private val connectionMutex = Mutex()
     private val pagesMutex = Mutex()
     /** Test seam for exercising serialized bootstrap without requiring a Chrome process. */
@@ -74,37 +78,32 @@ actual class Browser actual constructor(
     internal var pageFactoryOverride: (suspend (CdpConnection, CdpPageSession) -> Page)? = null
     private val tabRuntime = object : PageTabRuntime {
         override suspend fun openTab(source: Page, url: String?): NavigationResult {
-            val page = newPageAsync()
+            val page = newPage()
             try { (source as? BasePage)?.inheritSetupTo(page) }
-            catch (error: Throwable) { page.closeAsync(); throw error }
+            catch (error: Throwable) { page.close(); throw error }
             return page.goto(url ?: "about:blank")
         }
 
-        override suspend fun closeTab(page: Page): Boolean {
-            if (!_pages.contains(page)) return false
-            page.closeAsync()
-            return true
-        }
-
         override fun pageClosed(page: Page) {
-            if (!_pages.contains(page)) return
-            runBlocking {
-                pagesMutex.withLock { _pages = _pages.removing(page) }
-            }
+            // Called from page teardown, possibly on a CDP callback thread:
+            // update atomically instead of blocking on the creation mutex.
+            updatePages { it.removing(page) }
         }
     }
 
-    actual fun newPage(): Page {
-        return kotlinx.coroutines.runBlocking { newPageAsync() }
+    private val pagesLock = Any()
+    private fun updatePages(transform: (kotlinx.collections.immutable.PersistentList<Page>) -> kotlinx.collections.immutable.PersistentList<Page>) {
+        synchronized(pagesLock) { _pages = transform(_pages) }
     }
 
-    suspend actual fun newPageAsync(): Page {
-        leaseContext?.let { return it.newPageAsync() }
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun newPage(): Page {
+        leaseContext?.let { return it.newPage() }
         return pagesMutex.withLock {
             val conn = ensureConnection()
             val epScope = endpointScope ?: CdpEndpointScope.Page
             if (epScope == CdpEndpointScope.Page && _pages.isNotEmpty()) {
-                throw UnsupportedOperationException(
+                throw KmpwrightUnsupportedException(
                     "This CDP endpoint is page-scoped. Open a browser-scoped endpoint to manage multiple pages."
                 )
             }
@@ -116,15 +115,16 @@ actual class Browser actual constructor(
             try {
                 page = pageFactoryOverride?.invoke(conn, session) ?: run {
                     controller = CdpWebViewController(conn, session.sessionId,
-                        hideScrollbarsForScreenshots = shouldHideCdpScrollbars(config), allowedOriginRules = config.allowedOriginRules)
+                        hideScrollbarsForScreenshots = shouldHideCdpScrollbars(config), allowedOriginRules = config.allowedOriginRules,
+            handlerTimeoutMs = config.timeouts.handler)
+                    requireNotNull(controller).applyConfiguredEmulation(config)
                     CdpPage(requireNotNull(controller), config, this.scope, conn, session, tabRuntime)
                 }
-                if (config.cdp?.stealth == true) page.enableStealth()
-                _pages = _pages.adding(page)
+                updatePages { it.adding(page) }
                 page
             } catch (error: Throwable) {
                 withContext(NonCancellable) {
-                    if (page != null) page.closeAsync()
+                    if (page != null) page.close()
                     else { controller?.disposeAsync(); closeCdpPageSession(conn, session) }
                 }
                 throw error
@@ -134,7 +134,7 @@ actual class Browser actual constructor(
 
     private suspend fun targetConnection(): CdpConnection {
         val conn = ensureConnection()
-        if (endpointScope != CdpEndpointScope.Browser) throw UnsupportedOperationException("Target management requires a browser-scoped CDP endpoint")
+        if (endpointScope != CdpEndpointScope.Browser) throw KmpwrightUnsupportedException("Target management requires a browser-scoped CDP endpoint")
         return conn
     }
 
@@ -144,7 +144,8 @@ actual class Browser actual constructor(
         return response.result ?: JsonObject(emptyMap())
     }
 
-    suspend actual fun targetsAsync(): List<BrowserTarget> {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun targets(): List<BrowserTarget> {
         val conn = targetConnection()
         return targetCommand(conn, "Target.getTargets")["targetInfos"]?.jsonArray.orEmpty().mapNotNull { entry ->
             val info = entry.jsonObject
@@ -156,21 +157,23 @@ actual class Browser actual constructor(
         }
     }
 
-    suspend actual fun attachTargetAsync(targetId: String): Page = pagesMutex.withLock {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun attachTarget(targetId: String): Page = pagesMutex.withLock {
         require(targetId.isNotBlank()) { "Target identifier must not be blank" }
         _pages.filterIsInstance<CdpPage>().firstOrNull { it.targetId == targetId }?.let { return@withLock it }
         val conn = targetConnection()
-        if (targetsAsync().none { it.id == targetId }) throw KmpwrightException("No browser page target: $targetId")
+        if (targets().none { it.id == targetId }) throw KmpwrightException("No browser page target: $targetId")
         // Activation revives a discarded renderer without reloading a live page.
         targetCommand(conn, "Target.activateTarget", mapOf("targetId" to targetId))
         val session = attachCdpPageSession(CdpConnectionTransport(conn), targetId)
         val controller = CdpWebViewController(conn, session.sessionId,
-            hideScrollbarsForScreenshots = shouldHideCdpScrollbars(config), allowedOriginRules = config.allowedOriginRules)
+            hideScrollbarsForScreenshots = shouldHideCdpScrollbars(config), allowedOriginRules = config.allowedOriginRules,
+            handlerTimeoutMs = config.timeouts.handler)
         try {
             withTimeout(10_000) { enableCdpDomains(CdpConnectionTransport(conn), session.sessionId) }
             val page = CdpPage(controller, config, scope, conn, session, tabRuntime)
             controller.observeFrames()
-            _pages = _pages.adding(page)
+            updatePages { it.adding(page) }
             page
         } catch (error: Throwable) {
             withContext(NonCancellable) { controller.disposeAsync(); closeCdpPageSession(conn, session) }
@@ -178,30 +181,34 @@ actual class Browser actual constructor(
         }
     }
 
-    suspend actual fun activateTargetAsync(targetId: String) {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun activateTarget(targetId: String) {
         require(targetId.isNotBlank()) { "Target identifier must not be blank" }
         targetCommand(targetConnection(), "Target.activateTarget", mapOf("targetId" to targetId))
     }
 
-    suspend actual fun closeTargetAsync(targetId: String): Boolean {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun closeTarget(targetId: String): Boolean {
         require(targetId.isNotBlank()) { "Target identifier must not be blank" }
         val conn = targetConnection()
         // Release library callbacks before closing a caller-owned target explicitly.
         val page = pagesMutex.withLock { _pages.filterIsInstance<CdpPage>().firstOrNull { it.targetId == targetId } }
-        if (page?.ownsTarget == true) { page.closeAsync(); return true }
-        page?.closeAsync()
+        if (page?.ownsTarget == true) { page.close(); return true }
+        page?.close()
         return targetCommand(conn, "Target.closeTarget", mapOf("targetId" to targetId))["success"]?.jsonPrimitive?.booleanOrNull ?: false
     }
 
-    suspend actual fun newWindowAsync(): Page = pagesMutex.withLock {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun newWindow(): Page = pagesMutex.withLock {
         val conn = targetConnection()
         val session = createCdpPageSession(conn, CdpEndpointScope.Browser, newWindow = true)
         val controller = CdpWebViewController(conn, session.sessionId,
-            hideScrollbarsForScreenshots = shouldHideCdpScrollbars(config), allowedOriginRules = config.allowedOriginRules)
+            hideScrollbarsForScreenshots = shouldHideCdpScrollbars(config), allowedOriginRules = config.allowedOriginRules,
+            handlerTimeoutMs = config.timeouts.handler)
         try {
+            controller.applyConfiguredEmulation(config)
             val page = CdpPage(controller, config, scope, conn, session, tabRuntime)
-            if (config.cdp?.stealth == true) page.enableStealth()
-            _pages = _pages.adding(page)
+            updatePages { it.adding(page) }
             page
         } catch (error: Throwable) {
             withContext(NonCancellable) { controller.disposeAsync(); closeCdpPageSession(conn, session) }
@@ -209,35 +216,25 @@ actual class Browser actual constructor(
         }
     }
 
-    actual fun newContext(): BrowserContext {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun newContext(): BrowserContext {
         val ctx = BrowserContext(context, config)
-        kotlinx.coroutines.runBlocking {
-            ctx.initialize(ensureConnection(), scope)
-        }
+        ctx.initialize(ensureConnection(), scope)
         ownedContexts.add(ctx)
         return ctx
     }
 
-    actual fun pages(): List<Page> = _pages.toList() + ownedContexts.flatMap { it.pages() }
+    public actual fun pages(): List<Page> = _pages.toList() + ownedContexts.flatMap { it.pages() }
 
-    actual fun page(): Page {
-        leaseContext?.let { return it.pages().lastOrNull() ?: it.newPage() }
-        return runBlocking {
-            val existing = pagesMutex.withLock { _pages.lastOrNull() }
-            existing ?: newPageAsync()
-        }
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class)
+    public actual fun page(): Page {
+        leaseContext?.let { context -> return context.pages().lastOrNull() ?: runBlocking { context.newPage() } }
+        // Only block when a page actually has to be created.
+        return _pages.lastOrNull() ?: runBlocking { newPage() }
     }
 
-    actual fun closePage(page: Page) {
-        runBlocking { pagesMutex.withLock { _pages = _pages.removing(page) } }
-        (page as? CdpPage)?.close()
-    }
-
-    actual fun version(): BrowserVersion {
-        return kotlinx.coroutines.runBlocking { versionAsync() }
-    }
-
-    suspend actual fun versionAsync(): BrowserVersion {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun version(): BrowserVersion {
         try {
             val conn = ensureConnection()
             val result = conn.send(CdpMethods.BROWSER_GET_VERSION)
@@ -257,33 +254,38 @@ actual class Browser actual constructor(
         }
     }
 
-    actual fun close() {
-        kotlinx.coroutines.runBlocking { closeAsync() }
+    public actual fun dispose() {
+        detachedTeardownScope.launch { runCatching { close() } }
     }
 
-    suspend actual fun closeAsync(): Unit = withContext(NonCancellable) {
-        ownedContexts.toList().forEach { it.closeAsync() }
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun close(): Unit = withContext(NonCancellable) {
+        ownedContexts.toList().forEach { it.close() }
         ownedContexts.clear()
         leaseContext = null
 
         val pagesToClose = pagesMutex.withLock { _pages.toList() }
         pagesToClose.forEach { page ->
             try {
-                page.closeAsync()
+                page.close()
             } catch (_: Throwable) {
             }
         }
-        connectionMonitor?.cancel()
-        connectionMonitor = null
-        try { providerSession?.let { providerSessionReleaser(it) } }
-        finally {
-            providerSession = null
-            try { connection?.close() }
+        // Serialize against ensureConnection so a concurrent bootstrap can
+        // neither resurrect nor leak the connection being torn down.
+        connectionMutex.withLock {
+            connectionMonitor?.cancel()
+            connectionMonitor = null
+            val session = providerSession.also { providerSession = null }
+            val conn = connection.also { connection = null }
+            try { session?.let { providerSessionReleaser(it) } }
             finally {
-                connection = null
-                pagesMutex.withLock { _pages = persistentListOf() }
-                _isConnected.value = false
-                endpointScope = null
+                try { conn?.close() }
+                finally {
+                    updatePages { persistentListOf() }
+                    _isConnected.value = false
+                    endpointScope = null
+                }
             }
         }
     }
@@ -347,17 +349,20 @@ actual class Browser actual constructor(
     internal suspend fun ensureConnectionForTesting(): CdpConnection = ensureConnection()
 }
 
-actual class BrowserContext actual constructor(
+public actual class BrowserContext public actual constructor(
     private val context: PlatformContext?,
     private val config: KmpwrightConfig
 ) {
-    private val pages = mutableListOf<Page>()
-    private var browserContextId: String? = null
-    private var connection: CdpConnection? = null
-    private var scope: CoroutineScope? = null
+    private val pages = java.util.concurrent.CopyOnWriteArrayList<Page>()
+    @Volatile private var browserContextId: String? = null
+    @Volatile private var connection: CdpConnection? = null
+    @Volatile private var scope: CoroutineScope? = null
     private val pagesMutex = Mutex()
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val visitedOrigins = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     internal suspend fun initialize(conn: CdpConnection, browserScope: CoroutineScope) {
+        check(!closed.get()) { "BrowserContext is closed" }
         connection = conn
         scope = browserScope
         val result = conn.send("Target.createBrowserContext", mapOf(
@@ -369,12 +374,10 @@ actual class BrowserContext actual constructor(
         browserContextId = result.result?.get("browserContextId")?.toString()?.trim('"')
     }
 
-    actual fun newPage(): Page {
-        return kotlinx.coroutines.runBlocking { newPageAsync() }
-    }
-
-    suspend actual fun newPageAsync(): Page {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun newPage(): Page {
         return pagesMutex.withLock {
+        check(!closed.get()) { "BrowserContext is closed" }
         val conn = connection ?: throw KmpwrightException("BrowserContext not initialized")
         val browserScope = scope ?: throw KmpwrightException("BrowserContext not initialized")
 
@@ -384,29 +387,24 @@ actual class BrowserContext actual constructor(
             conn,
             sessionId,
             hideScrollbarsForScreenshots = shouldHideCdpScrollbars(config),
-            allowedOriginRules = config.allowedOriginRules
+            allowedOriginRules = config.allowedOriginRules,
+            handlerTimeoutMs = config.timeouts.handler,
+            onOriginObserved = { visitedOrigins.add(it) }
         )
         val tabRuntime = object : PageTabRuntime {
             override suspend fun openTab(source: Page, url: String?): NavigationResult {
-                val page = newPageAsync()
+                val page = newPage()
                 try { (source as? BasePage)?.inheritSetupTo(page) }
-                catch (error: Throwable) { page.closeAsync(); throw error }
+                catch (error: Throwable) { page.close(); throw error }
                 return page.goto(url ?: "about:blank")
             }
 
-            override suspend fun closeTab(page: Page): Boolean {
-                if (!pagesMutex.withLock { pages.remove(page) }) return false
-                page.closeAsync()
-                return true
-            }
-
             override fun pageClosed(page: Page) {
-                runBlocking {
-                    pagesMutex.withLock { pages.remove(page) }
-                }
+                pages.remove(page)
             }
         }
         try {
+            controller.applyConfiguredEmulation(config)
             val page = CdpPage(controller, config, browserScope, conn, session, tabRuntime)
             pages.add(page)
             page
@@ -417,48 +415,64 @@ actual class BrowserContext actual constructor(
         }
     }
 
-    actual fun pages(): List<Page> = runBlocking { pagesMutex.withLock { pages.toList() } }
+    public actual fun pages(): List<Page> = pages.toList()
 
-    actual fun clearCookies() {
-        kotlinx.coroutines.runBlocking { clearCookiesAsync() }
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun clearCookies() {
+        val conn = connection ?: throw KmpwrightException("BrowserContext is closed")
+        val ctxId = browserContextId ?: throw KmpwrightException("BrowserContext not initialized")
+        val response = conn.send("Storage.clearCookies", mapOf("browserContextId" to ctxId))
+        response.error?.let { throw KmpwrightException("Could not clear cookies: ${it.message}") }
     }
 
-    suspend actual fun clearCookiesAsync() {
-        browserContextId?.let { ctxId ->
-            connection?.send("Storage.clearCookies", mapOf(
-                "browserContextId" to ctxId
-            ))
+    /** Clears all observed origins, including pages and frames that navigated away or closed. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun clearData(): Unit = pagesMutex.withLock {
+        check(!closed.get()) { "BrowserContext is closed" }
+        val conn = connection ?: throw KmpwrightException("BrowserContext not initialized")
+        val ctxId = browserContextId ?: throw KmpwrightException("BrowserContext not initialized")
+        // A target in this context selects its storage partition, even when all
+        // user pages are closed. Never clear through the browser/default session.
+        val temporary = createCdpPageSession(conn, CdpEndpointScope.Browser, browserContextId = ctxId)
+        try {
+            clearCookies()
+            val failures = visitedOrigins.toList().mapNotNull { origin ->
+                conn.sendSession(requireNotNull(temporary.sessionId), "Storage.clearDataForOrigin", mapOf("origin" to origin, "storageTypes" to "all"))
+                    .error?.let { KmpwrightException("Could not clear storage for $origin: ${it.message}") }
+            }
+            failures.firstOrNull()?.let { first -> failures.drop(1).forEach(first::addSuppressed); throw first }
+        } finally {
+            withContext(NonCancellable) { withTimeout(5_000) { closeCdpPageSession(conn, temporary) } }
         }
     }
 
-    actual fun clearData() {
-        kotlinx.coroutines.runBlocking { clearDataAsync() }
+    public actual fun dispose() {
+        detachedTeardownScope.launch { runCatching { close() } }
     }
 
-    suspend actual fun clearDataAsync() {
-        clearCookiesAsync()
-    }
-
-    actual fun close() {
-        kotlinx.coroutines.runBlocking { closeAsync() }
-    }
-
-    suspend actual fun closeAsync() {
-        val pagesToClose = pagesMutex.withLock { pages.toList() }
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public actual suspend fun close(): Unit = withContext(NonCancellable) { pagesMutex.withLock {
+        if (!closed.compareAndSet(false, true)) return@withLock
+        val pagesToClose = pages.toList()
         pagesToClose.forEach { page ->
-            try { page.closeAsync() } catch (_: Exception) {}
+            try { page.close() } catch (error: Exception) { kmpwrightLogWarning("Could not close page", error) }
         }
-        pagesMutex.withLock { pages.clear() }
+        pages.clear()
         browserContextId?.let { ctxId ->
-            connection?.send("Target.disposeBrowserContext", mapOf(
+            val response = connection?.send("Target.disposeBrowserContext", mapOf(
                 "browserContextId" to ctxId
             ))
+            response?.error?.let { kmpwrightLogWarning("Could not dispose browser context $ctxId: ${it.message}", null) }
         }
         browserContextId = null
         connection = null
         scope = null
-    }
+        visitedOrigins.clear()
+    } }
 }
+
+/** Runs best-effort teardown started by non-suspending `dispose()` calls. */
+internal val detachedTeardownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 internal fun shouldHideCdpScrollbars(config: KmpwrightConfig): Boolean {
     val cdp = config.cdp ?: return false
@@ -495,7 +509,7 @@ private class CdpScreenshotController(
     }
 
     override suspend fun capture(options: ScreenshotOptions): ScreenshotResult =
-        kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        (controller as? CdpWebViewController)?.captureScreenshot(options) ?: kotlinx.coroutines.suspendCancellableCoroutine { cont ->
             controller.takeScreenshot(options) { bytes, width, height ->
                 if (!cont.isActive) return@takeScreenshot
                 if (bytes == null) {
@@ -505,6 +519,15 @@ private class CdpScreenshotController(
                 }
             }
         }
+}
+
+/**
+ * Applies [KmpwrightConfig.viewport] and [KmpwrightConfig.userAgent] to a page created by KMPwright,
+ * like the Android and iOS backends do for the WebViews they create.
+ */
+internal suspend fun CdpWebViewController.applyConfiguredEmulation(config: KmpwrightConfig) {
+    config.viewport?.let { emulateViewportAsync(it) }
+    config.userAgent?.let { setUserAgentAsync(it) }
 }
 
 /** Complete JVM/CDP advertisement used by the backend and platform contracts. */
@@ -534,12 +557,21 @@ internal fun jvmCdpPageCapabilities(): PageCapabilities = PageCapabilities(
     httpRead = SupportLevel.Supported,
     networkHistory = SupportLevel.Partial,
     videoRecording = SupportLevel.Supported,
+    crossOriginFrames = SupportLevel.Supported,
     screencast = SupportLevel.Supported,
     notes = listOf(
         "CDP tracing, profiling, downloads, and routing are available.",
         "Mouse and keyboard automation use native CDP Input events.",
         "Touch automation uses CDP touch emulation and supports taps, swipes, scrolls, and pinch gestures.",
-        "File chooser events are not surfaced yet."
+        "File chooser events are surfaced for page and iframe inputs once interception is enabled.",
+        "Color scheme, geolocation, and network conditions (offline, latency, throughput) are emulated natively " +
+            "(Emulation.setEmulatedMedia, Emulation.setGeolocationOverride, Network.emulateNetworkConditions).",
+        "Geolocation emulation grants the geolocation permission to the page's browser context; it stays granted after reset.",
+        "The domain filter is enforced at the request layer through Fetch interception: navigations, iframes, redirects and " +
+            "every HTTP(S) subresource. WebSocket handshakes are not visible to Fetch interception and are not filtered.",
+        "frameLocator reaches cross-origin (out-of-process) iframes through their CDP target sessions.",
+        "Network history records every request with its CDP resourceType and response; response bodies are readable " +
+            "(Response.body/text/json, NetworkHistory.responseBody) while the browser retains them."
     )
 )
 
@@ -552,9 +584,18 @@ internal class CdpPage(
     tabRuntime: PageTabRuntime? = null
 ) : BasePage(controller, config, tabRuntime, Dispatchers.IO) {
     internal val targetId: String? get() = session.targetId
+    internal val cdpSessionId: String? get() = session.sessionId
     internal val ownsTarget: Boolean get() = session.ownsTarget
-    private val chooserRuntimeDelegate = lazy { CdpFileChooser(connection, session.sessionId, ::reportFileChooser) }
-    private val chooserRuntime by chooserRuntimeDelegate
+    private val chooserRuntimeDelegate: Lazy<CdpFileChooser> = lazy {
+        CdpFileChooser(connection, session.sessionId, config) { handle, multiple ->
+            reportFileChooser(FileChooser(handle, multiple) { chooser, files ->
+                checkOpen()
+                checkPolicy(ActionType.Fill, url.value)
+                chooserRuntime.setFiles(chooser.handle, files)
+            })
+        }
+    }
+    private val chooserRuntime: CdpFileChooser by chooserRuntimeDelegate
     init {
         (controller as CdpWebViewController).childSessionReady = { child ->
             if (chooserRuntimeDelegate.isInitialized()) chooserRuntime.frameReady(child)
@@ -562,17 +603,14 @@ internal class CdpPage(
         controller.childSessionGone = { child ->
             if (chooserRuntimeDelegate.isInitialized()) scope.launch { chooserRuntime.frameGone(child) }
         }
+        // page.title follows document.title changes without a navigation.
+        scope.launch { runCatching { controller.startTitleObserver() } }
     }
     override suspend fun setFileChooserInterception(enabled: Boolean) {
         checkOpen()
         checkPolicy(ActionType.Fill, url.value)
         chooserRuntime.setEnabled(enabled)
         if (enabled) (controller as CdpWebViewController).observedChildSessions().forEach { chooserRuntime.frameReady(it) }
-    }
-    override suspend fun setFileChooserFiles(event: FileChooserEvent, files: List<String>) {
-        checkOpen()
-        checkPolicy(ActionType.Fill, url.value)
-        chooserRuntime.setFiles(event, files)
     }
     private val frameRuntimeDelegate = lazy { CdpFrameRuntime(connection, session.sessionId, controller, config, scope, onFrameGone = {
         if (chooserRuntimeDelegate.isInitialized()) chooserRuntime.frameGone(it)
@@ -581,7 +619,7 @@ internal class CdpPage(
     } }
     private val frameRuntime by frameRuntimeDelegate
     override fun frameLocator(selector: String): FrameLocator = CdpFrameLocator(frameRuntime,
-        selector.split(">>").map(String::trim).filter(String::isNotEmpty), config, closeSignal) { action, url -> checkPolicy(action, url) }
+        cdpFrameSteps(selector), config, closeSignal) { action, url -> checkPolicy(action, url) }
     override fun mainFrame(): FrameLocator = CdpFrameLocator(frameRuntime, emptyList(), config, closeSignal) { action, url -> checkPolicy(action, url) }
     private val recordingMutex = Mutex()
     private var videoRecorder: CdpVideoRecorder? = null
@@ -589,7 +627,7 @@ internal class CdpPage(
     override suspend fun startRecording(options: RecordingOptions) = recordingMutex.withLock {
         checkOpen()
         checkPolicy(ActionType.Screenshot, url.value)
-        check(videoRecorder == null) { "Video recording is already active" }
+        if (videoRecorder != null) throw KmpwrightException("Video recording is already active; call page.video.stop() first")
         val cursor = (controller as CdpWebViewController).recordingCursor
         try {
             videoRecorder = CdpVideoRecorder.start(screencast(ScreencastOptions(options.fps, options.quality,
@@ -618,11 +656,14 @@ internal class CdpPage(
 
     override fun capabilities(): PageCapabilities = jvmCdpPageCapabilities()
 
-    override fun serviceWorkers(): List<ServiceWorker> {
-        return runBlocking {
-            try {
+    override suspend fun serviceWorkers(): List<ServiceWorker> {
+        checkOpen()
+        return withContext(Dispatchers.IO) {
+            withKmpwrightTimeout(config.timeouts.default, { "Timed out listing service workers" }) {
                 val result = connection.send(CdpMethods.TARGET_GET_TARGETS)
-                val targets = result.result?.get("targetInfos")?.jsonArray ?: return@runBlocking emptyList()
+                result.error?.let { throw KmpwrightException("Could not list service workers: ${it.message}") }
+                val targets = result.result?.get("targetInfos")?.jsonArray
+                    ?: throw KmpwrightException("Could not list service workers: no target data")
                 targets.mapNotNull { item ->
                     val target = item.jsonObject
                     val type = target["type"]?.jsonPrimitive?.content
@@ -637,8 +678,6 @@ internal class CdpPage(
                         unregisterServiceWorkerTarget(targetId)
                     }
                 }
-            } catch (_: Throwable) {
-                emptyList()
             }
         }
     }
@@ -726,40 +765,35 @@ internal class CdpPage(
     private suspend fun sendForPage(method: String, params: Map<String, Any?> = emptyMap()): CdpResponse =
         session.sessionId?.let { connection.sendSession(it, method, params) } ?: connection.send(method, params)
 
-    suspend fun saveHar(path: String) {
-        val json = stopHarCapture()
-        fileWrite(path, json)
-    }
-
     override fun createPlatformLocator(selector: String): BaseLocator {
-        return CdpLocator(controller, selector, config)
+        return CdpLocator(controller, selector, config, frameFactory = { frameSelector, scope ->
+            CdpFrameLocator(frameRuntime, cdpFrameSteps(frameSelector, scope), config, closeSignal) { action, url -> checkPolicy(action, url) }
+        })
     }
 
     override fun createScreenshotController(): ScreenshotController =
         CdpScreenshotController(controller)
 
-    override fun createTouch(): Touch {
-        if (config.inputMode == InputMode.JsOnly) throw UnsupportedOperationException("Native touch is disabled by InputMode.JsOnly")
-        return CdpTouch(inputBridge)
+    override fun createTouch(): Touchscreen {
+        if (config.inputMode == InputMode.JsOnly) throw KmpwrightUnsupportedException("Native touch is disabled by InputMode.JsOnly")
+        return CdpTouch(inputBridge, config)
     }
 
     override fun createMouse(): Mouse {
-        if (config.inputMode != InputMode.Hybrid) throw UnsupportedOperationException("Native mouse requires InputMode.Hybrid")
-        return CdpMouse(inputBridge)
+        if (config.inputMode != InputMode.Hybrid) throw KmpwrightUnsupportedException("Native mouse requires InputMode.Hybrid")
+        return CdpMouse(inputBridge, config)
     }
 
     override fun createKeyboard(): Keyboard {
-        if (config.inputMode != InputMode.Hybrid) throw UnsupportedOperationException("Native keyboard requires InputMode.Hybrid")
-        return CdpKeyboard(inputBridge)
+        if (config.inputMode != InputMode.Hybrid) throw KmpwrightUnsupportedException("Native keyboard requires InputMode.Hybrid")
+        return CdpKeyboard(inputBridge, config)
     }
 
-    override suspend fun setDomainFilter(domains: Set<String>) {
-        super.setDomainFilter(domains)
+    override fun dispose() {
+        detachedTeardownScope.launch { runCatching { close() } }
     }
 
-    override fun close() { kotlinx.coroutines.runBlocking { closeAsync() } }
-
-    override suspend fun closeAsync(): Unit = withContext(NonCancellable) {
+    override suspend fun close(): Unit = withContext(NonCancellable) {
         if (!closed.compareAndSet(false, true)) return@withContext
         beginPageClose()
 
@@ -795,7 +829,7 @@ internal class CdpPage(
         cleanup { screencastRuntime.close() }
         cleanup { if (chooserRuntimeDelegate.isInitialized()) chooserRuntime.close() }
         cleanup { if (frameRuntimeDelegate.isInitialized()) frameRuntime.close() }
-        cleanup { super.closeAsync() }
+        cleanup { super.close() }
         // Keep tracing callbacks until the bounded completion-stream wait finishes.
         cleanup { if (tracingWasActive || tracingStream != null) finishTracingForClose(tracingWasActive) }
         tracingOutputPath = null
@@ -916,54 +950,24 @@ internal class CdpPage(
     }
 
     override suspend fun stopProfiler(): String? {
+        if (!profilerActive) return null
         profilerActive = false
         return try {
             val result = sendForPage(CdpMethods.PROFILER_STOP)
-            val profile = result.result?.get("profile")
-            profile?.toString()
-        } catch (_: Exception) {
-            null
+            result.error?.let { throw KmpwrightException("CDP error for ${CdpMethods.PROFILER_STOP} (${it.code}): ${it.message}") }
+            result.result?.get("profile")?.toString()
+                ?: throw KmpwrightException("Profiler stopped without returning a profile")
         } finally {
-            try {
-                sendForPage(CdpMethods.PROFILER_DISABLE)
-            } catch (_: Exception) {}
+            withContext(NonCancellable) {
+                runCatching { sendForPage(CdpMethods.PROFILER_DISABLE) }
+            }
         }
-    }
-
-    override suspend fun emulateNetwork(offline: Boolean, latency: Long, downloadThroughput: Long, uploadThroughput: Long) {
-        if (offline) {
-            sendForPage(CdpMethods.NETWORK_EMULATE_NETWORK_CONDITIONS, mapOf(
-                "offline" to true,
-                "latency" to 0,
-                "downloadThroughput" to 0,
-                "uploadThroughput" to 0,
-                "connectionType" to "none"
-            ))
-        } else if (latency > 0 || downloadThroughput > 0 || uploadThroughput > 0) {
-            sendForPage(CdpMethods.NETWORK_EMULATE_NETWORK_CONDITIONS, mapOf(
-                "offline" to false,
-                "latency" to latency,
-                "downloadThroughput" to downloadThroughput,
-                "uploadThroughput" to uploadThroughput,
-                "connectionType" to "cellular"
-            ))
-        } else {
-            sendForPage(CdpMethods.NETWORK_EMULATE_NETWORK_CONDITIONS, mapOf(
-                "offline" to false,
-                "latency" to 0,
-                "downloadThroughput" to -1,
-                "uploadThroughput" to -1,
-                "connectionType" to "none"
-            ))
-        }
-        rememberSetup("network") { it.emulateNetwork(offline, latency, downloadThroughput, uploadThroughput) }
-    }
-
-    override suspend fun emulateOffline(offline: Boolean) {
-        emulateNetwork(offline = offline, latency = 0, downloadThroughput = 0, uploadThroughput = 0)
     }
 
     private var cdpDownloadSetup = false
+    /** CDP download behavior in effect ("default", "allow", "allowAndName" or "deny"). */
+    @Volatile private var cdpDownloadMode = "default"
+    private val pendingDownloads = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<String?>>()
 
     private fun ensureCdpDownloadSetup() {
         if (cdpDownloadSetup) return
@@ -973,10 +977,30 @@ internal class CdpPage(
             if (!(controller as CdpWebViewController).ownsFrame(frame)) return@onEvent
             val url = params["url"]?.jsonPrimitive?.content ?: return@onEvent
             val suggestedFilename = params["suggestedFilename"]?.jsonPrimitive?.content ?: ""
-            reportDownload(DownloadEvent(url = url, suggestedFilename = suggestedFilename))
+            val guid = params["guid"]?.jsonPrimitive?.content
+            val directory = cdpDownloadPath
+            val mode = cdpDownloadMode
+            // Downloads are only written to a known location when a download path is configured.
+            val saved = directory != null && guid != null && (mode == "allow" || mode == "allowAndName")
+            val completion = kotlinx.coroutines.CompletableDeferred<String?>()
+            if (saved) pendingDownloads[guid!!] = completion else completion.complete(null)
+            val expectedPath = if (!saved) null else if (mode == "allowAndName") "$directory/$guid" else "$directory/$suggestedFilename"
+            reportDownload(Download(url, suggestedFilename, pathProvider = {
+                completion.await()?.let { reported -> reported.ifEmpty { expectedPath } }
+            }, copy = { from, to ->
+                withContext(Dispatchers.IO) {
+                    val target = java.nio.file.Path.of(to).toAbsolutePath()
+                    target.parent?.let { java.nio.file.Files.createDirectories(it) }
+                    java.nio.file.Files.copy(java.nio.file.Path.of(from), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                }
+            }))
         }
         downloadSubscriptions += connection.onEvent("Browser.downloadProgress") { params ->
-            params["state"]?.toString()
+            val guid = params["guid"]?.jsonPrimitive?.content ?: return@onEvent
+            when (params["state"]?.jsonPrimitive?.content) {
+                "completed" -> pendingDownloads.remove(guid)?.complete(params["filePath"]?.jsonPrimitive?.content ?: "")
+                "canceled" -> pendingDownloads.remove(guid)?.complete(null)
+            }
         }
     }
 
@@ -990,26 +1014,28 @@ internal class CdpPage(
             val response = connection.send(CdpMethods.BROWSER_SET_DOWNLOAD_BEHAVIOR, params)
             response.error?.let { throw KmpwrightException("Download configuration failed: ${it.message}") }
             connection.configuredDownloadContexts.add(downloadContextKey)
+            cdpDownloadMode = behavior
         }
     }
 
-    override suspend fun waitForDownload(urlPattern: String?, timeoutMs: Long): DownloadEvent {
+    override suspend fun waitForDownload(url: String?, timeoutMs: Long?): Download {
         checkOpen()
         ensureCdpDownloadSetup()
         if (downloadContextKey !in connection.configuredDownloadContexts) configureDownloads("default")
-        return awaitPageOperation(closeSignal) { super.waitForDownload(urlPattern, timeoutMs) }
+        return awaitPageOperation(closeSignal) { super.waitForDownload(url, timeoutMs) }
     }
 
-    override fun setDownloadPath(path: String) {
+    override suspend fun setDownloadPath(path: String) {
         checkOpen()
         require(path.isNotBlank()) { "Download path must not be blank" }
         ensureCdpDownloadSetup()
-        runBlocking { configureDownloads("allowAndName", path) }
+        // Do not return before the browser honours the path.
+        withKmpwrightTimeout(config.timeouts.default, { "Timed out configuring the download path" }) { configureDownloads("allowAndName", path) }
         super.setDownloadPath(path)
         cdpDownloadPath = path
     }
 
-    override fun setDownloadBehavior(behavior: DownloadBehavior) {
+    override suspend fun setDownloadBehavior(behavior: DownloadBehavior) {
         checkOpen()
         val path = if (behavior == DownloadBehavior.Deny) null else cdpDownloadPath
             ?: throw KmpwrightException("Set a download path before allowing downloads")
@@ -1019,7 +1045,7 @@ internal class CdpPage(
             DownloadBehavior.SaveToDownloadPath -> "allowAndName"
             DownloadBehavior.Deny -> "deny"
         }
-        runBlocking { configureDownloads(value, path) }
+        withKmpwrightTimeout(config.timeouts.default, { "Timed out configuring downloads" }) { configureDownloads(value, path) }
         super.setDownloadBehavior(behavior)
     }
 

@@ -1,0 +1,105 @@
+---
+title: Introduction
+description: KMPwright is a Kotlin Multiplatform browser automation library with a Playwright-style API and agent-browser commands for Android WebView, iOS WKWebView and Chromium on the JVM.
+---
+
+KMPwright lets you write browser automation once, in shared Kotlin, and run it against:
+
+- an Android `WebView` your app already shows,
+- an iOS `WKWebView` your app already shows,
+- a Chromium you launch or connect to over the Chrome DevTools Protocol (CDP) on the JVM.
+
+The API follows [Playwright](https://playwright.dev) names (`goto`, `locator`, `getByRole`, `fill`, `expect`, `route`) and adds the agent features of Vercel's [agent-browser](https://github.com/vercel-labs/agent-browser): accessibility snapshots with `@e` refs, `page.runCommand("click @e3")`, allowed domains, action policies and content boundaries.
+
+<Callout type="warn">
+Alpha, version 0.1.0. The Maven artifacts and the iOS XCFramework have not been published yet. Build from source for now. APIs and platform coverage may change before the first release. See [Installation](/docs/installation).
+</Callout>
+
+## Who it is for
+
+- **App developers** who embed web content and want to test, drive or inspect it from Kotlin on the device itself.
+- **Agent builders** who want to give an LLM a browser tool inside a mobile app or a JVM service, using the same command grammar as agent-browser.
+- **Playwright users** writing Kotlin Multiplatform code who want familiar names and semantics.
+
+## The 30-second example
+
+The same `Page` works on every backend. An agent drives it with text commands; your code drives it with typed calls.
+
+<Tabs items={['Agent loop', 'Playwright-style']}>
+<Tab value="Agent loop">
+
+```kotlin
+// Hand this to an LLM as a single "browser" tool.
+page.runCommand("open example.com")
+val snapshot = page.runCommand("snapshot -i")
+println(snapshot.output)
+// @e1 [heading] "Example Domain" [level=1]
+// @e2 [link] "Learn more"
+
+page.runCommand("click @e2")
+println(page.runCommand("get title").output)
+```
+
+`runCommand` accepts the documented subset of agent-browser commands, returns plain text for the model in `output`, and also returns structured data (`snapshot`, `screenshot`) when a command produces it. See [Coming from agent-browser](/docs/coming-from-agent-browser) for the supported commands.
+
+</Tab>
+<Tab value="Playwright-style">
+
+```kotlin
+import com.bernaferrari.kmpwright.core.*
+
+suspend fun checkExample(page: Page): ScreenshotResult {
+    page.goto("https://example.com")
+    expect(page.locator("h1")).toHaveText("Example Domain")
+    page.getByRole("link", name = "Learn more").click()
+    expect(page).toHaveURL(Regex("iana"))
+    return page.screenshot()
+}
+```
+
+Browser interactions are `suspend` functions; options are data classes; assertions retry until they hold or time out. See [Coming from Playwright](/docs/coming-from-playwright).
+
+</Tab>
+</Tabs>
+
+## How you get a page
+
+| Backend | Entry point | Page source |
+| --- | --- | --- |
+| Android `WebView` | `Browser(AndroidPlatformContext(activity, webView))` | `browser.page()` attaches to your `WebView` |
+| iOS `WKWebView` | `Browser(IOSPlatformContext(webView = webView))` | `browser.page()` attaches to your `WKWebView` |
+| JVM Chromium (owned) | `launchBrowser(BrowserLaunchOptions(executablePath))` | `launched.browser.newPage()` |
+| JVM Chromium (existing or cloud) | `Browser(JvmPlatformContext(), KmpwrightConfig(cdp = CdpConfig(...)))` | `browser.newPage()` or `browser.attachTarget(id)` |
+
+Step-by-step setup is in the [Quick start](/docs/quick-start).
+
+## What works where
+
+Most APIs live in `commonMain` and run on every backend. Where a backend can only do part of the job, `page.capabilities()` reports it as `Supported`, `Partial` or `Unsupported`, with human-readable `notes` that explain the gap. Check them before a workflow starts with `page.requireCapabilities(...)`.
+
+| Area | Android WebView | iOS WKWebView | JVM Chromium (CDP) |
+| --- | --- | --- | --- |
+| Locators, actions, assertions, snapshots | Yes (DOM input) | Yes (DOM input) | Yes (trusted CDP input) |
+| Keyboard / mouse / touch | Supported / Partial / Supported | Partial / Partial / Partial | Supported / Supported / Partial |
+| Request routing (`route`) | Partial | Partial | Supported |
+| Allowed domains | Partial | Supported | Supported |
+| Isolated browser contexts | Unsupported | Partial | Supported |
+| Init scripts | Partial | Supported | Supported |
+| Network throttling | Partial (offline only) | Partial (offline only) | Supported |
+| Downloads, file chooser | Unsupported | Unsupported | Supported, Partial |
+| Tracing, profiling, video, screencast | Unsupported | Unsupported | Supported |
+| PDF | Partial | Partial | Partial |
+
+The full matrix, with each capability's notes, is in [Capabilities](/docs/platforms/capabilities).
+
+## Where to go next
+
+<Cards>
+  <Card href="/docs/installation" title="Installation" description="Add KMPwright to a Kotlin Multiplatform, Android, iOS or JVM project." />
+  <Card href="/docs/quick-start" title="Quick start" description="Attach to a WebView or launch Chromium, then act, assert and screenshot." />
+  <Card href="/docs/sample-app" title="Sample app" description="Run the Compose Multiplatform demo on Android and iOS." />
+  <Card href="/docs/coming-from-playwright" title="Coming from Playwright" description="Playwright JS to KMPwright mapping, and what differs." />
+  <Card href="/docs/coming-from-agent-browser" title="Coming from agent-browser" description="CLI commands and flags mapped to runCommand and the Kotlin API." />
+  <Card href="/docs/agents" title="Agents" description="Snapshots, refs, commands and LLM tool wiring." />
+  <Card href="/docs/security" title="Security" description="Origin rules, action policies, allowed domains and content boundaries." />
+</Cards>

@@ -6,14 +6,14 @@ import kotlinx.serialization.Serializable
  * HAR 1.2 data classes for HTTP Archive format export.
  */
 @Serializable
-data class HarLog(
+internal data class HarLog(
     val version: String = "1.2",
     val creator: HarCreator = HarCreator(),
     val entries: MutableList<HarEntry> = mutableListOf()
 )
 
 @Serializable
-data class HarEntry(
+internal data class HarEntry(
     val startedDateTime: String,
     val request: HarRequest,
     val response: HarResponse,
@@ -24,7 +24,7 @@ data class HarEntry(
 
 /** Coarse event timings; unavailable connection phases use HAR's -1 sentinel. */
 @Serializable
-data class HarTimings(
+internal data class HarTimings(
     val blocked: Double = -1.0,
     val dns: Double = -1.0,
     val connect: Double = -1.0,
@@ -35,7 +35,7 @@ data class HarTimings(
 )
 
 @Serializable
-data class HarRequest(
+internal data class HarRequest(
     val method: String,
     val url: String,
     val httpVersion: String = "HTTP/1.1",
@@ -48,7 +48,7 @@ data class HarRequest(
 )
 
 @Serializable
-data class HarResponse(
+internal data class HarResponse(
     val status: Int,
     val statusText: String,
     val httpVersion: String = "HTTP/1.1",
@@ -61,7 +61,7 @@ data class HarResponse(
 )
 
 @Serializable
-data class HarContent(
+internal data class HarContent(
     val size: Long,
     val mimeType: String = "application/octet-stream",
     val text: String? = null,
@@ -70,19 +70,19 @@ data class HarContent(
 )
 
 @Serializable
-data class HarHeader(
+internal data class HarHeader(
     val name: String,
     val value: String
 )
 
 @Serializable
-data class HarPostData(
+internal data class HarPostData(
     val mimeType: String? = null,
     val text: String? = null
 )
 
 @Serializable
-data class HarCreator(
+internal data class HarCreator(
     val name: String = "kmpwright",
     val version: String = "1.0"
 )
@@ -94,7 +94,7 @@ internal expect fun formatIso8601(timestamp: Long): String
 internal expect fun parseIso8601ToMillis(iso: String): Long
 
 /** Thread-safe HAR 1.2 recorder: at most 500 entries and 16 MiB of serialized entry data. */
-class HarRecorder {
+internal class HarRecorder {
     private val lock = kotlinx.atomicfu.locks.SynchronizedObject()
     private val entries = mutableListOf<HarEntry>()
     private val sizes = mutableListOf<Int>()

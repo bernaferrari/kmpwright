@@ -73,13 +73,10 @@ class AgentBrowserCompatibilityTest {
             val ref = refRaw.jsonObject
             val owner = Class.forName(ref["owner"]!!.jsonPrimitive.content)
             val member = ref["member"]!!.jsonPrimitive.content
-            val accessorSuffix = member.replaceFirstChar { it.uppercase() }
-            assertNotNull(
-                "${owner.name}.$member",
-                owner.methods.firstOrNull {
-                    it.name == member || it.name == "get$accessorSuffix" || it.name == "is$accessorSuffix"
-                }
-            )
+            // Refs name Kotlin members (`title`, `webMcp`, `all`), never JVM getters (`getTitle`).
+            val kind = owner.getAnnotation(Metadata::class.java)?.kind
+            val names = if (kind == 1) owner.kotlin.members.map { it.name } else owner.methods.map { it.name }
+            assertTrue("${owner.name}.$member is not a Kotlin member name", member in names)
         }
         entry["options"]?.jsonArray?.forEach { optionRaw ->
             assertEntry(optionRaw.jsonObject, isCommand = false)
@@ -96,7 +93,7 @@ class AgentBrowserCompatibilityTest {
         assertEquals("https://example.test", page.url.value)
 
         page.locator("button.submit").click()
-        assertTrue(controller.executedScripts.any { it.contains("el.click") })
+        assertTrue(controller.executedScripts.any { it.contains("H.perform(el, 'click'") })
 
         val boundary = page.createContentBoundary()
         val bounded = boundary.wrap("untrusted page text")

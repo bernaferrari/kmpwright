@@ -153,14 +153,26 @@ internal object ChromeDiscovery {
         return if ("?" in url) "$url&$query" else "$url?$query"
     }
 
-    private fun fetchText(url: String): String? = try {
-        val conn = URI(url).toURL().openConnection() as HttpURLConnection
-        conn.connectTimeout = 500
-        conn.readTimeout = 1000
-        conn.connect()
-        if (conn.responseCode == 200) conn.inputStream.bufferedReader().readText() else null
-    } catch (_: Exception) {
-        null
+    /** DevTools discovery documents are tiny; refuse to buffer anything unexpectedly large. */
+    private const val MAX_DISCOVERY_BYTES = 1024 * 1024
+
+    /** Blocking probe. Callers on coroutines must run discovery on [kotlinx.coroutines.Dispatchers.IO]. */
+    private fun fetchText(url: String): String? {
+        val conn = try { URI(url).toURL().openConnection() as HttpURLConnection } catch (_: Exception) { return null }
+        return try {
+            conn.connectTimeout = 500
+            conn.readTimeout = 1000
+            conn.connect()
+            if (conn.responseCode != 200) return null
+            conn.inputStream.use { stream ->
+                val bytes = stream.readNBytes(MAX_DISCOVERY_BYTES + 1)
+                if (bytes.size > MAX_DISCOVERY_BYTES) null else bytes.decodeToString()
+            }
+        } catch (_: Exception) {
+            null
+        } finally {
+            conn.disconnect()
+        }
     }
 
     private fun verifyDirectWebSocket(wsUrl: String): Boolean = try {

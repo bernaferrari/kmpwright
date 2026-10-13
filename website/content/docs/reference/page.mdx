@@ -1,0 +1,519 @@
+---
+title: Page
+description: Complete reference of the Page interface and its public extension functions (selector conveniences, action-scoped waits, dialogs, tabs, agent commands), with every option class and its defaults.
+---
+
+`Page` is one browser tab or WebView, modeled on Playwright's `Page` plus agent-browser's agent features. Get one from `browser.page()`, `browser.newPage()` or `context.newPage()`.
+
+```kotlin
+val page = browser.newPage()
+page.goto("https://example.com")
+page.click("text=More information")             // extension: page.locator(selector).click()
+val response = page.waitForResponse("**/api/*") { click("#load") }
+expect(page).toHaveTitle(Regex("Example"))
+```
+
+Conventions:
+
+- Every operation is `suspend` unless marked otherwise below.
+- A `timeoutMs` of `null` uses the matching [`TimeoutConfig`](/docs/reference/configuration#timeoutconfig) default. Timeouts throw `KmpwrightTimeoutException`.
+- `Page` extends `ElementFinder`, so it has `locator`, `frameLocator` and every `getBy*` method. They are listed on [Locator](/docs/reference/locator#elementfinder).
+- Members marked "CDP only" throw `KmpwrightUnsupportedException` on Android and iOS. See [Capabilities](/docs/platforms/capabilities).
+- String URL parameters (`route`, `unroute`, `waitForURL`, `waitForRequest`, `waitForResponse`, `waitForNavigation`, `waitForDownload`, `expect(page).toHaveURL`) use Playwright's URL glob over the **full** URL: `**` matches anything including `/`, `*` anything except `/`, `{a,b}` either alternative, `\` escapes, and every other character (including `?`) is literal. A string without glob characters is an exact URL (`"https://example.com"` equals `https://example.com/`); an empty string matches everything. Use `"**/api/items"` for a path on any host, the `Regex` overloads, or the KMPwright `regex:` prefix where only a String is accepted.
+
+Source: [Page.kt](https://github.com/bernaferrari/kmpwright/blob/main/kmpwright-core/src/commonMain/kotlin/com/bernaferrari/kmpwright/core/Page.kt), [PageConvenience.kt](https://github.com/bernaferrari/kmpwright/blob/main/kmpwright-core/src/commonMain/kotlin/com/bernaferrari/kmpwright/core/PageConvenience.kt), [PageWaits.kt](https://github.com/bernaferrari/kmpwright/blob/main/kmpwright-core/src/commonMain/kotlin/com/bernaferrari/kmpwright/core/PageWaits.kt).
+
+## Properties
+
+All non-suspending.
+
+| Property | Type | Description |
+|---|---|---|
+| `url` | `StateFlow<String?>` | Committed URL, updated on every navigation. Playwright: `page.url()`. |
+| `title` | `StateFlow<String?>` | Document title as of the last navigation. Playwright: `page.title()`. |
+| `events` | `PageEvents` | Hot event streams; see [PageEvents](#pageevents). Playwright: `page.on(...)`. |
+| `network` | `NetworkHistory` | Recorded requests, response bodies and HAR capture (agent-browser `network`). |
+| `react` | `ReactInspector` | React component tree, inspection, Suspense and render profiling (agent-browser `react`). |
+| `webMcp` | `WebMcp` | WebMCP tools exposed by the page (agent-browser `webmcp`). |
+| `touchscreen` | `Touchscreen` | `tap`, `longTap`, `scroll`, `swipe`, `pinch` in CSS pixels. |
+| `mouse` | `Mouse` | `move`, `click`, `dblclick`, `down`, `up`, `wheel`, `drag`. Needs `InputMode.Hybrid`. |
+| `keyboard` | `Keyboard` | `insertText`, `type`, `down`, `up`, `press`. Needs `InputMode.Hybrid`. |
+| `localStorage` | `WebStorage` | The current origin's `localStorage`: `get`, `set`, `remove`, `clear`, `entries`. |
+| `sessionStorage` | `WebStorage` | The current origin's `sessionStorage`. |
+| `clipboard` | `Clipboard` | `readText(): String?`, `writeText(text)`. |
+| `tracing` | `Tracing` | `start(TracingOptions)`, `stop(): ByteArray?`. CDP only. |
+| `profiler` | `Profiler` | `start()`, `stop(): String?` (V8 CPU profile JSON). CDP only. |
+| `video` | `Video` | `start(RecordingOptions)`, `stop(): RecordingResult`. CDP only, needs ffmpeg. |
+
+## Capabilities
+
+| Member | Description |
+|---|---|
+| `fun capabilities(): PageCapabilities` | What this backend supports. |
+| `fun requireCapabilities(vararg requirements: PageCapabilityRequirement): PageCapabilities` | Throws `KmpwrightException` unless every requirement is met. |
+| `fun requireCapabilities(vararg capabilities: PageCapability): PageCapabilities` | Same, requiring `Supported` for each. |
+
+See [Capabilities](/docs/platforms/capabilities).
+
+## Navigation
+
+| Member | Description |
+|---|---|
+| `goto(url: String, options: GotoOptions = GotoOptions()): NavigationResult` | Navigates the main frame and waits for `waitUntil`. A failed or blocked navigation returns `ok = false` with `error`; only a timeout throws. |
+| `reload(options: ReloadOptions = ReloadOptions()): NavigationResult` | Reloads and waits for the new document. |
+| `goBack(options: HistoryNavigationOptions = HistoryNavigationOptions()): NavigationResult?` | Back in history; null when there is no previous entry. |
+| `goForward(options: HistoryNavigationOptions = HistoryNavigationOptions()): NavigationResult?` | Forward in history; null when there is no next entry. |
+| `pushState(url: String, timeoutMs: Long? = null): NavigationResult` | Client-side navigation through the Next.js router or `history.pushState` (agent-browser `pushstate`). Needs `allowEval`. |
+
+`NavigationResult(url: String, status: Int, ok: Boolean, error: String? = null)`: `url` is the final URL after redirects; `status` the HTTP status of the final response (200 for local documents such as `setContent`, 0 when the navigation failed); `ok` is Playwright's `response.ok()`: committed **and** status 200..299. A 404 or 500 page is committed with `ok = false` and `error = null`; `error` is set only when no document was committed (network error, policy, domain filter).
+
+## Waiting
+
+| Member | Description |
+|---|---|
+| `waitForURL(url: String, options: WaitForURLOptions = WaitForURLOptions())` | Until the URL matches the URL glob, then waits for `waitUntil`. Same-document navigations (pushState, hash changes) count. |
+| `waitForURL(url: Regex, options: WaitForURLOptions = WaitForURLOptions())` | Until the URL matches the regex. |
+| `waitForURL(options: WaitForURLOptions = WaitForURLOptions(), predicate: (String) -> Boolean)` | Until `predicate` accepts the URL. |
+| `waitForLoadState(state: LoadState = LoadState.Load, timeoutMs: Long? = null)` | Until the document reaches `state`. |
+| `waitForTimeout(ms: Long)` | Suspends for `ms`. |
+| `waitForNavigation(options: WaitForNavigationOptions = WaitForNavigationOptions()): NavigationResult?` | The next navigation; null when none happens in time. Prefer the action-scoped form below. |
+| `waitForEvent(event: String, options: WaitForEventOptions = WaitForEventOptions()): Any?` | Next event named `console`, `navigation`, `dialog`, `request`, `response`, `download`, `filechooser`, `pageerror`, `domcontentloaded`, `load` or `networkidle` (case-insensitive); null on timeout. Other names throw "Unsupported page event: name". Waiting for `dialog` routes dialogs to automation on Android. |
+| `waitForFunction(expression: String, timeoutMs: Long? = null): JsResult` | Until `expression` is truthy; returns its value. Needs `allowEval`. |
+| `waitForText(text: String, timeoutMs: Long? = null)` | Until `text` appears in `document.body.innerText` (agent-browser `wait --text`). Throws on timeout. |
+| `waitForRequest(url: String, timeoutMs: Long? = null): Request` | Next request whose URL matches the URL glob. |
+| `waitForRequest(url: Regex, timeoutMs: Long? = null): Request` | Next request matching the regex. |
+| `waitForRequest(timeoutMs: Long? = null, predicate: (Request) -> Boolean): Request` | Next request accepted by `predicate`. |
+| `waitForResponse(url: String, timeoutMs: Long? = null): Response` | Next response whose URL matches the URL glob. A failed request arrives as status 0 with the error in `statusText`. |
+| `waitForResponse(url: Regex, timeoutMs: Long? = null): Response` | Next response matching the regex. |
+| `waitForResponse(timeoutMs: Long? = null, predicate: (Response) -> Boolean): Response` | Next response accepted by `predicate`. |
+| `waitForDownload(url: String? = null, timeoutMs: Long? = null): Download` | Next download, optionally matching a URL glob. CDP only. |
+| `waitForFileChooser(timeoutMs: Long? = null): FileChooser` | Next file chooser. CDP only; call `setFileChooserInterception()` first. |
+
+### Action-scoped waits (extensions)
+
+Playwright's `Promise.all([page.waitForX(), action()])` in one call: the wait subscribes before `action` runs, so a fast event cannot be missed. `action` has the page as receiver.
+
+| Extension | Returns |
+|---|---|
+| `Page.waitForNavigation(options: WaitForNavigationOptions = WaitForNavigationOptions(), action: suspend Page.() -> Unit)` | `NavigationResult`; throws `KmpwrightTimeoutException` when no navigation happens. |
+| `Page.waitForRequest(url: String, timeoutMs: Long? = null, action: suspend Page.() -> Unit)` | `Request` |
+| `Page.waitForRequest(url: Regex, timeoutMs: Long? = null, action: suspend Page.() -> Unit)` | `Request` |
+| `Page.waitForResponse(url: String, timeoutMs: Long? = null, action: suspend Page.() -> Unit)` | `Response` |
+| `Page.waitForResponse(url: Regex, timeoutMs: Long? = null, action: suspend Page.() -> Unit)` | `Response` |
+| `Page.waitForURL(url: String, options: WaitForURLOptions = WaitForURLOptions(), action: suspend Page.() -> Unit)` | `Unit` |
+| `Page.waitForURL(url: Regex, options: WaitForURLOptions = WaitForURLOptions(), action: suspend Page.() -> Unit)` | `Unit` |
+| `Page.waitForURL(predicate: (String) -> Boolean, options: WaitForURLOptions = WaitForURLOptions(), action: suspend Page.() -> Unit)` | `Unit` |
+| `Page.waitForDownload(url: String? = null, timeoutMs: Long? = null, action: suspend Page.() -> Unit)` | `Download` |
+| `Page.waitForFileChooser(timeoutMs: Long? = null, action: suspend Page.() -> Unit)` | `FileChooser` |
+| `Page.waitForDialog(timeoutMs: Long? = null, action: suspend Page.() -> Unit)` | `DialogEvent` |
+
+```kotlin
+val nav = page.waitForNavigation { click("text=Next") }
+val response = page.waitForResponse(Regex("/api/items")) { click("#load") }
+```
+
+## Content and scripts
+
+| Member | Description |
+|---|---|
+| `evaluate(expression: String): JsResult` | Evaluates JavaScript in the page; Promises are awaited. Needs `allowEval`. |
+| `content(): String` | The document's full HTML. Needs `allowDomExtraction`. |
+| `setContent(html: String, options: SetContentOptions = SetContentOptions())` | Replaces the document with `html`. |
+| `screenshot(options: ScreenshotOptions = ScreenshotOptions()): ScreenshotResult` | Viewport, full page or clip. With `annotate = true`, snapshot refs are drawn and returned in `annotations` (agent-browser `screenshot --annotate`). |
+| `pdf(options: PdfOptions = PdfOptions()): PdfResult` | Renders the page as PDF (`PdfResult.bytes`). Options are limited on Android and iOS. |
+| `fun screencast(options: ScreencastOptions = ScreencastOptions()): Flow<ScreencastFrame>` | Experimental, latest-frame-wins JPEG frames. Non-suspending. CDP only. |
+| `addInitScript(script: String): String` | Runs `script` before page scripts in later documents and child frames; returns an id. |
+| `removeInitScript(id: String)` | Removes an init script. Unknown ids throw "Unknown init-script identifier: id". |
+| `addScriptTag(options: ScriptTagOptions): String` | Adds a `<script>`; returns its element id. Needs `url` or `content`. |
+| `addStyleTag(options: StyleTagOptions): String` | Adds a `<style>` or stylesheet `<link>`; returns its element id. |
+| `read(url: String? = null, options: ReadOptions = ReadOptions()): ReadResult` | Fetches `url` over HTTP (or reads this page when null) as readable text or Markdown (agent-browser `read`). |
+| `webVitals(options: WebVitalsOptions = WebVitalsOptions()): WebVitalsReport` | Core Web Vitals (agent-browser `vitals`). |
+| `metrics(): PageMetrics` | Runtime metrics: `documents`, `frames`, `jsHeapUsedSize`, `jsHeapTotalSize`, `resources`, `networkIdle`. |
+| `serviceWorkers(): List<ServiceWorker>` | Registrations (`url`, `state`, `scriptUrl`, `unregister()`). CDP only. |
+| `accessibilityAudit(options: AccessibilityAuditOptions = AccessibilityAuditOptions()): AccessibilityAuditReport` | axe-core audit of the document. |
+| `fun consoleMessages(filter: PageMessageFilter = PageMessageFilter.SinceNavigation): List<ConsoleMessage>` | Up to the last 200 console messages. `SinceNavigation` returns those after the last committed main-frame navigation (Playwright's default); `All` returns every stored one. |
+| `fun pageErrors(filter: PageMessageFilter = PageMessageFilter.SinceNavigation): List<String>` | Up to the last 200 uncaught exceptions and unhandled promise rejections (not `console.error`), formatted `"Name: message"`. Structured form: `events.pageError`. |
+| `fun clearConsoleMessages()` | Forgets stored console messages. |
+| `fun clearPageErrors()` | Forgets stored page errors. |
+| `fun mainFrame(): FrameLocator` | The main frame as a `FrameLocator`. Non-suspending. |
+
+`JsResult(value: String, type: String)`: `value` is the string itself for strings and JSON for everything else (`"null"` for null and undefined); `type` is the JavaScript `typeof`, with `"null"` for null and `"array"` for arrays. Playwright returns deserialized values; parse `value` yourself.
+
+## Agent features
+
+| Member | Description |
+|---|---|
+| `snapshot(options: SnapshotOptions = SnapshotOptions()): Snapshot` | Accessibility snapshot (agent-browser `snapshot`). Interactive elements get refs like `@e3` that `locator("@e3")` accepts until the next snapshot or navigation. Returns `Snapshot(tree, refs, nodes)`. |
+| `diffSnapshot(before: Snapshot, after: Snapshot): SnapshotDiffResult` | Line diff of two snapshots (agent-browser `diff snapshot`). |
+| `diffSnapshot(name: String): SnapshotDiffResult` | Snapshots now, diffs against the snapshot saved under `name`, then saves the new one. The first call records a baseline and reports no change. |
+| `diffUrls(url1: String, url2: String, timeoutMs: Long? = null): SnapshotDiffResult` | Diffs the text structure of two URLs fetched over HTTP (agent-browser `diff url`). |
+| `fun createContentBoundary(): ContentBoundary` | A boundary with a fresh nonce for wrapping untrusted page content. Non-suspending. |
+| `boundedContent(boundary: ContentBoundary? = null): String` | Page HTML wrapped in boundary markers (agent-browser `--content-boundaries`). |
+| `boundedSnapshot(options: SnapshotOptions = SnapshotOptions(), boundary: ContentBoundary? = null): String` | Snapshot tree wrapped in boundary markers. |
+| `fun setActionPolicy(policy: ActionPolicy)` | Applies an allow/deny/confirm policy to every later action (agent-browser `--action-policy`). See [ActionPolicy](/docs/reference/configuration#actionpolicy). |
+| `fun setPolicyConfirmCallback(callback: (suspend (ActionType, String?) -> Boolean)?)` | Answers actions the policy marks `Confirm` (agent-browser `--confirm-actions`). |
+| `setAllowedDomains(domains: List<String>)` | Restricts the hosts the page may contact (agent-browser `--allowed-domains`). `*.example.com` matches the apex and subdomains; an empty list removes the restriction. Enforcement differs per backend; see `DomainFiltering`. |
+| `login(profile: AuthProfile, options: AuthLoginOptions = AuthLoginOptions()): AuthLoginResult` | Fills and submits the login form described by `profile` (agent-browser `auth login`). `submitted` does not prove success. |
+| `Page.runCommand(command: String): AgentCommandResult` (extension) | Runs one agent-browser command line, for example `"click @e3"`. Returns `AgentCommandResult(command, output, snapshot, screenshot)`. Throws `KmpwrightException` for unknown or malformed commands. See [Commands](/docs/agents/commands). |
+| `Page.visualDiff(expected: ScreenshotResult, actual: ScreenshotResult, options: DiffOptions = DiffOptions()): DiffResult` (extension) | Pixel comparison of two screenshots (agent-browser `diff screenshot`). Undecodable images return `match = false`. |
+
+## Network
+
+| Member | Description |
+|---|---|
+| `route(url: String, handler: suspend (Route) -> Unit)` | Intercepts requests matching the URL glob. The handler calls `fulfill`, `abort`, `resume` or `fallback`; returning without a decision falls back. The newest matching route runs first. Registering the same `url` replaces its handler. Returns once interception is active. |
+| `route(url: Regex, handler: suspend (Route) -> Unit)` | Intercepts requests whose full URL matches the regex. |
+| `unroute(url: String)` | Removes the route registered for that glob. |
+| `unroute(url: Regex)` | Removes the route registered for that regex. |
+| `unrouteAll()` | Removes every route. |
+| `fun onDialog(handler: suspend (DialogEvent) -> DialogResponse): DialogHandler` | Answers JavaScript dialogs; the newest handler wins. `DialogHandler.close()` removes it. A handler that does not answer within `TimeoutConfig.handler` dismisses the dialog. Non-suspending. |
+| `setExtraHTTPHeaders(headers: Map<String, String>)` | Sends `headers` with every request. Android and iOS only accept an empty map. |
+| `setHTTPCredentials(credentials: HttpCredentials?)` | Answers HTTP authentication with `HttpCredentials(username, password)`; null clears. |
+| `setFileChooserInterception(enabled: Boolean = true)` | Enables native file chooser interception. CDP only; required before `waitForFileChooser`. |
+| `setDownloadPath(path: String)` | Directory where downloads are saved. CDP only. |
+| `setDownloadBehavior(behavior: DownloadBehavior)` | `SaveToDownloadPath`, `Deny` or `Allow`. CDP only. |
+
+`Route` has `request: Request` and `fulfill(status = 200, headers = emptyMap(), body = null, bodyBytes = null, contentType = null, json = null)` (`json` is an already-serialized body that cannot be combined with `body`/`bodyBytes`; `bodyBytes` wins over `body`), `abort(errorCode = "failed")`, `resume(url = null, method = null, headers = null, postData = null)` (Playwright `route.continue()`) and `fallback()`. A handler decides once; a second decision throws "Route is already handled". Handlers are bounded by `TimeoutConfig.handler`. See [Network](/docs/guides/network).
+
+## Dialog helpers (extensions)
+
+| Extension | Description |
+|---|---|
+| `fun Page.acceptDialogs(): DialogHandler` | Accepts every dialog until the handle is closed. |
+| `fun Page.dismissDialogs(): DialogHandler` | Dismisses every dialog until the handle is closed. |
+| `fun Page.acceptDialogsIf(predicate: (DialogEvent) -> Boolean): DialogHandler` | Accepts matching dialogs and dismisses the rest. |
+| `suspend fun Page.waitForDialog(timeoutMs: Long? = null): DialogEvent` | The next dialog (Playwright `waitForEvent('dialog')`). While waiting it counts as a dialog listener, so dialogs reach automation even on Android. It is answered by the newest `onDialog` handler, or dismissed. |
+
+`DialogEvent(type: DialogType, message: String, defaultPrompt: String? = null)` with `DialogType` `Alert`, `Confirm`, `Prompt`, `BeforeUnload`. `DialogResponse` is `Accept`, `Dismiss` or `Text(text)` (accepts a prompt with `text`). Without a handler, dialogs are dismissed on iOS and JVM and left to the WebView's own UI on Android.
+
+## Cookies and storage state
+
+| Member | Description |
+|---|---|
+| `cookies(urls: List<String> = emptyList()): List<Cookie>` | Cookies visible to `urls`, or every cookie when empty. Playwright: `context.cookies()`. |
+| `addCookies(cookies: List<Cookie>)` | Adds or replaces cookies. |
+| `clearCookies(name: String? = null, domain: String? = null)` | Removes matching cookies; both null removes all. |
+| `storageState(): StorageState` | Cookies plus this origin's localStorage and sessionStorage. `StorageState.save(path, password)` writes it (password null = plaintext). |
+| `setStorageState(state: StorageState)` | Replaces cookies, navigates to the state's URL when needed, restores storage. Use with `StorageState.load(path, password)`. |
+| `autosaveStorageState(options: StorageStateAutosaveOptions): StorageStateAutosave` | Saves immediately, then every `intervalMs` until `stop()` or the page closes. The handle exposes `error`, `lastSavedAt` and `isActive`. |
+
+`Cookie(name, value, domain, path = "/", expires: Double? = null, secure = false, httpOnly = false, sameSite: String? = null, hostOnly = !domain.startsWith("."))`; `expires` is Unix epoch seconds, null for a session cookie.
+
+## Emulation
+
+| Member | Description |
+|---|---|
+| `emulateMedia(colorScheme: ColorScheme?)` | `prefers-color-scheme`: `Light`, `Dark`, `NoPreference`; null resets. Native on CDP and on iOS when the view is in a window, JavaScript otherwise. |
+| `setGeolocation(geolocation: Geolocation?)` | Overrides `navigator.geolocation`; null resets. |
+| `setOffline(offline: Boolean)` | Emulates being offline. |
+| `emulateNetworkConditions(conditions: NetworkConditions?)` | Throttling; null removes it. WebViews only emulate `offline` and throw `KmpwrightUnsupportedException` for latency or throughput. |
+| `setUserAgent(userAgent: String)` | User agent for later requests. |
+| `setViewportSize(width: Int, height: Int)` | Viewport in CSS pixels (Android, JVM) or points (iOS). |
+| `fun viewportSize(): ViewportSize` | Current viewport in CSS pixels. Never null. Non-suspending. |
+| `setDeviceScaleFactor(scale: Double)` | Device pixel ratio. Android and iOS throw. |
+| `emulateDevice(device: DeviceDescriptor)` | Applies a preset such as `Devices.iPhone15`: viewport size and user agent on every backend, plus scale factor, mobile layout and touch on CDP. Android and iOS keep the display's scale factor and native touch. Nothing is applied when the descriptor is invalid (`IllegalArgumentException`). |
+
+## Scrolling
+
+| Member | Description |
+|---|---|
+| `scroll(direction: ScrollDirection, amount: Double = 300.0)` | Scrolls by `amount` CSS pixels `Up`, `Down`, `Left` or `Right` (agent-browser `scroll`). |
+| `scrollToTop()` | Scrolls to the top. |
+| `scrollToBottom()` | Scrolls to the bottom. |
+
+## Tabs and lifecycle
+
+| Member | Description |
+|---|---|
+| `openNewTab(url: String? = null): NavigationResult` | Opens a new page that inherits this page's routes and emulation and navigates it to `url` (`about:blank` when null). |
+| `close()` | Closes the page and waits for its resources to be released. Idempotent. Playwright: `page.close()`. |
+| `fun dispose()` | Non-suspending, best-effort teardown for lifecycle callbacks (Compose `onDispose`, `Activity.onDestroy`). Returns immediately; prefer `close()`. |
+
+After `close()`, page operations throw `KmpwrightException`: "Page is closed".
+
+Browser extensions for tabs (agent-browser `tab`): `fun Browser.tabList(): List<TabInfo(index, url, page)>`, `fun Browser.switchToTab(index: Int): Page`, `suspend fun Browser.closeTab(index: Int)`. Out-of-range indexes throw "Tab index N out of range (0..M)". Also `suspend fun Browser.use(url: String, block: suspend Page.() -> Unit)` (new page, navigate, run, close) and `suspend fun Browser.use(block: suspend Page.() -> Unit)` (runs on the default page without closing it).
+
+## Selector conveniences (extensions)
+
+Playwright's `page.click(selector)` family. Each one is `page.locator(selector).<action>(...)`; selectors also accept snapshot refs (`@e3`, `e3`, `ref=e3`).
+
+| Extension | Equivalent |
+|---|---|
+| `Page.click(selector: String, options: ClickOptions = ClickOptions())` | `locator(selector).click(options)` |
+| `Page.dblclick(selector: String, options: ClickOptions = ClickOptions())` | `.dblclick(options)` |
+| `Page.tap(selector: String, options: TapOptions = TapOptions())` | `.tap(options)` |
+| `Page.fill(selector: String, value: String, options: FillOptions = FillOptions())` | `.fill(value, options)` |
+| `Page.clear(selector: String, options: FillOptions = FillOptions())` | `.clear(options)` |
+| `Page.type(selector: String, text: String, options: TypeOptions = TypeOptions())` | `.pressSequentially(text, PressSequentiallyOptions(options.delayMs, options.timeoutMs))` |
+| `Page.press(selector: String, key: String, options: PressOptions = PressOptions())` | `.press(key, options)` |
+| `Page.hover(selector: String, options: HoverOptions = HoverOptions())` | `.hover(options)` |
+| `Page.focus(selector: String, timeoutMs: Long? = null)` | `.focus(timeoutMs)` |
+| `Page.highlight(selector: String, options: HighlightOptions = HighlightOptions())` | `.highlight(options)` (agent-browser `highlight`) |
+| `Page.check(selector: String, options: CheckOptions = CheckOptions())` | `.check(options)` |
+| `Page.uncheck(selector: String, options: CheckOptions = CheckOptions())` | `.uncheck(options)` |
+| `Page.setChecked(selector: String, checked: Boolean, options: CheckOptions = CheckOptions())` | `.setChecked(checked, options)` |
+| `Page.selectOption(selector: String, value: String, options: ActionOptions = ActionOptions())` | `.selectOption(value, options)` |
+| `Page.selectOption(selector: String, values: List<String>, options: ActionOptions = ActionOptions())` | `.selectOption(values, options)` |
+| `Page.setInputFiles(selector: String, files: List<String>, options: ActionOptions = ActionOptions())` | `.setInputFiles(files, options)` (agent-browser `upload`) |
+| `Page.dragAndDrop(source: String, target: String, options: DragOptions = DragOptions())` | `locator(source).dragTo(locator(target), options)` (agent-browser `drag`) |
+| `Page.dispatchEvent(selector: String, type: String, timeoutMs: Long? = null)` | `.dispatchEvent(type, timeoutMs)` |
+
+Queries wait for the element to be attached first (`TimeoutConfig.waitForSelector` when `timeoutMs` is null), like Playwright:
+
+| Extension | Returns |
+|---|---|
+| `Page.textContent(selector: String, timeoutMs: Long? = null)` | `String?` |
+| `Page.innerText(selector: String, timeoutMs: Long? = null)` | `String` |
+| `Page.innerHTML(selector: String, timeoutMs: Long? = null)` | `String` |
+| `Page.getAttribute(selector: String, name: String, timeoutMs: Long? = null)` | `String?` |
+| `Page.inputValue(selector: String, timeoutMs: Long? = null)` | `String?` |
+
+State checks do not wait:
+
+| Extension | Returns |
+|---|---|
+| `Page.isVisible(selector: String)` | `Boolean`; false when nothing matches. |
+| `Page.isHidden(selector: String)` | `Boolean`; true when nothing matches. |
+| `Page.isEnabled(selector: String)` | `Boolean`; throws when nothing matches. |
+| `Page.isDisabled(selector: String)` | `Boolean`; throws when nothing matches. |
+| `Page.isChecked(selector: String)` | `Boolean`; throws when nothing matches. |
+| `Page.isEditable(selector: String)` | `Boolean`; throws when nothing matches. |
+| `Page.count(selector: String)` | `Int` (agent-browser `get count`). |
+| `Page.waitForSelector(selector: String, state: SelectorState = SelectorState.Visible, timeoutMs: Long? = null)` | `Unit`. States: `Attached`, `Detached`, `Visible`, `Hidden`. |
+| `Page.paste()` | Inserts the clipboard text into the focused element (agent-browser `clipboard paste`). |
+
+## Other public functions that take a `Page`
+
+| Function | Description |
+|---|---|
+| `fun Page.androidWebViewState(): StateFlow<AndroidWebViewState>?` | Android only. See [Android](/docs/platforms/android#pageandroidwebviewstate). |
+| `suspend fun resetPageForReuse(page: Page)` | Clears routes, allowed domains, credentials, headers, cookies and storage, then navigates to `about:blank`. Same-owner reuse only. |
+| `fun expect(page: Page): PageAssertions` | See [Assertions](/docs/reference/assertions). |
+
+## `PageEvents`
+
+Hot, non-replaying `SharedFlow`s. Subscribe before triggering the action, or use the action-scoped waits.
+
+| Property | Type |
+|---|---|
+| `console` | `SharedFlow<ConsoleMessage>` (`type`, `text`, `location: SourceLocation?`) |
+| `navigation` | `SharedFlow<NavigationEvent>` (`url`, `status`, `navigationType`: `SameDocument` or `NewDocument`) |
+| `loadState` | `SharedFlow<LoadState>` |
+| `dialog` | `SharedFlow<DialogEvent>` |
+| `request` | `SharedFlow<Request>` |
+| `response` | `SharedFlow<Response>` (failed requests: status 0, error in `statusText`) |
+| `download` | `SharedFlow<Download>` |
+| `fileChooser` | `SharedFlow<FileChooser>` |
+| `pageError` | `SharedFlow<PageError>`: uncaught exceptions and unhandled promise rejections (Playwright `pageerror`) |
+
+Collecting `dialog` does not register a dialog listener: on Android a dialog is only emitted while an `onDialog` handler or a `waitForDialog` is active.
+
+`PageError(name, message, stack: String? = null, location: SourceLocation? = null)` has `text` (`"Name: message"`, or the message when `name` is empty). `ConsoleMessage.type` is one of Playwright's values: `log`, `debug`, `info`, `error`, `warning`, `dir`, `dirxml`, `table`, `trace`, `clear`, `startGroup`, `startGroupCollapsed`, `endGroup`, `assert`, `profile`, `profileEnd`, `count`, `timeEnd`. `PageMessageFilter` is `SinceNavigation` or `All`.
+
+`Download` has `url`, `suggestedFilename`, `path(): String?` and `saveAs(path)` (throws when no download path was set). `FileChooser` has `isMultiple` and `setFiles(files)` (an empty list cancels).
+
+## Option classes
+
+### Navigation
+
+`GotoOptions`, `ReloadOptions`, `HistoryNavigationOptions`, `SetContentOptions` and `WaitForURLOptions` all have the same fields:
+
+<TypeTable
+  type={{
+    waitUntil: { type: 'LoadState', description: 'DOMContentLoaded, Load or NetworkIdle.', default: 'LoadState.Load' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.navigation.', default: 'null' },
+  }}
+/>
+
+`WaitForNavigationOptions`:
+
+<TypeTable
+  type={{
+    url: { type: 'String?', description: 'URL glob the navigation must match; the regex: prefix makes it a regular expression. Same-document navigations count.', default: 'null' },
+    waitUntil: { type: 'LoadState?', description: 'Load state to wait for after the navigation.', default: 'null' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.navigation.', default: 'null' },
+  }}
+/>
+
+`WaitForEventOptions`:
+
+<TypeTable
+  type={{
+    predicate: { type: '((Any?) -> Boolean)?', description: 'Filters events (not applied to load-state events).', default: 'null' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.default.', default: 'null' },
+  }}
+/>
+
+### `ScreenshotOptions`
+
+Also used by `Locator.screenshot`.
+
+<TypeTable
+  type={{
+    fullPage: { type: 'Boolean', description: 'Capture the whole scrollable page.', default: 'false' },
+    clip: { type: 'Rectangle?', description: 'Area to capture, in CSS pixels relative to the viewport\'s top-left. Cannot be combined with fullPage (IllegalArgumentException). A clip entirely outside the viewport is an error.', default: 'null' },
+    omitBackground: { type: 'Boolean', description: 'Transparent instead of the default white background. CDP only (PNG or WEBP); Android and iOS throw KmpwrightUnsupportedException.', default: 'false' },
+    quality: { type: 'Int', description: '0..100, for JPEG and WEBP.', default: '90' },
+    format: { type: 'ScreenshotFormat', description: 'PNG, JPEG or WEBP. iOS cannot encode WEBP.', default: 'ScreenshotFormat.PNG' },
+    scale: { type: 'Double', description: 'Output scale; must be positive.', default: '1.0' },
+    annotate: { type: 'Boolean', description: 'Draw snapshot refs on the image and return them in ScreenshotResult.annotations. Page screenshots only.', default: 'false' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.default.', default: 'null' },
+  }}
+/>
+
+`ScreenshotResult(bytes, width, height, annotations: List<Annotation(ref, role, name, box)>)`. `ScreenshotResult.toRgbaImage(): RgbaImage?` decodes it.
+
+### `PdfOptions`
+
+<TypeTable
+  type={{
+    format: { type: 'PdfFormat?', description: 'Letter, Legal, Tabloid, Ledger, A0..A6, or Content (iOS only: one unpaginated canvas). null uses the backend default: Letter on CDP and Android, Content on iOS.', default: 'null' },
+    landscape: { type: 'Boolean', description: 'Landscape orientation.', default: 'false' },
+    displayHeaderFooter: { type: 'Boolean', description: 'Render header and footer templates. CDP only.', default: 'false' },
+    headerTemplate: { type: 'String', description: 'HTML header template. CDP only.', default: '""' },
+    footerTemplate: { type: 'String', description: 'HTML footer template. CDP only.', default: '""' },
+    printBackground: { type: 'Boolean', description: 'Print background graphics. Android and iOS require true.', default: 'true' },
+    scale: { type: 'Double', description: 'Rendering scale. Android and iOS require 1.0.', default: '1.0' },
+    width: { type: 'Double?', description: 'Paper width in inches; overrides format.', default: 'null' },
+    height: { type: 'Double?', description: 'Paper height in inches; overrides format.', default: 'null' },
+    margin: { type: 'PdfMargin', description: 'Lengths (in, cm, mm, px or pt) for top, bottom, left, right. iOS requires zero margins.', default: 'PdfMargin() (0 each, like Playwright)' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.default.', default: 'null' },
+    pageRanges: { type: 'String', description: 'For example "1-3, 5". CDP only.', default: '""' },
+  }}
+/>
+
+### `ScriptTagOptions` and `StyleTagOptions`
+
+<TypeTable
+  type={{
+    url: { type: 'String?', description: 'External script or stylesheet URL. One of url or content is required.', default: 'null' },
+    content: { type: 'String?', description: 'Inline source.', default: 'null' },
+    type: { type: 'String', description: 'ScriptTagOptions only: the script type.', default: '"text/javascript"' },
+    id: { type: 'String', description: 'Element id; generated when empty.', default: '""' },
+    async: { type: 'Boolean', description: 'ScriptTagOptions only.', default: 'false' },
+    defer: { type: 'Boolean', description: 'ScriptTagOptions only.', default: 'false' },
+  }}
+/>
+
+### `SnapshotOptions`
+
+<TypeTable
+  type={{
+    interactive: { type: 'Boolean', description: 'agent-browser -i: only interactive elements.', default: 'false' },
+    compact: { type: 'Boolean', description: 'agent-browser -c: drop empty structural nodes.', default: 'false' },
+    maxDepth: { type: 'Int?', description: 'agent-browser -d: limit tree depth.', default: 'null' },
+    selector: { type: 'String?', description: 'agent-browser -s: snapshot only this subtree.', default: 'null' },
+    cursor: { type: 'Boolean', description: 'agent-browser -C: also include elements only interactive through cursor: pointer or onclick.', default: 'false' },
+    includeHidden: { type: 'Boolean', description: 'Include elements hidden from assistive technology.', default: 'false' },
+  }}
+/>
+
+`SnapshotDiffResult(unifiedDiff, additions, removals, unchanged, changed)`.
+
+### `ReadOptions`
+
+<TypeTable
+  type={{
+    raw: { type: 'Boolean', description: 'Return the response body as is, without HTML-to-text conversion or Markdown discovery.', default: 'false' },
+    requireMarkdown: { type: 'Boolean', description: 'Fail unless a text/markdown document is found.', default: 'false' },
+    llms: { type: 'LlmsReadMode?', description: 'Index reads llms.txt, Full reads llms-full.txt, from the nearest ancestor URL.', default: 'null' },
+    outline: { type: 'Boolean', description: 'Return a heading outline.', default: 'false' },
+    filter: { type: 'String?', description: 'Keep only matching sections.', default: 'null' },
+    timeoutMs: { type: 'Long', description: 'Whole-read timeout. Not tied to TimeoutConfig.', default: '10_000' },
+    headers: { type: 'Map<String, String>', description: 'Extra request headers (names must be unique, case-insensitively).', default: 'emptyMap()' },
+    allowedDomains: { type: 'Set<String>', description: 'Hosts the reader may contact, including redirects. Empty allows all.', default: 'emptySet()' },
+    maxBytes: { type: 'Int', description: 'Body budget, 1 byte to 16 MiB.', default: '2 MiB' },
+    caCertificatePath: { type: 'String?', description: 'Extra trusted CA certificates (PEM; on the JVM also a single DER certificate).', default: 'null' },
+    useSystemCa: { type: 'Boolean', description: 'Also trust the system CAs. false requires caCertificatePath.', default: 'true' },
+  }}
+/>
+
+`ReadResult(url, finalUrl, status, contentType, source, truncated, content, headers)`. `HttpReader(config).read(url, options)` does the same without a page and without browser cookies.
+
+### `WebVitalsOptions`
+
+<TypeTable
+  type={{
+    url: { type: 'String?', description: 'Navigate here first and measure the new document.', default: 'null' },
+    reload: { type: 'Boolean', description: 'When url is null, reload the page to measure from the start.', default: 'true' },
+    settleMs: { type: 'Long', description: 'Time to observe after loading.', default: '3_000' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.default.', default: 'null' },
+  }}
+/>
+
+### `AccessibilityAuditOptions`
+
+<TypeTable
+  type={{
+    tags: { type: 'Set<String>', description: 'axe rule tags such as wcag2a or wcag2aa. Empty runs all enabled rules.', default: 'emptySet()' },
+    selector: { type: 'String?', description: 'Audit only this subtree.', default: 'null' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.default.', default: 'null' },
+    maxNodesPerRule: { type: 'Int', description: 'Nodes reported per rule.', default: '10' },
+  }}
+/>
+
+### `ScreencastOptions`
+
+<TypeTable
+  type={{
+    maxFps: { type: 'Int', description: '1..60. Limits delivery; Chrome only emits changed frames.', default: '30' },
+    quality: { type: 'Int', description: 'JPEG quality 0..100.', default: '80' },
+    maxWidth: { type: 'Int', description: '1..8192.', default: '1920' },
+    maxHeight: { type: 'Int', description: '1..8192.', default: '1080' },
+  }}
+/>
+
+### `StorageStateAutosaveOptions`
+
+<TypeTable
+  type={{
+    path: { type: 'String', description: 'File to write. Must not be blank.', required: true },
+    password: { type: 'String?', description: 'Encrypts the file. Required argument: pass null explicitly for plaintext. Must not be blank.', required: true },
+    intervalMs: { type: 'Long', description: '1 second to 1 day.', default: '30_000' },
+  }}
+/>
+
+### `TracingOptions`
+
+<TypeTable
+  type={{
+    categories: { type: 'String', description: 'Comma-separated trace categories.', default: '"blink,devtools.timeline,v8,benchmark"' },
+    screenshots: { type: 'Boolean', description: 'Include screenshots in the trace.', default: 'false' },
+    path: { type: 'String?', description: 'Also write the trace to this file on stop. Requires KmpwrightConfig.enableTraceExport.', default: 'null' },
+  }}
+/>
+
+### `RecordingOptions`
+
+<TypeTable
+  type={{
+    path: { type: 'String', description: 'Output file; needs an extension such as .mp4 or .webm.', required: true },
+    fps: { type: 'Int', description: '1..60.', default: '30' },
+    quality: { type: 'Int', description: 'JPEG quality of captured frames, 0..100.', default: '85' },
+    maxWidth: { type: 'Int', description: '2..4096.', default: '1920' },
+    maxHeight: { type: 'Int', description: '2..4096.', default: '1080' },
+    cursor: { type: 'Boolean', description: 'Draw the pointer.', default: 'true' },
+    contactSheetPath: { type: 'String?', description: 'Also write a contact sheet image.', default: 'null' },
+    contactSheetThreshold: { type: 'Double', description: '0..1 change threshold for contact sheet frames.', default: '0.05' },
+    maxContactSheetFrames: { type: 'Int', description: '1..100.', default: '100' },
+    overwrite: { type: 'Boolean', description: 'Replace an existing output file.', default: 'false' },
+    ffmpegExecutable: { type: 'String', description: 'ffmpeg binary to run.', default: '"ffmpeg"' },
+  }}
+/>
+
+### Emulation values
+
+| Type | Fields and presets |
+|---|---|
+| `Geolocation` | `latitude` (-90..90), `longitude` (-180..180), `accuracy = 0.0` |
+| `NetworkConditions` | `offline = false`, `latencyMs = 0`, `downloadThroughput = 0`, `uploadThroughput = 0` (bytes per second, 0 = unthrottled). Presets `Slow3G`, `Fast3G`, `Offline`. |
+| `HttpCredentials` | `username`, `password` (masked in `toString()`) |
+| `DeviceDescriptor` | `name`, `viewport: Viewport`, `userAgent`. Presets in `Devices`. |
+| `ViewportSize` | `width`, `height` |
+
+### Other options
+
+| Type | Fields |
+|---|---|
+| `AuthLoginOptions` | `navigate = true` (go to the profile URL first; false fills the open document), `submit = true` |
+| `DiffOptions` | `threshold = 0.1`, `generateDiffImage = true` |

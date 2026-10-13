@@ -1,0 +1,22 @@
+{
+  "title": "KMPwright",
+  "pages": [
+    "---Get started---",
+    "index",
+    "installation",
+    "quick-start",
+    "sample-app",
+    "coming-from-playwright",
+    "coming-from-agent-browser",
+    "---Agents---",
+    "...agents",
+    "---Guides---",
+    "...guides",
+    "---Platforms---",
+    "...platforms",
+    "---Reference---",
+    "...reference",
+    "security",
+    "changelog"
+  ]
+}

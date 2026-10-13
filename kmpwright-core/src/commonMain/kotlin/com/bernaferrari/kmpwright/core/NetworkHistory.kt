@@ -2,30 +2,65 @@ package com.bernaferrari.kmpwright.core
 
 import kotlinx.atomicfu.atomic
 import kotlinx.serialization.Serializable
+import kotlin.coroutines.cancellation.CancellationException
 
+/** Lifecycle of a recorded request. */
 @Serializable
-enum class NetworkRequestState { Pending, Finished, Failed }
+public enum class NetworkRequestState { Pending, Finished, Failed }
 
-/** A stable history ID identifies one redirect hop, rather than a reused protocol ID. */
+/** A recorded request; the stable [id] identifies one redirect hop rather than a reused protocol id. */
 @Serializable
-data class NetworkRequestRecord(val id: Long, val request: Request, val response: Response? = null,
+public data class NetworkRequestRecord(val id: Long, val request: Request, val response: Response? = null,
     val state: NetworkRequestState = NetworkRequestState.Pending, val error: String? = null,
     val finishedAt: Long? = null)
 
+/** A response body read with [NetworkHistory.responseBody]. */
 @Serializable
-data class NetworkResponseBody(val content: String, val base64Encoded: Boolean = false, val truncated: Boolean = false)
+public data class NetworkResponseBody(val content: String, val base64Encoded: Boolean = false, val truncated: Boolean = false)
 
-/** Metadata is collected from page attachment, across navigations, with bounded retention. */
-interface NetworkHistory {
-    fun requests(filter: String? = null, limit: Int = 100): List<NetworkRequestRecord>
-    fun detail(id: Long): NetworkRequestRecord?
-    suspend fun responseBody(id: Long, maxBytes: Int = 1024 * 1024): NetworkResponseBody
-    fun clear()
+/**
+ * Request history of a page (agent-browser `network requests`), collected from page attachment across
+ * navigations with bounded retention, plus HAR capture (agent-browser `network har start|stop`).
+ */
+public interface NetworkHistory {
+    /** Newest-first requests whose URL contains [filter] or whose method equals it. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class)
+    public fun requests(filter: String? = null, limit: Int = 100): List<NetworkRequestRecord>
+
+    /** The record with history [id], or null when it is no longer retained. */
+    public fun detail(id: Long): NetworkRequestRecord?
+
+    /** Reads the response body of a finished request by its history [NetworkRequestRecord.id]. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun responseBody(id: Long, maxBytes: Int = 1024 * 1024): NetworkResponseBody
+
+    /**
+     * Reads the body of [response] (for example one returned by `waitForResponse`): it resolves the
+     * newest retained record whose request id equals [Response.id]. [Response.body] is the shortcut.
+     */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun responseBody(response: Response, maxBytes: Int = 1024 * 1024): NetworkResponseBody
+
+    /** Forgets every recorded request. */
+    public fun clear()
+
+    /** Starts recording a HAR archive of later requests. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun startHar()
+
+    /** Stops HAR recording and returns the HAR JSON. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun stopHar(): String
 }
 
 internal class PageNetworkHistory(private val readBody: suspend (String, Int) -> NetworkResponseBody,
-    private val checkRead: suspend () -> Unit, private val capacity: Int = 500,
+    private val checkRead: suspend () -> Unit,
+    private val harStart: suspend () -> Unit = { throw KmpwrightUnsupportedException("HAR capture is unavailable on this backend") },
+    private val harStop: suspend () -> String = { throw KmpwrightUnsupportedException("HAR capture is unavailable on this backend") },
+    private val capacity: Int = 500,
     private val byteBudget: Int = 4 * 1024 * 1024) : NetworkHistory {
+    override suspend fun startHar() = harStart()
+    override suspend fun stopHar(): String = harStop()
     private data class State(val nextId: Long = 1, val records: List<NetworkRequestRecord> = emptyList())
     private val state = atomic(State())
     init { require(capacity > 0 && byteBudget > 0) }
@@ -50,19 +85,23 @@ internal class PageNetworkHistory(private val readBody: suspend (String, Int) ->
         }
         return readBody(record.request.id, maxBytes)
     }
+    override suspend fun responseBody(response: Response, maxBytes: Int): NetworkResponseBody {
+        val record = state.value.records.lastOrNull { it.request.id == response.id }
+            ?: throw KmpwrightException("The request for response ${response.url} is no longer retained")
+        return responseBody(record.id, maxBytes)
+    }
     override fun clear() = update { it.copy(records = emptyList()) }
     fun started(request: Request) = update { current ->
         val bounded = request.copy(url = boundedUtf8(request.url, 8192),
             method = boundedUtf8(request.method, 32), resourceType = boundedUtf8(request.resourceType, 64),
             id = boundedUtf8(request.id, 256),
-            headers = boundHeaders(request.headers), postData = request.postData?.let { boundedUtf8(it, 65536) },
-            postDataJSON = request.postDataJSON?.let { boundedUtf8(it, 65536) })
+            headers = boundHeaders(request.headers), postData = request.postData?.let { boundedUtf8(it, 65536) })
         val records = current.records + NetworkRequestRecord(current.nextId, bounded)
         current.copy(nextId = current.nextId + 1, records = trim(records))
     }
     fun received(response: Response) = modify(response.id) {
         it.copy(response = response.copy(url = boundedUtf8(response.url, 8192), headers = boundHeaders(response.headers),
-            body = null, statusText = response.statusText?.let { text -> boundedUtf8(text, 1024) }))
+            statusText = response.statusText?.let { text -> boundedUtf8(text, 1024) }))
     }
     fun finished(request: Request) = modify(request.id) {
         if (it.state == NetworkRequestState.Failed) it else it.copy(state = NetworkRequestState.Finished, finishedAt = currentTimeMillis())
@@ -92,7 +131,7 @@ internal class PageNetworkHistory(private val readBody: suspend (String, Int) ->
         return records.asReversed().take(capacity).takeWhile { record ->
             fun headers(values: Map<String, String>) = values.entries.sumOf { (it.key.length + it.value.length) * 3 }
             bytes += (record.request.url.length + record.request.postData.orEmpty().length +
-                record.request.postDataJSON.orEmpty().length + record.response?.url.orEmpty().length + record.error.orEmpty().length) * 3 +
+                record.response?.url.orEmpty().length + record.error.orEmpty().length) * 3 +
                 headers(record.request.headers) + headers(record.response?.headers.orEmpty()) + 512
             bytes <= byteBudget
         }.asReversed()

@@ -3,30 +3,41 @@ package com.bernaferrari.kmpwright.core
 import io.ktor.http.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
+import kotlin.coroutines.cancellation.CancellationException
 
+/** How `llms.txt` is used by [Page.read]. */
 @Serializable
-enum class LlmsReadMode { Index, Full }
+public enum class LlmsReadMode { Index, Full }
 
+/**
+ * Options for [Page.read] and [HttpReader.read]. [timeoutMs] null uses [TimeoutConfig.default] of
+ * the page's (or reader's) [KmpwrightConfig]. [caCertificatePath] (a PEM file trusted in addition
+ * to, or with [useSystemCa] = false instead of, the system roots) works on JVM, Android and iOS.
+ */
 @Serializable
-data class ReadOptions(val raw: Boolean = false, val requireMarkdown: Boolean = false,
+public data class ReadOptions(val raw: Boolean = false, val requireMarkdown: Boolean = false,
     val llms: LlmsReadMode? = null, val outline: Boolean = false, val filter: String? = null,
-    val timeoutMs: Long = 10_000, val headers: Map<String, String> = emptyMap(),
+    val timeoutMs: Long? = null, val headers: Map<String, String> = emptyMap(),
     val allowedDomains: Set<String> = emptySet(), val maxBytes: Int = 2 * 1024 * 1024,
     val caCertificatePath: String? = null, val useSystemCa: Boolean = true)
 
+/** Readable content fetched by [Page.read]. */
 @Serializable
-data class ReadResult(val url: String, val finalUrl: String, val status: Int?, val contentType: String,
+public data class ReadResult(val url: String, val finalUrl: String, val status: Int?, val contentType: String,
     val source: String, val truncated: Boolean, val content: String, val headers: Map<String, String> = emptyMap())
 
 /** HTTP reading works without launching a browser. It does not share browser cookies. */
-class HttpReader(private val config: KmpwrightConfig = KmpwrightConfig()) {
-    suspend fun read(url: String, options: ReadOptions = ReadOptions()): ReadResult = readChecked(url, options) {}
+public class HttpReader(private val config: KmpwrightConfig = KmpwrightConfig()) {
+    /** Fetches [url] and returns readable text. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun read(url: String, options: ReadOptions = ReadOptions()): ReadResult = readChecked(url, options) {}
 
     internal suspend fun readChecked(rawUrl: String, options: ReadOptions, inheritedCheck: suspend (String) -> Unit): ReadResult {
         if (!config.allowDomExtraction) throw KmpwrightException("HTTP content extraction is disabled by KmpwrightConfig.allowDomExtraction")
         validateOptions(options)
+        val timeoutMs = config.defaultTimeout(options.timeoutMs)
         val target = normalizeReaderUrl(rawUrl)
-        val client = withContext(Dispatchers.Default) { readerHttpClient(options.timeoutMs, options.caCertificatePath, options.useSystemCa) }
+        val client = withContext(Dispatchers.Default) { readerHttpClient(timeoutMs, options.caCertificatePath, options.useSystemCa) }
         val transport = ReaderTransport(client, options.headers, options.maxBytes) { candidate ->
             if (config.allowedOriginRules.isNotEmpty() && config.allowedOriginRules.none { originRuleMatches(it, candidate) }) {
                 throw KmpwrightException("HTTP read origin is not allowed: $candidate")
@@ -37,20 +48,20 @@ class HttpReader(private val config: KmpwrightConfig = KmpwrightConfig()) {
             inheritedCheck(candidate)
         }
         try {
-            return withTimeout(options.timeoutMs) { readDocument(target, options, transport) }
+            return withTimeout(timeoutMs) { readDocument(target, options, transport) }
         } catch (_: TimeoutCancellationException) {
             currentCoroutineContext().ensureActive()
-            throw KmpwrightException("Timeout reading HTTP content")
+            throw KmpwrightTimeoutException("Timeout reading HTTP content")
         } catch (error: CancellationException) { throw error }
         catch (error: Exception) {
             currentCoroutineContext().ensureActive()
-            if (isReaderTransportTimeout(error)) throw KmpwrightException("Timeout reading HTTP content")
+            if (isReaderTransportTimeout(error)) throw KmpwrightTimeoutException("Timeout reading HTTP content")
             throw error
         } finally { client.close() }
     }
 
     private fun validateOptions(options: ReadOptions) {
-        require(options.timeoutMs > 0) { "Read timeout must be positive" }
+        require(options.timeoutMs == null || options.timeoutMs > 0) { "Read timeout must be positive" }
         require(options.maxBytes in 1..16 * 1024 * 1024) { "Read body budget must be between 1 byte and 16 MiB" }
         require(options.headers.keys.map(String::lowercase).distinct().size == options.headers.size) { "Duplicate HTTP header names" }
     }

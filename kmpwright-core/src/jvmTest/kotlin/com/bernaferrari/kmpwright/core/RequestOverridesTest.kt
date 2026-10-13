@@ -14,7 +14,7 @@ class RequestOverridesTest {
             postData = "{\"ok\":true}"
         )
 
-        val override = request.applyContinueOptions(RouteAction.Continue(null, null, null, null))
+        val override = request.applyOverrides(RouteAction.Continue(null, null, null, null))
 
         assertEquals("https://example.com/data", override.url)
         assertEquals("POST", override.method)
@@ -31,7 +31,7 @@ class RequestOverridesTest {
             postData = null
         )
 
-        val override = request.applyContinueOptions(
+        val override = request.applyOverrides(
             RouteAction.Continue(
                 url = "https://example.com/next",
                 method = "PUT",

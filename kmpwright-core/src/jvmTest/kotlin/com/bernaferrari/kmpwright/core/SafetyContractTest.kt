@@ -37,7 +37,7 @@ class SafetyContractTest {
         )
         assertFailsWith<KmpwrightException> { page.goto("https://example.com") }
         assertFailsWith<KmpwrightException> { page.evaluate("1 + 1") }
-        assertFailsWith<KmpwrightException> { page.setCookie(Cookie("a", "b", "example.com")) }
+        assertFailsWith<KmpwrightException> { page.addCookies(listOf(Cookie("a", "b", "example.com"))) }
         assertFailsWith<KmpwrightException> { page.setContent("<p>unsafe</p>") }
         assertFailsWith<KmpwrightException> { page.addScriptTag(ScriptTagOptions(content = "1")) }
         assertFailsWith<KmpwrightException> { page.addStyleTag(StyleTagOptions(content = "body{}")) }
@@ -58,7 +58,7 @@ class SafetyContractTest {
         assertFailsWith<KmpwrightException> { page.goto("https://untrusted.example") }
         assertFailsWith<KmpwrightException> { page.evaluate("1 + 1") }
         assertFailsWith<KmpwrightException> { page.content() }
-        assertFailsWith<KmpwrightException> { page.accessibilitySnapshot() }
+        assertFailsWith<KmpwrightException> { page.snapshot() }
         Unit
     }
 

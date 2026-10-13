@@ -17,7 +17,7 @@ internal fun validateAndroidPdfOptions(options: PdfOptions) {
     listOf(options.margin.top, options.margin.bottom, options.margin.left, options.margin.right).forEach { pdfLengthInches(it) }
     if (options.displayHeaderFooter || options.headerTemplate.isNotEmpty() || options.footerTemplate.isNotEmpty() ||
         options.scale != 1.0 || !options.printBackground || options.pageRanges.isNotEmpty()) {
-        throw UnsupportedOperationException("Android PDF capture supports paper size, orientation and margins; print templates, scale, background suppression and page ranges are unavailable")
+        throw KmpwrightUnsupportedException("Android PDF capture supports paper size, orientation and margins; print templates, scale, background suppression and page ranges are unavailable")
     }
 }
 
@@ -46,10 +46,13 @@ internal suspend fun captureAndroidPdf(webView: WebView, options: PdfOptions): B
         webView.isHorizontalScrollBarEnabled = false
         // Native contentHeight rounds CSS units and can overstate the final
         // drawable pixels. Measure the renderer's clamped scroll extent.
-        capture.scrollForCapture(Int.MAX_VALUE / 2, Int.MAX_VALUE / 2)
+        capture.scrollToEndForCapture()
+        // The last viewport must start at a whole drawable pixel. Rounding
+        // a fractional maximum outward creates a phantom one-pixel tile.
+        val end = capture.scrollPixelsForCapture(roundDown = true)
         val bounded = dimensions.copy(
-            contentWidth = min(dimensions.contentWidth, webView.scrollX + dimensions.viewportWidth),
-            contentHeight = min(dimensions.contentHeight, webView.scrollY + dimensions.viewportHeight))
+            contentWidth = min(dimensions.contentWidth, end.first + dimensions.viewportWidth),
+            contentHeight = min(dimensions.contentHeight, end.second + dimensions.viewportHeight))
         val ratio = printableWidth / bounded.contentWidth
         val sourcePageHeight = (printableHeight / ratio).toInt().coerceAtLeast(1)
         val pageCount = ceil(bounded.contentHeight.toDouble() / sourcePageHeight).toInt()
@@ -68,11 +71,12 @@ internal suspend fun captureAndroidPdf(webView: WebView, options: PdfOptions): B
                         val y = documentY.coerceAtMost((bounded.contentHeight - dimensions.viewportHeight).coerceAtLeast(0))
                         capture.scrollForCapture(x, y)
                         val image = capture.captureViewport()
+                        val scroll = capture.scrollPixelsForCapture()
                         val bitmap = BitmapFactory.decodeByteArray(image.bytes, 0, image.bytes.size)
                             ?: throw KmpwrightException("PDF tile decode failed")
                         try {
-                            val sourceX = documentX - webView.scrollX
-                            val sourceY = documentY - webView.scrollY
+                            val sourceX = documentX - scroll.first
+                            val sourceY = documentY - scroll.second
                             val width = min(bitmap.width - sourceX, bounded.contentWidth - documentX)
                             val height = min(bitmap.height - sourceY, pageEnd - documentY)
                             if (sourceX < 0 || sourceY < 0 || width <= 0 || height <= 0) throw KmpwrightException("PDF tile is outside the rendered viewport: document=($documentX,$documentY), scroll=(${webView.scrollX},${webView.scrollY}), bitmap=${bitmap.width}x${bitmap.height}, dimensions=$dimensions")

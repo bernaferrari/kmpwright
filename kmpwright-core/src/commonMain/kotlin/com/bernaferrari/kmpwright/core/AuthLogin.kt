@@ -6,8 +6,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /** Navigate defaults to the saved profile URL; false fills the already-open login document. */
-data class AuthLoginOptions(val navigate: Boolean = true, val submit: Boolean = true)
-data class AuthLoginResult(val url: String, val submitted: Boolean)
+public data class AuthLoginOptions(val navigate: Boolean = true, val submit: Boolean = true)
+/** Outcome of [Page.login]; `submitted` does not prove the login succeeded. */
+public data class AuthLoginResult(val url: String, val submitted: Boolean)
 
 /**
  * Fill configured controls or discover usable controls within the password form. Credential entry
@@ -71,10 +72,10 @@ internal suspend fun Page.loginWithProfile(profile: AuthProfile, options: AuthLo
             if (submit && (submit.form!==form || submit.formAction!==submitAction ||
                 (submit.hasAttribute('formaction') && new URL(submit.formAction,initialUrl).origin!==location.origin))) throw new Error('Auth submit destination changed or has a foreign origin');
           }
-          var setValue=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
+          ${NATIVE_VALUE_SETTER_JS}
           function fill(el,value) {
             unchanged(); el.focus(); unchanged();
-            setValue.call(el,value);
+            kmpwrightSetNativeValue(el,value);
             el.dispatchEvent(new Event('input',{bubbles:true}));
             el.dispatchEvent(new Event('change',{bubbles:true}));
           }
@@ -90,3 +91,19 @@ internal suspend fun Page.loginWithProfile(profile: AuthProfile, options: AuthLo
     return AuthLoginResult(parsed.getValue("url").jsonPrimitive.content,
         parsed["submitted"]?.jsonPrimitive?.booleanOrNull == true)
 }
+
+/**
+ * Declares `kmpwrightSetNativeValue(el, value)`, which writes through the *prototype* `value` setter of
+ * the element's class. Frameworks such as React install their own instance-level value setter to track
+ * changes; writing through the prototype setter (then dispatching `input`) is how a real edit looks to
+ * them. Shared by the page runtime ([PageHelpers]) and credential login.
+ */
+internal const val NATIVE_VALUE_SETTER_JS: String = """
+function kmpwrightSetNativeValue(el, value) {
+  var view = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+  var proto = el.tagName === 'TEXTAREA' ? view.HTMLTextAreaElement.prototype
+    : el.tagName === 'SELECT' ? view.HTMLSelectElement.prototype : view.HTMLInputElement.prototype;
+  var descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+  if (descriptor && descriptor.set) descriptor.set.call(el, value); else el.value = value;
+}
+"""

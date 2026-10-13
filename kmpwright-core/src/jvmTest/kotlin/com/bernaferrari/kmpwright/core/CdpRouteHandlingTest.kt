@@ -22,8 +22,7 @@ class CdpRouteHandlingTest {
         val controller = CdpWebViewController(transport)
 
         controller.addRouteHandler("https://example.com/api/.*") { route ->
-            route.fulfill(FulfillOptions(status = 202, body = "ok", contentType = "text/plain"))
-            RouteHandler.Fallthrough
+            route.fulfill(status = 202, body = "ok", contentType = "text/plain")
         }
         eventually {
             transport.sendCalls.any { it.method == CdpMethods.FETCH_ENABLE }
@@ -59,7 +58,7 @@ class CdpRouteHandlingTest {
         val transport = FakeCdpEventTransport()
         val controller = CdpWebViewController(transport)
 
-        controller.addRouteHandler("https://example.com/private/.*") { RouteHandler.Abort("aborted") }
+        controller.addRouteHandler("https://example.com/private/.*") { it.abort("aborted") }
         eventually {
             transport.sendCalls.any { it.method == CdpMethods.FETCH_ENABLE }
         }
@@ -74,7 +73,7 @@ class CdpRouteHandlingTest {
         val controller = CdpWebViewController(transport)
         controller.setDomainFilterAsync(setOf("allowed.example"))
         controller.addRouteHandler("https://blocked.example/.*") {
-            RouteHandler.Fulfill(FulfillOptions(status = 200, body = "should not route"))
+            it.fulfill(status = 200, body = "should not route")
         }
 
         transport.listeners["Fetch.requestPaused"]!!.invoke(
@@ -151,7 +150,7 @@ class CdpRouteHandlingTest {
         try {
             controller.setDomainFilterAsync(setOf("allowed.example"))
             controller.addRouteHandler("https://allowed.example/api/.*") {
-                RouteHandler.Continue(ContinueOptions(url = "https://blocked.example/escape"))
+                it.resume(url = "https://blocked.example/escape")
             }
             transport.listeners["Fetch.requestPaused"]!!.invoke(
                 JsonObject(

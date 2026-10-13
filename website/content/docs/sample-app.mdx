@@ -1,0 +1,130 @@
+---
+title: Sample app
+description: The Compose Multiplatform sample puts an agent console, runnable recipes and an inspector next to a live WebView on Android and iOS.
+---
+
+The repository ships one shared sample app, written once in Compose Multiplatform and hosted on Android and iOS. It drives a real `WebView`/`WKWebView` with KMPwright while you watch, so you can try selectors, commands and recipes without writing a test harness.
+
+<Files>
+  <Folder name="kmpwright-example-shared" defaultOpen>
+    <File name="commonMain: the whole UI, recipes and demo pages" />
+    <File name="androidMain: WebView host" />
+    <File name="iosMain: WKWebView host and the native-shell bridge" />
+  </Folder>
+  <Folder name="example-android">
+    <File name="MainActivity.kt: setContent { KmpwrightExampleApp() }" />
+  </Folder>
+  <Folder name="example-ios">
+    <File name="KmpwrightExampleApp.swift: SwiftUI host" />
+  </Folder>
+</Files>
+
+## Run it
+
+Requirements: JDK 17, the Android SDK for Android, macOS with Xcode for iOS. Run commands from the repository root.
+
+<Tabs items={['Android', 'iOS']}>
+<Tab value="Android">
+
+Install on a connected device or emulator (API 26+):
+
+```bash
+./gradlew :example-android:installDebug
+```
+
+The app enables `WebView.setWebContentsDebuggingEnabled(true)`, so you can also attach `chrome://inspect` to the automated page.
+
+</Tab>
+<Tab value="iOS">
+
+Build the shared framework, then open the Xcode host:
+
+```bash
+./gradlew :kmpwright-example-shared:linkDebugFrameworkIosSim
+open example-ios/KmpwrightExampleApp.xcodeproj
+```
+
+Run the `KmpwrightExampleApp` scheme on an arm64 simulator. The Xcode build phase relinks the framework on each build. For an optimized framework, run `./gradlew :kmpwright-example-shared:linkReleaseFrameworkIosSim`.
+
+</Tab>
+</Tabs>
+
+## What is on screen
+
+The app has a live browser and three screens: **Agent**, **Recipes** and **Inspect**. They all share one `Browser` and one page, so whatever you do on one screen is visible on the others. Page operations are serialized, so the console, a running recipe and the ref overlay never interleave actions on the same WebView.
+
+On launch the app loads a bundled playground page (a docs search box, a sign-up form and a counter) and takes an interactive snapshot.
+
+### Agent
+
+An agent console for the [`runCommand`](/docs/coming-from-agent-browser) grammar. Type a command such as `open en.wikipedia.org/wiki/Kotlin`, `snapshot -i`, `click @e3` or `fill @e2 "hello"`; each entry shows the command, its text output, how long it took, and, for `screenshot`, the captured image. Suggestion chips run common commands (`snapshot -i`, `get title`, `scroll down`, `screenshot`, `help`) or prefill ones that need a ref. Typing `clear` empties the console.
+
+This is the same loop an LLM runs: snapshot, read refs, act on a ref.
+
+### Live ref badges
+
+After every snapshot and every command that can change the page, the app takes a fresh interactive snapshot and draws a badge with each `@e` ref over its element in the live page.
+
+- **Tap a badge** to run `click @eN`.
+- **Long-press a badge** to switch to the Agent screen with a command prefilled: `fill @eN ""` for text boxes, search boxes and combo boxes, `click @eN` for everything else.
+- Badges follow the page when it scrolls. A toggle in the browser toolbar shows or hides them.
+
+The badges are built from public APIs only: `page.snapshot(SnapshotOptions(interactive = true))` for the refs, then `page.locator(ref).boundingBox()` for each position.
+
+### Recipes
+
+Runnable scripts, each showing the Kotlin code it executes and a step timeline that marks every step as pending, running, done or failed, with its output (text or a screenshot). The recipes cover:
+
+| Recipe | What it shows |
+| --- | --- |
+| Agent loop | `runCommand("snapshot -i")`, then acting on a ref |
+| Click and assert | `locator`, `click`, `expect(...).toHaveText` |
+| Fill a form | `fill`, `selectOption`, `check`, waiting for the result |
+| Type like a person | `pressSequentially` with a delay between keys |
+| Full-page screenshot | `ScreenshotOptions(fullPage = true)` |
+| Mock the network | `page.route` answering an API call from Kotlin |
+| Save and restore a session | `storageState()` and `setStorageState()` |
+| Read for an LLM | `page.read` (HTTP fetch as Markdown) |
+| Accessibility audit | `accessibilityAudit()` with axe-core |
+
+The code shown for each recipe is kept identical to what its steps run, so you can copy it.
+
+### Inspect
+
+Tabs for the page's console messages (`page.consoleMessages()`), recorded network requests (`page.network.requests()`), storage (cookies, `localStorage` and `sessionStorage`), and an accessibility audit (A11y).
+
+## Adaptive layout
+
+- **Phones:** the browser sits above the active screen with a drag handle between them to resize the split. A bottom navigation bar switches screens.
+- **Tablets and unfolded foldables** (840 dp wide and up): a navigation rail, the active screen as a side panel, and the browser filling the rest.
+
+The same `WebView` instance moves between layouts when the window size changes; it is not recreated.
+
+## iOS navigation
+
+| iOS version | Navigation |
+| --- | --- |
+| 26 and later | Native SwiftUI `TabView` and `NavigationStack`, so the system draws the Liquid Glass tab bar and navigation bar. Compose renders each screen. |
+| 15 to 25 | Compose draws everything, navigation included. |
+
+On iOS 26, a Kotlin `NativeStudio` object owns the single `WKWebView`, `Browser` and page shared by every tab. Swift asks it for a Compose view controller per tab (`tabViewController(tab:)`) and per pushed recipe (`recipeViewController(id:)`); each screen reports `screenDidAppear(key:)` and the visible screen adopts the shared `WKWebView`, so the page you are driving follows you between tabs. Compose sends navigation back to Swift through `onSelectTab` and `onOpenRecipe` callbacks.
+
+## How the sample wires KMPwright
+
+The integration is small and is a good template for your own app:
+
+1. Each platform creates a `PlatformContext` around one WebView. On Android that is a `WebView` with JavaScript and DOM storage enabled, file and content access disabled, and mixed content blocked, wrapped in `AndroidPlatformContext(context, webView)`.
+2. Shared code creates `Browser(platformContext)` and uses `browser.page()`.
+3. When the screen leaves composition, it calls `browser.dispose()` (the non-suspending teardown) and destroys the WebView.
+
+```kotlin
+val state = remember(platformContext) { StudioState(Browser(platformContext), scope) }
+DisposableEffect(state) {
+    onDispose {
+        state.close()                      // calls browser.dispose()
+        disposePlatformContext(platformContext)
+    }
+}
+```
+
+See [`kmpwright-example-shared/src/commonMain`](https://github.com/bernaferrari/kmpwright/tree/main/kmpwright-example-shared/src/commonMain) for the full source.

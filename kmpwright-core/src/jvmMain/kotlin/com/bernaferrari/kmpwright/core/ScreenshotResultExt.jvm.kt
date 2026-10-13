@@ -4,7 +4,7 @@ import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import javax.imageio.ImageIO
 
-actual fun ScreenshotResult.toRgbaImage(): RgbaImage? {
+public actual fun ScreenshotResult.toRgbaImage(): RgbaImage? {
     if (bytes.isEmpty()) return null
     return try {
         val image = ImageIO.read(ByteArrayInputStream(bytes)) ?: return null

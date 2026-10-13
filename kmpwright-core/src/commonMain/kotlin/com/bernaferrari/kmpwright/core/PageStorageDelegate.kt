@@ -1,67 +1,50 @@
 package com.bernaferrari.kmpwright.core
 
-/**
- * Delegate for localStorage and sessionStorage operations.
- * Extracted from BasePage to reduce class size and improve testability.
- */
-internal class PageStorageDelegate(
-    private val evalString: suspend (String) -> String?
-) {
-    suspend fun setLocalStorage(key: String, value: String) {
-        val escapedKey = escapeJsString(key)
-        val escapedValue = escapeJsString(value)
-        evalString("localStorage.setItem('$escapedKey', '$escapedValue');")
+/** `localStorage` / `sessionStorage` of the current document, evaluated through the page. */
+internal class PageWebStorage(
+    private val area: String,
+    private val evalString: suspend (String) -> String?,
+    private val checkPolicy: suspend (ActionType) -> Unit
+) : WebStorage {
+    override suspend fun get(key: String): String? {
+        checkPolicy(ActionType.ReadContent)
+        return evalString("$area.getItem(${jsStringLiteral(key)});")
     }
 
-    suspend fun getLocalStorage(key: String): String? {
-        val escapedKey = escapeJsString(key)
-        return evalString("localStorage.getItem('$escapedKey');")
+    override suspend fun set(key: String, value: String) {
+        checkPolicy(ActionType.Storage)
+        evalString("$area.setItem(${jsStringLiteral(key)}, ${jsStringLiteral(value)});")
     }
 
-    suspend fun removeLocalStorage(key: String) {
-        val escapedKey = escapeJsString(key)
-        evalString("localStorage.removeItem('$escapedKey');")
+    override suspend fun remove(key: String) {
+        checkPolicy(ActionType.Storage)
+        evalString("$area.removeItem(${jsStringLiteral(key)});")
     }
 
-    suspend fun getAllLocalStorage(): Map<String, String> {
-        val raw = evalString("(function() { var items = {}; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); items[k] = localStorage.getItem(k); } return JSON.stringify(items); })()") ?: return emptyMap()
+    override suspend fun clear() {
+        checkPolicy(ActionType.Storage)
+        evalString("$area.clear();")
+    }
+
+    override suspend fun entries(): Map<String, String> {
+        checkPolicy(ActionType.ReadContent)
+        return readEntries()
+    }
+
+    /** Entries without a policy check, for state capture that already checked. */
+    suspend fun readEntries(): Map<String, String> {
+        val raw = evalString("(function() { var items = {}; for (var i = 0; i < $area.length; i++) { var k = $area.key(i); items[k] = $area.getItem(k); } return JSON.stringify(items); })()")
+            ?: return emptyMap()
         return try {
             kotlinx.serialization.json.Json.decodeFromString<Map<String, String>>(raw)
         } catch (e: Exception) {
-            emptyMap()
+            throw KmpwrightException("Could not decode $area entries", e)
         }
     }
 
-    suspend fun clearLocalStorage() {
-        evalString("localStorage.clear();")
-    }
-
-    suspend fun setSessionStorage(key: String, value: String) {
-        val escapedKey = escapeJsString(key)
-        val escapedValue = escapeJsString(value)
-        evalString("sessionStorage.setItem('$escapedKey', '$escapedValue');")
-    }
-
-    suspend fun getSessionStorage(key: String): String? {
-        val escapedKey = escapeJsString(key)
-        return evalString("sessionStorage.getItem('$escapedKey');")
-    }
-
-    suspend fun removeSessionStorage(key: String) {
-        val escapedKey = escapeJsString(key)
-        evalString("sessionStorage.removeItem('$escapedKey');")
-    }
-
-    suspend fun getAllSessionStorage(): Map<String, String> {
-        val raw = evalString("(function() { var items = {}; for (var i = 0; i < sessionStorage.length; i++) { var k = sessionStorage.key(i); items[k] = sessionStorage.getItem(k); } return JSON.stringify(items); })()") ?: return emptyMap()
-        return try {
-            kotlinx.serialization.json.Json.decodeFromString<Map<String, String>>(raw)
-        } catch (e: Exception) {
-            emptyMap()
-        }
-    }
-
-    suspend fun clearSessionStorage() {
-        evalString("sessionStorage.clear();")
+    /** Replaces every entry without a policy check (state restore). */
+    suspend fun replaceAll(entries: Map<String, String>) {
+        evalString("$area.clear();")
+        for ((key, value) in entries) evalString("$area.setItem(${jsStringLiteral(key)}, ${jsStringLiteral(value)});")
     }
 }

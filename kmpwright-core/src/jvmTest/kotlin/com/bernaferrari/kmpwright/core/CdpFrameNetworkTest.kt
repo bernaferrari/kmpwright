@@ -27,6 +27,8 @@ class CdpFrameNetworkTest {
                 transport.emit(session, "Network.responseReceived", """{"requestId":"same-id","response":{"url":"https://fixture.test/$session","status":200},"type":"Document","frameId":"frame"}""")
                 transport.emit(session, "Network.loadingFinished", """{"requestId":"same-id"}""")
             }
+            // Listener callbacks are delivered off the CDP event pump, in order.
+            withTimeout(3_000) { while (requests.size < 2 || finished.size < 2) delay(10) }
             assertEquals(2, requests.size)
             assertNotEquals(requests[0].id, requests[1].id)
             assertEquals(2, finished.size)

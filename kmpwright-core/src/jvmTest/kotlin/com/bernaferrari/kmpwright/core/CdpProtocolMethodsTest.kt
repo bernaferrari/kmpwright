@@ -35,11 +35,7 @@ class CdpProtocolMethodsTest {
     fun `fetch fulfill params encode string body and content type`() {
         val params = buildFetchFulfillParams(
             requestId = "req-1",
-            options = FulfillOptions(
-                status = 201,
-                body = """{"ok":true}""",
-                contentType = "application/json"
-            )
+            options = buildFulfillAction(201, emptyMap(), body = null, bodyBytes = null, contentType = null, json = """{"ok":true}""")
         )
 
         assertEquals("req-1", params["requestId"])
@@ -49,7 +45,7 @@ class CdpProtocolMethodsTest {
             params["body"]
         )
         assertEquals(
-            listOf(mapOf("name" to "Content-Type", "value" to "application/json")),
+            listOf(mapOf("name" to "content-type", "value" to "application/json"), mapOf("name" to "content-length", "value" to "11")),
             params["responseHeaders"]
         )
     }
@@ -58,7 +54,7 @@ class CdpProtocolMethodsTest {
     fun `fetch continue params omit nulls and encode post data`() {
         val params = buildFetchContinueParams(
             requestId = "req-2",
-            options = ContinueOptions(
+            options = RouteAction.Continue(
                 url = "https://example.com/next",
                 method = "POST",
                 headers = mapOf("X-Test" to "1"),
@@ -72,7 +68,7 @@ class CdpProtocolMethodsTest {
         assertEquals(listOf(mapOf("name" to "X-Test", "value" to "1")), params["headers"])
         assertEquals(Base64.getEncoder().encodeToString("hello".encodeToByteArray()), params["postData"])
 
-        val minimal = buildFetchContinueParams("req-3", ContinueOptions())
+        val minimal = buildFetchContinueParams("req-3", RouteAction.Continue(null, null, null, null))
         assertEquals(setOf("requestId"), minimal.keys)
         assertFalse(minimal.containsKey("headers"))
     }

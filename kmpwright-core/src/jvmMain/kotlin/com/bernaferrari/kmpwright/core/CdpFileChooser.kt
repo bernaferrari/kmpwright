@@ -9,7 +9,8 @@ import java.nio.file.Path
 
 /** Opaque, single-use chooser handles; root and explicitly resolved frame sessions share ownership. */
 internal class CdpFileChooser(private val transport: CdpEventTransport, private val rootSession: String?,
-    private val report: (FileChooserEvent) -> Unit) {
+    private val config: KmpwrightConfig = KmpwrightConfig(),
+    private val report: (handle: String, multiple: Boolean) -> Unit) {
     private data class Handle(val session: String?, val node: Long, val frame: String, val multiple: Boolean)
     private val lock = Any()
     private val mutex = Mutex()
@@ -53,7 +54,7 @@ internal class CdpFileChooser(private val transport: CdpEventTransport, private 
                     if (handles.size >= 64) handles.remove(handles.keys.first())
                     "chooser-$prefix-${++counter}".also { handles[it] = Handle(session, node, frame, multiple) }
                 }
-                report(FileChooserEvent(token, multiple))
+                report(token, multiple)
             },
             transport.onEvent("Page.frameNavigated", session) { params ->
                 val frame = params["frame"]?.jsonObject ?: return@onEvent
@@ -73,16 +74,14 @@ internal class CdpFileChooser(private val transport: CdpEventTransport, private 
         sessions[session] = subscriptions
     }
 
-    suspend fun setFiles(event: FileChooserEvent, files: List<String>): Unit = mutex.withLock {
+    suspend fun setFiles(token: String, files: List<String>): Unit = mutex.withLock {
         check(!closed) { "File chooser runtime is closed" }
-        val handle = synchronized(lock) { handles[event.element] }
+        val handle = synchronized(lock) { handles[token] }
             ?: throw KmpwrightException("File chooser handle is stale or belongs to another page")
         require(handle.multiple || files.size <= 1) { "This file chooser accepts one file" }
-        val paths = files.map { path -> Path.of(path).toAbsolutePath().normalize().also {
-            require(Files.isRegularFile(it)) { "Upload file does not exist: $path" }
-        }.toString() }
+        val paths = cdpUploadPaths(files, config)
         send(handle.session, "DOM.setFileInputFiles", mapOf("files" to paths, "backendNodeId" to handle.node))
-        synchronized(lock) { handles.remove(event.element) }
+        synchronized(lock) { handles.remove(token) }
     }
 
     suspend fun close() = withContext(NonCancellable) { mutex.withLock {
@@ -108,4 +107,17 @@ internal class CdpFileChooser(private val transport: CdpEventTransport, private 
         response.error?.let { throw KmpwrightException("$method: ${it.message}") }
         return response.result ?: JsonObject(emptyMap())
     }
+}
+
+/** One contract for locator and file-chooser uploads, including remote endpoints. */
+internal fun cdpUploadPaths(files: List<String>, config: KmpwrightConfig): List<String> {
+    if (files.isEmpty()) return emptyList()
+    val cdp = config.cdp
+    if (cdp != null && (cdp.websocketUrl != null || (cdp.provider != null && cdp.provider != CloudProvider.AutoConnect)) &&
+        !cdp.remoteBrowserSharesFileSystem) {
+        throw KmpwrightUnsupportedException("File uploads to a remote CDP browser need a shared filesystem. Set CdpConfig.remoteBrowserSharesFileSystem only when the browser can access the same paths; file transfer is unavailable.")
+    }
+    return files.map { path -> Path.of(path).toAbsolutePath().normalize().also {
+        require(Files.isRegularFile(it)) { "Upload file does not exist: $path" }
+    }.toString() }
 }

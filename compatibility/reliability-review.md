@@ -6,6 +6,9 @@ The external review supplied on 2026-10-11 is the repair specification. Earlier
 that the contracts below were correct. A checked item needs a regression at the
 behavioral boundary. Native host checks must be distinguished from mocks.
 
+The original checklist preserves the baseline review. The dated follow-up below
+records the latest repairs and their behavioral evidence.
+
 ## Core contracts
 
 - [ ] Locator identity: filters, indexed descendants, waits, assertions, boxes,
@@ -23,7 +26,7 @@ behavioral boundary. Native host checks must be distinguished from mocks.
 - [ ] JVM context pages share target/session initialization and rollback.
 - [ ] Live policies on existing/derived locators; eval/DOM extraction entry points
       and diffUrls obey the configured controls.
-- [ ] Independent browser-farm leases cannot inherit saved states, init scripts,
+- [ ] Independent browser-farm leases cannot inherit storage state, init scripts,
       jobs, policies or any origin's storage.
 - [ ] Routing replacement/removal, custom headers and OOPIF interception.
 - [ ] Callback errors and close/disconnect complete every pending operation.
@@ -72,3 +75,61 @@ Capture tile positioning also retains fractional CSS coordinates to reach the
 final physical pixels. The navigation and event tests now trigger navigation and
 assert the result, instead of waiting for timeouts and unconditionally passing. These results do
 not establish completion of the remaining review contracts or green CI.
+
+## Follow-up review repairs — 2026-10-13
+
+The ten findings from the latest review have been repaired:
+
+| Contract | Result | Regression boundary |
+| --- | --- | --- |
+| Strict frame owners | Ambiguous owners fail rather than selecting the first frame; scoped and nested frame paths retain their scope. | Real Chromium, hosted WKWebView, Android WebView |
+| Storage restore refusal | Cookie, storage, navigation and origin checks run before destructive mutation; confirmation callbacks run once per action. | Shared policy/controller contracts |
+| Context data clearing | JVM contexts retain visited origins after pages close and clear them through a temporary target in that context. | Real Chromium, including another context remaining untouched |
+| Closing pending waits | Closing a page promptly ends navigation and event waiters. | Coroutine lifetime contract |
+| Remote uploads | Both locator and chooser uploads require an explicit shared-filesystem opt-in for remote browsers; clearing remains available. | Locator and chooser contracts |
+| Keyboard cancellation | Mobile delayed key presses release keys in bounded, cancellation-safe cleanup. | Shared contract plus native Android and iOS documents |
+| Cancelled wheel events | iOS respects `preventDefault()` instead of scrolling anyway. | Hosted WKWebView |
+| Touch identity and cancellation | iOS gestures preserve identifiers and original targets, serialize gestures, and send cancellation on interruption. | Hosted WKWebView |
+| Closed browser/context creation | Mobile browsers and iOS contexts reject new pages after teardown; creation and teardown are ordered on the main thread. | Hosted WKWebView and Android WebView |
+| Route header replacement | Android continuation replaces the request header map, so omitted headers are removed. | Android WebView against a local HTTP server |
+
+Verification also exposed and repaired three wider correctness issues:
+
+- A CDP request that starts in a parent renderer and finishes in a child keeps
+  one logical identity, leaves the pending set, and reads its body from the
+  correct session. Protocol events and real cross-process frames exercise this.
+- Video encoding uses local monotonic frame-arrival times, and startup work does
+  not consume the normal encoder-lag budget. A distant capture timestamp no
+  longer freezes the recording; actual encoded contact sheets are checked.
+- Frame input retries preserve the ancestor blocker at the deadline and do not
+  send a click through it. The regression failed before this repair.
+
+Android PDF capture now reads renderer scroll positions and rounds the maximum
+extent inward; its focused emulator contract passes. Assertion mock fixtures
+were aligned with the executed text/value expressions, and a nested-frame
+fixture now waits safely for loading documents. Their assertions remain intact.
+
+Artifact verification additionally caught platform-only regex options in common
+metadata and architecture-dependent Foundation challenge constants in iOS
+metadata. The shared regex code now uses portable equivalents, and native
+challenge values use type-inferred numeric conversion. The independent Kotlin
+consumer explicitly compiles the new remote-upload configuration field.
+
+The landing page shows a runnable local form workflow, links to source setup,
+and retains alpha and platform limits. Installation starts with source builds;
+remote uploads and restore preflight are documented. The website has its own
+type, lint and production-build CI job.
+
+The complete JVM run passed 947 tests with zero failures, errors or skips,
+including real Chromium contracts. The website's locked dependency install,
+type checking, lint and production build also passed. Native and artifact
+consumer results are recorded in the final validation checkpoint.
+
+Final validation also passed all 85 iOS app-host tests, 56 bare simulator
+contracts, 67 Android instrumentation tests, ABI checking, Compose lint, Android
+example compilation and the shared iOS release framework. Local Maven
+publications compiled independent Kotlin/Android consumers; both arm64
+XCFramework slices, the deterministic archive/checksum and the artifact-only
+Swift consumer passed. The final JVM rerun after the metadata fixes again passed
+947 tests. Live vendor sessions and Linux NSS browser trust remain separate
+runtime verification limits; these local results do not claim a GitHub CI run.

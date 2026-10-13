@@ -6,7 +6,9 @@ val kmpwrightVersion = providers.gradleProperty("kmpwrightVersion").orElse("0.1.
 
 android {
     namespace = "io.github.bernaferrari.kmpwright.smoke"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
 
     defaultConfig {
         applicationId = "io.github.bernaferrari.kmpwright.smoke"

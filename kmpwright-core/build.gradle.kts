@@ -73,6 +73,14 @@ tasks.register("packageKmpwrightCoreReleaseXCFramework") {
 }
 
 kotlin {
+    // Every public declaration states its visibility; implementation types stay internal.
+    explicitApi()
+
+    // Public API dumps live in kmpwright-core/api; `checkKotlinAbi` fails on unreviewed changes
+    // (`updateKotlinAbi` regenerates them).
+    @OptIn(org.jetbrains.kotlin.gradle.dsl.abi.ExperimentalAbiValidation::class)
+    abiValidation()
+
     compilerOptions {
         freeCompilerArgs.add("-Xexpect-actual-classes")
     }
@@ -85,7 +93,9 @@ kotlin {
 
     android {
         namespace = "com.bernaferrari.kmpwright.core"
-        compileSdk = 37
+        compileSdk {
+            version = release(37) { minorApiLevel = 2 }
+        }
         minSdk = 26
         withHostTest { }
     }
@@ -184,6 +194,8 @@ kotlin {
             dependencies {
                 implementation(libs.junit)
                 implementation(libs.kotlinx.coroutines.test)
+                // AgentBrowserCompatibilityTest resolves manifest API refs by their Kotlin member names.
+                implementation(kotlin("reflect"))
             }
         }
 
@@ -226,4 +238,13 @@ kotlin {
             dependsOn(iosTest)
         }
     }
+}
+
+// WKWebView only executes documents inside an app bundle, so the bare test
+// executable Gradle launches cannot run the document contracts. Exclude them
+// here instead of letting them report passes they never ran; they run (with
+// every other iOS test) through scripts/run-ios-webkit-tests.sh. Convention:
+// iOS test classes named `*DocumentTest` require that app host.
+tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest>().configureEach {
+    filter.excludeTestsMatching("*DocumentTest")
 }

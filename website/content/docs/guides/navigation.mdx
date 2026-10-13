@@ -1,0 +1,339 @@
+---
+title: Navigation and waiting
+description: Load pages with goto, reload and history navigation, read the NavigationResult, and wait for URLs, load states, functions, text, selectors and page events without races.
+---
+
+```kotlin
+val result = page.goto("https://example.com/login")
+check(result.ok) { "Navigation failed: ${result.status} ${result.error}" }
+
+page.getByLabel("Email").fill("ada@example.com")
+page.getByLabel("Password").fill(password)
+
+// Subscribe to the URL change before clicking, so a fast redirect can't be missed.
+page.waitForURL("**/dashboard") {
+    getByRole("button", name = "Sign in").click()
+}
+
+expect(page).toHaveTitle(Regex("Dashboard"))
+```
+
+Every navigation and wait is a `suspend` function. A `timeoutMs` of `null` uses the matching default from [`TimeoutConfig`](/docs/reference/configuration): `navigation` for navigations, `waitForURL`, `waitForLoadState` and `waitForNavigation`; `default` for most other waits. All defaults are 30 000 ms.
+
+## goto
+
+```kotlin
+suspend fun goto(url: String, options: GotoOptions = GotoOptions()): NavigationResult
+```
+
+Navigates the main frame and suspends until the backend reports that the new document finished loading, then waits for `waitUntil`.
+
+<TypeTable
+  type={{
+    waitUntil: {
+      type: 'LoadState',
+      description: 'State to reach before returning. Load and DOMContentLoaded both return when the backend reports the load; NetworkIdle additionally waits for 500 ms without in-flight requests.',
+      default: 'LoadState.Load',
+    },
+    timeoutMs: {
+      type: 'Long?',
+      description: 'Total budget for the navigation and the waitUntil state. null uses TimeoutConfig.navigation.',
+      default: 'null',
+    },
+  }}
+/>
+
+```kotlin
+page.goto("https://example.com", GotoOptions(waitUntil = LoadState.NetworkIdle, timeoutMs = 15_000))
+```
+
+### NavigationResult
+
+<TypeTable
+  type={{
+    url: { type: 'String', description: 'The committed URL, after server redirects.' },
+    status: { type: 'Int', description: 'HTTP status of the main document; 0 when the navigation failed before a response (DNS, TLS, refused connection, blocked origin).' },
+    ok: { type: 'Boolean', description: 'true when status is in 200..399 and the origin was allowed.' },
+    error: { type: 'String?', description: 'Why the navigation failed, or null.', default: 'null' },
+  }}
+/>
+
+### Failures
+
+`goto` reports a failed load in the result instead of throwing:
+
+| Situation | Result |
+|---|---|
+| HTTP error page (404, 500, …) | Returns `ok = false`, `status` = the HTTP code. |
+| Network error (DNS, TLS, connection refused) | Returns `ok = false`, `status = 0`, `error` = the engine's message. |
+| Committed URL not allowed by `KmpwrightConfig.allowedOriginRules`, or a host blocked by [`setAllowedDomains`](/docs/guides/network) | Returns `ok = false` with an explanatory `error`. |
+| Requested URL not allowed by `KmpwrightConfig.allowedOriginRules` | Throws `KmpwrightException` before navigating. |
+| No load within the timeout | Throws `KmpwrightTimeoutException` (`Timeout 30000ms exceeded while navigating to "…"`). |
+
+Playwright differences: `page.goto` there throws on network errors, returns `Response?`, and `response.ok()` means 200–299. In KMPwright `goto` always returns a `NavigationResult` and `ok` covers 200–399.
+
+### HTTP status per backend
+
+| Backend | `status` |
+|---|---|
+| JVM (CDP) | The main document's real status, from `Network.responseReceived`. |
+| iOS (WKWebView) | The real status from the navigation response (`NSHTTPURLResponse.statusCode`). |
+| Android (WebView) | `200` for every successful load, including redirects and 2xx/3xx codes. 4xx and 5xx codes are reported exactly, through `onReceivedHttpError`. |
+
+On Android, use `ok` or `status >= 400` to detect errors; don't rely on distinguishing 200 from 204.
+
+## reload, goBack, goForward
+
+```kotlin
+suspend fun reload(options: ReloadOptions = ReloadOptions()): NavigationResult
+suspend fun goBack(options: HistoryNavigationOptions = HistoryNavigationOptions()): NavigationResult?
+suspend fun goForward(options: HistoryNavigationOptions = HistoryNavigationOptions()): NavigationResult?
+```
+
+`ReloadOptions` and `HistoryNavigationOptions` have the same fields as `GotoOptions`: `waitUntil: LoadState = LoadState.Load` and `timeoutMs: Long? = null` (`TimeoutConfig.navigation`).
+
+`goBack` and `goForward` return `null` when there is no history entry in that direction. Each backend's native history (`WebView.canGoBackOrForward`, `WKWebView.canGoBack`/`canGoForward`, CDP `Page.getNavigationHistory`) is checked first, so the `null` is immediate in the common case. When history can't be inspected, KMPwright starts the traversal and returns `null` if nothing changes within 750 ms.
+
+Traversals between entries of the same document (`pushState`, hash changes) return `NavigationResult(url, 200, true)` once `location.href` changes.
+
+```kotlin
+page.goto("https://example.com/a")
+page.goto("https://example.com/b")
+page.goBack()                       // back on /a
+page.goForward()                    // back on /b
+check(page.goForward() == null)     // nothing ahead
+```
+
+## pushState
+
+```kotlin
+suspend fun pushState(url: String, timeoutMs: Long? = null): NavigationResult
+```
+
+Client-side navigation without loading a new document (agent-browser `pushstate`). `url` is resolved against the current URL. If the page has a Next.js router (`window.next.router`), KMPwright calls `router.push(url)`; otherwise it calls `history.pushState` and dispatches `popstate` and `navigate` events so client routers react. It returns once `location.href` equals the target, with `NavigationResult(target, 200, true)`.
+
+`pushState` needs `KmpwrightConfig.allowEval` and throws `KmpwrightException` when the target isn't allowed by `allowedOriginRules`. It throws `KmpwrightTimeoutException` when the URL doesn't change in time (for example when a Next.js router cancels the navigation).
+
+## setContent
+
+```kotlin
+suspend fun setContent(html: String, options: SetContentOptions = SetContentOptions())
+```
+
+Replaces the document with `html` and waits for `waitUntil`. `SetContentOptions` has `waitUntil: LoadState = LoadState.Load` and `timeoutMs: Long? = null` (`TimeoutConfig.navigation`). Throws `KmpwrightException` when the content can't be loaded.
+
+```kotlin
+page.setContent("""<button onclick="this.textContent='Clicked'">Click</button>""")
+page.getByRole("button").click()
+expect(page.getByRole("button")).toHaveText("Clicked")
+```
+
+Use `page.content()` to read the current HTML.
+
+## Waiting
+
+| Function | Waits for | Default timeout | On timeout |
+|---|---|---|---|
+| `waitForURL(url)` | `location.href` to match, then `waitUntil` | `navigation` | Throws `KmpwrightTimeoutException` |
+| `waitForLoadState(state)` | The document to reach `state` | `navigation` | Throws `KmpwrightTimeoutException` |
+| `waitForNavigation(options)` | The next committed navigation | `navigation` | Returns `null` |
+| `waitForFunction(expression)` | `expression` to be truthy | `default` | Throws `KmpwrightTimeoutException` |
+| `waitForText(text)` | `text` in the page's visible text | `default` | Throws `KmpwrightTimeoutException` |
+| `waitForSelector(selector, state)` | An element to reach `state` | `waitForSelector` | Throws `KmpwrightTimeoutException` |
+| `waitForEvent(event, options)` | A page event by name | `default` | Returns `null` |
+| `waitForTimeout(ms)` | `ms` milliseconds | none | — |
+
+[`waitForRequest` and `waitForResponse`](/docs/guides/network) and `waitForDownload`/`waitForFileChooser` follow the same pattern; [`waitForDialog`](/docs/guides/dialogs-and-frames#waiting-for-a-dialog) is covered with dialogs.
+
+### waitForURL
+
+```kotlin
+suspend fun waitForURL(url: String, options: WaitForURLOptions = WaitForURLOptions())
+suspend fun waitForURL(url: Regex, options: WaitForURLOptions = WaitForURLOptions())
+suspend fun waitForURL(options: WaitForURLOptions = WaitForURLOptions(), predicate: (String) -> Boolean)
+```
+
+<TypeTable
+  type={{
+    waitUntil: { type: 'LoadState', description: 'State to wait for after the URL matches.', default: 'LoadState.Load' },
+    timeoutMs: { type: 'Long?', description: 'Budget for the URL match and waitUntil together. null uses TimeoutConfig.navigation.', default: 'null' },
+  }}
+/>
+
+- **String** is a glob matched against the whole URL: `*` matches within one path segment (no `/`), `**` matches anything, `?` matches one character. Without wildcards it must equal the URL exactly.
+- **Regex** is searched in the URL (`containsMatchIn`).
+- **Predicate** receives the URL string.
+
+The URL is read from the live `location.href`, so `pushState`, hash changes and client-side routing count. It returns immediately when the current URL already matches.
+
+```kotlin
+page.waitForURL("https://example.com/orders/*")
+page.waitForURL(Regex("/orders/\\d+$"))
+page.waitForURL { it.endsWith("#done") }
+```
+
+Playwright: same name and glob rules; Playwright's `waitUntil` also accepts `commit`, which KMPwright doesn't have.
+
+### waitForLoadState
+
+```kotlin
+suspend fun waitForLoadState(state: LoadState = LoadState.Load, timeoutMs: Long? = null)
+```
+
+Returns immediately when the state has already been reached:
+
+| `LoadState` | Reached when |
+|---|---|
+| `DOMContentLoaded` | `document.readyState` is `interactive` or `complete`. |
+| `Load` | `document.readyState` is `complete`. |
+| `NetworkIdle` | No request the backend tracks has been in flight for 500 ms. |
+
+On WebViews, `NetworkIdle` only sees requests KMPwright can observe; see the `networkHistory` [capability](/docs/platforms/capabilities) (`Partial` on Android and iOS).
+
+### waitForNavigation
+
+```kotlin
+suspend fun waitForNavigation(options: WaitForNavigationOptions = WaitForNavigationOptions()): NavigationResult?
+```
+
+<TypeTable
+  type={{
+    url: { type: 'String?', description: 'Only count navigations whose URL matches. A glob when it contains * or ?, otherwise a substring; prefix with regex: for a regular expression.', default: 'null' },
+    waitUntil: { type: 'LoadState?', description: 'Also wait for this state after the navigation commits. null does not wait further.', default: 'null' },
+    timeoutMs: { type: 'Long?', description: 'null uses TimeoutConfig.navigation.', default: 'null' },
+  }}
+/>
+
+Waits for the next navigation that finishes after the call starts; it returns `null` on timeout instead of throwing. It only sees new-document loads (including failed ones, returned with `ok = false`), not same-document changes such as `pushState` or client-side routing; use `waitForURL` for those. A navigation that has already finished is never seen, so prefer the [action-scoped form](#action-scoped-waits).
+
+### waitForFunction
+
+```kotlin
+suspend fun waitForFunction(expression: String, timeoutMs: Long? = null): JsResult
+```
+
+Polls `expression` until it is truthy, then evaluates it once more and returns the value as a [`JsResult`](/docs/reference/page). `expression` is a JavaScript expression, not a function: write `"window.ready === true"`, not `"() => window.ready"`. The condition is checked synchronously; an expression that returns a Promise counts as truthy immediately. Requires `KmpwrightConfig.allowEval`.
+
+```kotlin
+page.waitForFunction("window.__APP_READY__ === true")
+
+val heading = page.waitForFunction("document.querySelector('h1') && document.querySelector('h1').textContent")
+println(heading.value) // the heading text
+```
+
+### waitForText
+
+```kotlin
+suspend fun waitForText(text: String, timeoutMs: Long? = null)
+```
+
+Waits until `document.body.innerText` contains `text` (case-sensitive substring, main document only). agent-browser: `wait --text`.
+
+### waitForSelector
+
+```kotlin
+suspend fun Page.waitForSelector(selector: String, state: SelectorState = SelectorState.Visible, timeoutMs: Long? = null)
+```
+
+Same as `page.locator(selector).waitFor(state, timeoutMs)`. `SelectorState` is `Attached`, `Detached`, `Visible` or `Hidden`. It returns `Unit`; Playwright returns an element handle. Use a [locator](/docs/guides/locators) for the element afterwards.
+
+### waitForEvent
+
+```kotlin
+suspend fun waitForEvent(event: String, options: WaitForEventOptions = WaitForEventOptions()): Any?
+```
+
+Untyped wait by event name: `console`, `navigation`, `dialog`, `request`, `response`, `download`, `filechooser`, `domcontentloaded`, `load` or `networkidle` (case-insensitive). `WaitForEventOptions` has `predicate: ((Any?) -> Boolean)? = null` and `timeoutMs: Long? = null` (`TimeoutConfig.default`). Returns `null` on timeout; throws `KmpwrightException` for an unknown name. Prefer the typed waits or [`page.events`](#page-events).
+
+### waitForTimeout
+
+`waitForTimeout(ms)` is `delay(ms)`. Use it only for debugging; every other wait is event- or condition-based.
+
+## Action-scoped waits
+
+```kotlin
+val nav = page.waitForNavigation {
+    getByRole("link", name = "Next").click()
+}
+
+val response = page.waitForResponse("**/api/items") {
+    getByRole("button", name = "Load more").click()
+}
+```
+
+These overloads take the triggering action as a trailing lambda with `Page` as receiver. KMPwright starts listening before it runs the action, then returns the result. This is the Kotlin form of Playwright's `Promise.all([page.waitForX(), action()])`.
+
+Calling a wait after the action has a race: if the navigation or response completes before the wait subscribes, the wait never sees it and times out. The action-scoped form can't miss it.
+
+| Function | Returns |
+|---|---|
+| `waitForNavigation(options) { … }` | `NavigationResult`; throws `KmpwrightTimeoutException` instead of returning `null` |
+| `waitForURL(url: String, options) { … }` | `Unit` |
+| `waitForRequest(url: String or Regex, timeoutMs) { … }` | `Request` |
+| `waitForResponse(url: String or Regex, timeoutMs) { … }` | `Response` |
+| `waitForDownload(url, timeoutMs) { … }` | `Download` |
+| `waitForFileChooser(timeoutMs) { … }` | `FileChooser` |
+| `waitForDialog(timeoutMs) { … }` | `DialogEvent` |
+
+If the action throws, the wait is cancelled and the exception propagates. `waitForURL` has an action-scoped form only for `String` globs; for a `Regex`, call the non-scoped `waitForURL(regex)` after the action (it also matches when the URL already changed).
+
+## URL and title
+
+```kotlin
+val url: StateFlow<String?>
+val title: StateFlow<String?>
+```
+
+`page.url.value` is the URL of the last committed navigation, or `null` before the first one. `page.title.value` is the document title read when that navigation completed. Both update after `goto`, `reload`, history navigation, `setContent` and `pushState`, and after navigations the page starts itself (link clicks, form posts, redirects).
+
+They are not live reads of the document: a page that changes `document.title` later, or routes with its own `history.pushState`, doesn't update them. For those cases read the document:
+
+```kotlin
+val liveUrl = page.evaluate("location.href").value
+expect(page).toHaveURL(Regex("/settings$"))   // reads location.href on every attempt
+```
+
+Collect the flows to react to navigations:
+
+```kotlin
+scope.launch {
+    page.url.filterNotNull().collect { println("Now at $it") }
+}
+```
+
+## Page events
+
+`page.events` exposes hot `SharedFlow`s, the Kotlin form of Playwright's `page.on(...)`.
+
+| Flow | Type | Emits |
+|---|---|---|
+| `console` | `SharedFlow<ConsoleMessage>` | Console messages (`type`, `text`, `location`). |
+| `navigation` | `SharedFlow<NavigationEvent>` | Every finished navigation, including failed ones (`status` 0). |
+| `loadState` | `SharedFlow<LoadState>` | `DOMContentLoaded` and `Load` after each successful navigation; `NetworkIdle` whenever tracked requests drop to zero. |
+| `dialog` | `SharedFlow<DialogEvent>` | JavaScript dialogs; see [Dialogs and frames](/docs/guides/dialogs-and-frames). |
+| `request` | `SharedFlow<Request>` | Requests issued by the page. |
+| `response` | `SharedFlow<Response>` | Responses; a failed request is a `Response` with `status` 0 and the error in `statusText`. |
+| `download` | `SharedFlow<Download>` | Downloads (JVM only; see the `downloads` capability). |
+| `fileChooser` | `SharedFlow<FileChooser>` | Native file choosers (JVM only, after `setFileChooserInterception()`). |
+
+`NavigationEvent` has `url: String`, `status: Int` and `navigationType: NavigationType`, which is `NewDocument` for a document load, or `SameDocument` for `pushState` and history traversals within one document.
+
+The flows don't replay: subscribe before triggering the action, or use an [action-scoped wait](#action-scoped-waits). Emission never suspends; if a collector falls behind, the oldest buffered events are dropped.
+
+```kotlin
+val job = scope.launch {
+    page.events.console.collect { println("[${it.type}] ${it.text}") }
+}
+page.goto("https://example.com")
+job.cancel()
+```
+
+`DOMContentLoaded` and `Load` are emitted together when the backend reports a finished load, not at the browser's own `DOMContentLoaded` moment. To check the document's real state, use `waitForLoadState`, which reads `document.readyState`.
+
+## Related
+
+- [Locators](/docs/guides/locators) and [actions](/docs/guides/actions): actions wait for actionability themselves.
+- [Assertions](/docs/guides/assertions): `expect(page).toHaveURL` and `toHaveTitle`.
+- [Network](/docs/guides/network): `waitForRequest`, `waitForResponse`, routing, `setAllowedDomains`.
+- [Capabilities](/docs/platforms/capabilities)
+- [Errors](/docs/reference/errors)

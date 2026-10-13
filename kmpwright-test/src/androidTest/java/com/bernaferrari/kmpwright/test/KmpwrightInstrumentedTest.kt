@@ -8,15 +8,12 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import com.bernaferrari.kmpwright.core.Browser
 import com.bernaferrari.kmpwright.core.BrowserContext
 import com.bernaferrari.kmpwright.core.Cookie
-import com.bernaferrari.kmpwright.core.ContinueOptions
 import com.bernaferrari.kmpwright.core.DialogResponse
 import com.bernaferrari.kmpwright.core.Page
 import com.bernaferrari.kmpwright.core.Viewport
 import com.bernaferrari.kmpwright.core.ScreenshotOptions
 import com.bernaferrari.kmpwright.core.ScreenshotFormat
 import com.bernaferrari.kmpwright.core.Locator
-import com.bernaferrari.kmpwright.core.RouteHandler
-import com.bernaferrari.kmpwright.core.FulfillOptions
 import com.bernaferrari.kmpwright.core.KmpwrightConfig
 import com.bernaferrari.kmpwright.core.AndroidPlatformContext
 import kotlinx.coroutines.CoroutineScope
@@ -89,7 +86,7 @@ class KmpwrightInstrumentedTest {
     @Test
     fun pdfUsesPhysicalPaperDimensionsAndMultiplePages() = runPageTest {
         page.setContent("<div style='height:3000px;background:#fdd'>First page</div><h1>Last page</h1>")
-        page.scrollDown(100.0)
+        page.scroll(com.bernaferrari.kmpwright.core.ScrollDirection.Down, 100.0)
         val before = page.evaluate("window.scrollY").value
         val result = page.pdf(com.bernaferrari.kmpwright.core.PdfOptions(format = com.bernaferrari.kmpwright.core.PdfFormat.A4))
         assertEquals(before, page.evaluate("window.scrollY").value)
@@ -130,20 +127,22 @@ class KmpwrightInstrumentedTest {
         }
         assertEquals("Kotlin", page.evaluate("prompt('Name', 'default')").value)
         handler.close()
+        val dismissing = page.onDialog { DialogResponse.Dismiss }
         assertEquals("null", page.evaluate("prompt('Name')").value)
+        dismissing.close()
     }
 
     @Test
     fun portableHarIncludesObservedWebViewRequestMetadata() = runPageTest {
-        page.route(".*har-fixture\\.kmpwright\\.test.*") {
-            RouteHandler.Fulfill(FulfillOptions(status = 200, body = "HAR fixture", contentType = "text/plain",
-                headers = mapOf("Access-Control-Allow-Origin" to "*")))
+        page.route(Regex("har-fixture\\.kmpwright\\.test")) {
+            it.fulfill(status = 200, body = "HAR fixture", contentType = "text/plain",
+                headers = mapOf("Access-Control-Allow-Origin" to "*"))
         }
-        page.startHarCapture()
+        page.network.startHar()
         page.setContent("<script>fetch('https://har-fixture.kmpwright.test/data').then(r=>r.text()).then(t=>window.harReady=t).catch(e=>window.harReady=String(e))</script>")
         page.waitForFunction("window.harReady !== undefined")
         assertEquals("HAR fixture", page.evaluate("window.harReady").value)
-        val archive = page.stopHarCapture()
+        val archive = page.network.stopHar()
         assertTrue(archive.contains("har-fixture.kmpwright.test/data"))
         assertTrue(archive.contains("\"version\":\"1.2\""))
     }
@@ -151,6 +150,9 @@ class KmpwrightInstrumentedTest {
     @Test
     fun webVitalsCollectBufferedMetricsAndCleanUp() = runPageTest {
         page.setContent("<html><body><h1>Performance fixture</h1></body></html>")
+        // The fixture is about collecting buffered entries, so wait until the first paint exists;
+        // a busy device can take longer than settleMs to produce it.
+        page.waitForFunction("performance.getEntriesByType('paint').some(function(e){return e.name === 'first-contentful-paint'})")
         val report = page.webVitals(com.bernaferrari.kmpwright.core.WebVitalsOptions(reload = false, settleMs = 200))
         assertTrue(report.supportedEntryTypes.contains("paint"))
         assertNotNull(report.fcp)
@@ -164,7 +166,8 @@ class KmpwrightInstrumentedTest {
         assertTrue(page.pushState("#route").ok)
         assertEquals("true", page.evaluate("window.routerUsed").value)
         assertTrue(page.url.value!!.endsWith("#route"))
-        assertEquals("0", page.evaluate("Object.keys(window).filter(function(k){return k.startsWith('__kmpwrightTask_')}).length").value)
+        // A statement list is evaluated verbatim, so it does not create a task of its own.
+        assertEquals("0", page.evaluate("var pending = Object.keys(window).filter(function(k){return k.startsWith('__kmpwrightTask_')}).length; pending").value)
     }
 
     @Before
@@ -178,14 +181,8 @@ class KmpwrightInstrumentedTest {
     @After
     fun tearDown() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            if (this::browser.isInitialized) browser.close()
+            if (this::browser.isInitialized) browser.dispose()
         }
-    }
-
-    @Test
-    fun testBrowserCreation() {
-        assertNotNull(browser)
-        assertNotNull(page)
     }
 
     @Test
@@ -197,11 +194,11 @@ class KmpwrightInstrumentedTest {
             </body></html>""")
         page.locator("#choice").selectOption("Beta Choice")
         assertEquals("b", page.locator("#choice").inputValue())
-        val first = page.accessibilitySnapshot()
-        val ref = first.refMap.values.first { it.name == "Keep me" }.refId
+        val first = page.snapshot()
+        val ref = first.refs.values.first { it.name == "Keep me" }.ref
         page.evaluate("document.body.insertAdjacentHTML('afterbegin', '<button>New</button>')")
-        val second = page.accessibilitySnapshot()
-        assertEquals(ref, second.refMap.values.first { it.name == "Keep me" }.refId)
+        val second = page.snapshot()
+        assertEquals(ref, second.refs.values.first { it.name == "Keep me" }.ref)
         assertEquals(1, page.locator(ref).count())
         assertEquals(0, page.locator(".missing >> button").count())
         val field = page.frameLocator("#inner").locator("#field")
@@ -216,12 +213,6 @@ class KmpwrightInstrumentedTest {
     }
 
     @Test
-    fun testPageHasUrlAndTitle() {
-        assertNotNull(page.url)
-        assertNotNull(page.title)
-    }
-
-    @Test
     fun testBrowserPages() {
         val pages = browser.pages()
         assertEquals(1, pages.size)
@@ -229,100 +220,14 @@ class KmpwrightInstrumentedTest {
     }
 
     @Test
-    fun testBrowserVersion() {
+    fun testBrowserVersion() = runPageTest {
         val version = browser.version()
         assertNotNull(version.product)
         assertNotNull(version.version)
         assertNotNull(version.userAgent)
-        assertEquals("Kmpwright", version.product)
-    }
-
-    @Test
-    fun testBrowserContext() {
-        try {
-            browser.newContext()
-            org.junit.Assert.fail("Expected Browser.newContext() to be unsupported on Android")
-        } catch (e: UnsupportedOperationException) {
-            assertTrue(e.message?.contains("BrowserContext semantics") == true)
-        }
-    }
-
-    @Test
-    fun testLocatorCreation() {
-        val locator = page.locator("role=button")
-        assertNotNull(locator)
-    }
-
-    @Test
-    fun testLocatorWithCssSelector() {
-        val locator = page.locator(".submit-button")
-        assertNotNull(locator)
-    }
-
-    @Test
-    fun testLocatorWithIdSelector() {
-        val locator = page.locator("#main-content")
-        assertNotNull(locator)
-    }
-
-    @Test
-    fun testLocatorChain() {
-        val locator = page.locator("role=list").locator("role=listitem")
-        assertNotNull(locator)
-    }
-
-    @Test
-    fun testViewportConstants() {
-        val default = Viewport.DEFAULT
-        assertEquals(1280, default.width)
-        assertEquals(800, default.height)
-
-        val mobile = Viewport.MOBILE
-        assertEquals(390, mobile.width)
-        assertEquals(844, mobile.height)
-        assertTrue(mobile.isMobile)
-        assertTrue(mobile.hasTouch)
-
-        val tablet = Viewport.TABLET
-        assertEquals(768, tablet.width)
-        assertEquals(1024, tablet.height)
-        assertTrue(tablet.isMobile)
-        assertTrue(tablet.hasTouch)
-    }
-
-    @Test
-    fun testScreenshotOptions() {
-        val options = ScreenshotOptions()
-        assertFalse(options.fullPage)
-        assertEquals(1.0, options.scale, 0.001)
-        assertEquals(ScreenshotFormat.PNG, options.format)
-        assertEquals(90, options.quality)
-    }
-
-    @Test
-    fun testScreenshotOptionsWithFullPage() {
-        val options = ScreenshotOptions(fullPage = true)
-        assertTrue(options.fullPage)
-    }
-
-    @Test
-    fun testScreenshotOptionsWithScale() {
-        val options = ScreenshotOptions(scale = 0.5)
-        assertEquals(0.5, options.scale, 0.001)
-    }
-
-    @Test
-    fun testScreenshotOptionsWithJpeg() {
-        val options = ScreenshotOptions(format = ScreenshotFormat.JPEG)
-        assertEquals(ScreenshotFormat.JPEG, options.format)
-    }
-
-    @Test
-    fun testKmpwrightConfig() {
-        val config = KmpwrightConfig()
-        assertNotNull(config.timeouts)
-        assertNotNull(config.debug)
-        assertEquals(30_000L, config.timeouts.waitForSelector)
+        assertEquals("Android WebView", version.product)
+        assertTrue(version.version.isNotBlank() && version.version != "1.3.0")
+        assertTrue(version.userAgent.contains("Android"))
     }
 
     @Test
@@ -342,9 +247,9 @@ class KmpwrightInstrumentedTest {
     @Test
     fun testBrowserContextIsExplicitlyUnsupported() {
         try {
-            browser.newContext()
+            kotlinx.coroutines.runBlocking { browser.newContext() }
             org.junit.Assert.fail("Expected Browser.newContext() to be unsupported on Android")
-        } catch (e: UnsupportedOperationException) {
+        } catch (e: com.bernaferrari.kmpwright.core.KmpwrightUnsupportedException) {
             assertTrue(e.message?.contains("BrowserContext semantics") == true)
         }
     }
@@ -353,77 +258,6 @@ class KmpwrightInstrumentedTest {
     fun testBrowserClose() = runPageTest {
         browser.close()
         assertTrue(browser.pages().isEmpty())
-    }
-
-    @Test
-    fun testPageLocatorWithRoleSelector() {
-        val button = page.locator("role=button")
-        assertNotNull(button)
-    }
-
-    @Test
-    fun testPageLocatorWithLinkSelector() {
-        val link = page.locator("role=link")
-        assertNotNull(link)
-    }
-
-    @Test
-    fun testPageLocatorWithHeadingSelector() {
-        val heading = page.locator("role=heading")
-        assertNotNull(heading)
-    }
-
-    @Test
-    fun testPageLocatorWithCheckboxSelector() {
-        val checkbox = page.locator("role=checkbox")
-        assertNotNull(checkbox)
-    }
-
-    @Test
-    fun testPageLocatorWithDialogSelector() {
-        val dialog = page.locator("role=dialog")
-        assertNotNull(dialog)
-    }
-
-    @Test
-    fun testLocatorsCount() {
-        val buttons = page.locator("role=button")
-        assertNotNull(buttons)
-    }
-
-    @Test
-    fun testLocatorFirst() {
-        val button = page.locator("role=button")
-        val first = button.first()
-        assertNotNull(first)
-    }
-
-    @Test
-    fun testLocatorNth() {
-        val button = page.locator("role=button")
-        val second = button.nth(1)
-        assertNotNull(second)
-    }
-
-    @Test
-    fun testLocatorLast() {
-        val button = page.locator("role=button")
-        val last = button.last()
-        assertNotNull(last)
-    }
-
-    @Test
-    fun testLocatorFilter() {
-        val button = page.locator("role=button")
-        val filtered = button.filter()
-        assertNotNull(filtered)
-    }
-
-    @Test
-    fun testLocatorFrameLocator() {
-        val frame = page.locator("iframe")
-        val frameLocator = frame.frameLocator("role=button")
-        assertNotNull(frameLocator)
     }
 
     @Test
@@ -441,14 +275,6 @@ class KmpwrightInstrumentedTest {
         """.trimIndent()
             page.setContent(html)
             assertNotNull(page.url)
-        }
-    }
-
-    @Test
-    fun testPageWaitForTimeout() {
-        runPageTest {
-            page.waitForTimeout(100)
-            assertTrue(true) // If we get here, no exception was thrown
         }
     }
 
@@ -483,24 +309,7 @@ class KmpwrightInstrumentedTest {
     }
 
     @Test
-    fun testPageEvents() {
-        assertNotNull(page.events.console)
-        assertNotNull(page.events.navigation)
-        assertNotNull(page.events.loadState)
-        assertNotNull(page.events.dialog)
-    }
-
-    @Test
-    fun testPageOnDialog() {
-        val handler = page.onDialog { event ->
-            // Handle dialog event
-            DialogResponse.Accept
-        }
-        assertNotNull(handler)
-    }
-
-    @Test
-    fun testPageClose() {
+    fun testPageClose() = runPageTest {
         page.close()
         assertTrue(true) // If we get here, no exception was thrown
     }
@@ -588,9 +397,8 @@ class KmpwrightInstrumentedTest {
     @Test
     fun testRouteFulfillServesInterceptedResponse() {
         runPageTest {
-            page.route(".*intercepted\\.kmpwright\\.test.*") {
-                RouteHandler.Fulfill(
-                    FulfillOptions(
+            page.route(Regex("intercepted\\.kmpwright\\.test")) {
+                it.fulfill(
                         status = 201,
                         headers = mapOf(
                             "Access-Control-Allow-Origin" to "*",
@@ -600,7 +408,6 @@ class KmpwrightInstrumentedTest {
                         body = """{"ok":true,"source":"route"}""",
                         contentType = "application/json; charset=UTF-8"
                     )
-                )
             }
 
             page.setContent(
@@ -639,8 +446,8 @@ class KmpwrightInstrumentedTest {
     @Test
     fun testRouteAbortReportsFailedResponse() {
         runPageTest {
-            page.route(".*abort\\.kmpwright\\.test.*") {
-                RouteHandler.Abort("aborted")
+            page.route(Regex("abort\\.kmpwright\\.test")) {
+                it.abort("aborted")
             }
 
             page.setContent(
@@ -665,7 +472,7 @@ class KmpwrightInstrumentedTest {
 
             page.waitForFunction("window.__abortResult !== null")
             val result = page.evaluate("window.__abortResult")
-            assertTrue(result.value.contains("\"status\":499") || result.value.contains("\"error\":"))
+            assertTrue("Aborted fetch must reject: ${result.value}", result.value.contains("\"error\":"))
         }
     }
 
@@ -710,15 +517,13 @@ class KmpwrightInstrumentedTest {
             }
             serverThread.start()
 
-            page.route(".*continue-source\\.kmpwright\\.test.*") {
-                RouteHandler.Continue(
-                    ContinueOptions(
+            page.route(Regex("continue-source\\.kmpwright\\.test")) {
+                it.resume(
                         url = "http://127.0.0.1:${server.localPort}/continued",
                         method = "POST",
                         headers = mapOf("X-Route-Override" to "yes"),
                         postData = "payload=1"
                     )
-                )
             }
 
             page.setContent(
@@ -760,19 +565,17 @@ class KmpwrightInstrumentedTest {
     @Test
     fun testRouteFulfillEmitsRequestAndResponseEvents() {
         runPageTest {
-            page.route(".*events\\.kmpwright\\.test.*") {
-                RouteHandler.Fulfill(
-                    FulfillOptions(
+            page.route(Regex("events\\.kmpwright\\.test")) {
+                it.fulfill(
                         status = 203,
                         headers = mapOf("Access-Control-Allow-Origin" to "*"),
                         body = "event-ok",
                         contentType = "text/plain"
                     )
-                )
             }
 
-            val request = async { page.waitForRequest("events\\.kmpwright\\.test", timeoutMs = 5_000) }
-            val response = async { page.waitForResponse("events\\.kmpwright\\.test", timeoutMs = 5_000) }
+            val request = async { page.waitForRequest(Regex("events\\.kmpwright\\.test"), timeoutMs = 5_000) }
+            val response = async { page.waitForResponse(Regex("events\\.kmpwright\\.test"), timeoutMs = 5_000) }
             page.setContent(
                 """
             <!DOCTYPE html>
@@ -792,9 +595,8 @@ class KmpwrightInstrumentedTest {
     @Test
     fun testCookieRoundTripAndDeleteAllCookies() {
         runPageTest {
-            page.route(".*cookies\\.kmpwright\\.test.*") {
-                RouteHandler.Fulfill(
-                    FulfillOptions(
+            page.route(Regex("cookies\\.kmpwright\\.test")) {
+                it.fulfill(
                         status = 200,
                         headers = mapOf("Content-Type" to "text/html; charset=UTF-8"),
                         body = """
@@ -803,44 +605,290 @@ class KmpwrightInstrumentedTest {
                     """.trimIndent(),
                         contentType = "text/html; charset=UTF-8"
                     )
-                )
             }
 
             val navigation = page.goto("https://cookies.kmpwright.test/index.html")
             assertTrue(navigation.ok)
 
-            page.setCookie(Cookie("sid", "abc123", "cookies.kmpwright.test"))
+            page.addCookies(listOf(Cookie("sid", "abc123", "cookies.kmpwright.test")))
             page.waitForTimeout(150)
 
-            val cookie = page.getCookie("sid")
+            val cookie = page.cookies().firstOrNull { it.name == "sid" }
             assertNotNull(cookie)
             assertEquals("abc123", cookie?.value)
 
-            val cookies = page.getAllCookies()
+            val cookies = page.cookies()
             assertTrue(cookies.any { it.name == "sid" && it.domain == "cookies.kmpwright.test" })
 
-            page.deleteAllCookies()
+            page.clearCookies()
             page.waitForTimeout(150)
-            assertEquals(null, page.getCookie("sid"))
+            assertEquals(null, page.cookies().firstOrNull { it.name == "sid" })
+        }
+    }
+
+
+    private fun runOffMainTest(block: suspend CoroutineScope.() -> Unit) {
+        runBlocking(Dispatchers.Default) {
+            assertFalse(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            block()
         }
     }
 
     @Test
-    fun testPageEvaluate() {
+    fun pageApisAreSafeFromBackgroundDispatchers() = runOffMainTest {
+        LocalHttpServer { LocalHttpServer.FixtureResponse(200, "OK",
+            "<title>Off main</title><button id=b onclick=\"window.clicked=(window.clicked||0)+1\">Go</button>") }.use { server ->
+            val navigation = page.goto("${server.origin}/index.html")
+            assertTrue(navigation.error, navigation.ok)
+            assertEquals(200, navigation.status)
+            assertEquals("2", page.evaluate("1 + 1").value)
+            page.locator("#b").click()
+            assertEquals("1", page.evaluate("window.clicked").value)
+            assertTrue(page.url.value!!.startsWith(server.origin))
+            assertEquals("Off main", page.title.value)
+            page.setViewportSize(320, 480)
+            page.waitForTimeout(300)
+            assertEquals("320", page.evaluate("window.innerWidth").value)
+            page.addCookies(listOf(Cookie("bg", "1", "127.0.0.1")))
+            assertEquals("1", page.cookies().firstOrNull { it.name == "bg" }?.value)
+            val screenshot = page.screenshot()
+            assertTrue(screenshot.bytes.isNotEmpty())
+            val second = browser.newPage()
+            assertEquals("3", second.evaluate("1 + 2").value)
+            second.close()
+        }
+    }
+
+    @Test
+    fun touchTapAtBoundingBoxCenterHitsElement() = runPageTest {
+        page.setContent("""<meta name=viewport content="width=device-width,initial-scale=1">
+            <body style="margin:0"><div style="height:137px"></div>
+            <button id=target style="margin-left:61px;width:120px;height:48px">Tap</button>
+            <script>document.getElementById('target').addEventListener('click', function(e) {
+              window.tapped = JSON.stringify({x: e.clientX, y: e.clientY});
+            });</script></body>""")
+        val box = page.locator("#target").boundingBox()!!
+        page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2)
+        page.waitForFunction("window.tapped !== undefined")
+        val point = org.json.JSONObject(page.evaluate("window.tapped").value)
+        assertEquals(box.x + box.width / 2, point.getDouble("x"), 2.0)
+        assertEquals(box.y + box.height / 2, point.getDouble("y"), 2.0)
+    }
+
+    @Test
+    fun elementScreenshotIsBoundingBoxTimesDensity() = runPageTest {
+        page.setContent("""<meta name=viewport content="width=device-width,initial-scale=1">
+            <body style="margin:0;background:#fff"><div style="height:90px"></div>
+            <div id=box style="margin-left:30px;width:100px;height:50px;background:#00f"></div></body>""")
+        val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+        val box = page.locator("#box").boundingBox()!!
+        val shot = page.locator("#box").screenshot()
+        assertEquals(box.width * density, shot.width.toDouble(), 2.0)
+        assertEquals(box.height * density, shot.height.toDouble(), 2.0)
+        val bitmap = BitmapFactory.decodeByteArray(shot.bytes, 0, shot.bytes.size)
+        assertColorNear(bitmap.getPixel(bitmap.width / 2, bitmap.height / 2), Color.BLUE)
+        assertColorNear(bitmap.getPixel(2, 2), Color.BLUE)
+        bitmap.recycle()
+        assertEquals(page.evaluate("window.innerWidth").value.toDouble(), page.viewportSize().width.toDouble(), 1.0)
+    }
+
+    @Test
+    fun mainFrameHttpErrorStatusIsReportedOnce() = runPageTest {
+        LocalHttpServer { request ->
+            if (request.path.startsWith("/missing")) LocalHttpServer.FixtureResponse(404, "Not Found", "<h1>missing</h1>")
+            else LocalHttpServer.FixtureResponse(500, "Internal Server Error", "<h1>boom</h1>")
+        }.use { server ->
+            val missing = page.goto("${server.origin}/missing")
+            assertEquals(404, missing.status)
+            assertFalse(missing.ok)
+            val failing = page.goto("${server.origin}/fail")
+            assertEquals(500, failing.status)
+        }
+        val refused = java.net.ServerSocket(0).use { it.localPort }
+        val failed = page.goto("http://127.0.0.1:$refused/")
+        assertFalse(failed.ok)
+        assertEquals(0, failed.status)
+        // A stale second callback from the error page must not complete the next navigation.
+        LocalHttpServer { LocalHttpServer.FixtureResponse(200, "OK", "<title>ok</title>") }.use { server ->
+            val ok = page.goto("${server.origin}/ok")
+            assertTrue(ok.error, ok.ok)
+            assertEquals("${server.origin}/ok", ok.url)
+            assertEquals(200, ok.status)
+        }
+    }
+
+    @Test
+    fun latestRouteWinsAndFallthroughReachesOlderHandlers() = runPageTest {
+        page.route(Regex("order\\.kmpwright\\.test")) {
+            it.fulfill(body = "first", contentType = "text/plain", headers = mapOf("Access-Control-Allow-Origin" to "*"))
+        }
+        page.route(Regex("order\\.kmpwright\\.test/second")) {
+            it.fulfill(body = "second", contentType = "text/plain", headers = mapOf("Access-Control-Allow-Origin" to "*"))
+        }
+        page.route(Regex("order\\.kmpwright\\.test/skip")) { it.fallback() }
+        page.setContent("""<script>
+            Promise.all(['second', 'skip'].map(function(p) {
+              return fetch('https://order.kmpwright.test/' + p).then(function(r) { return r.text(); });
+            })).then(function(v) { window.order = v.join(','); }, function(e) { window.order = String(e); });
+            </script>""")
+        page.waitForFunction("window.order !== undefined")
+        assertEquals("second,first", page.evaluate("window.order").value)
+    }
+
+    @Test
+    fun redirectFulfillAndThrowingHandlerFailTheRequestWithoutCrashing() = runPageTest {
+        page.route(Regex("redirect\\.kmpwright\\.test")) {
+            it.fulfill(status = 302, headers = mapOf("Location" to "https://example.com"))
+        }
+        page.route(Regex("throws\\.kmpwright\\.test")) { error("handler failure") }
+        page.setContent("""<script>
+            Promise.all(['redirect', 'throws'].map(function(h) {
+              return fetch('https://' + h + '.kmpwright.test/x').then(function() { return 'resolved'; }, function() { return 'rejected'; });
+            })).then(function(v) { window.results = v.join(','); });
+            </script>""")
+        page.waitForFunction("window.results !== undefined")
+        assertEquals("rejected,rejected", page.evaluate("window.results").value)
+    }
+
+    @Test
+    fun keyboardPressSendsShiftedCharacters() = runPageTest {
+        page.setContent("<input id=field>")
+        page.locator("#field").focus()
+        page.keyboard.press("A")
+        page.keyboard.press("b")
+        page.keyboard.press("!")
+        page.waitForTimeout(200)
+        assertEquals("Ab!", page.evaluate("document.getElementById('field').value").value)
+    }
+
+    @Test
+    fun hostClientsKeepReceivingCallbacks() {
+        val finished = java.util.concurrent.CountDownLatch(1)
+        val titles = java.util.Collections.synchronizedList(mutableListOf<String>())
+        host.scenario.onActivity { activity ->
+                browser.dispose()
+                val webView = activity.resetWebView()
+                webView.webViewClient = object : android.webkit.WebViewClient() {
+                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) { finished.countDown() }
+                }
+                webView.webChromeClient = object : android.webkit.WebChromeClient() {
+                    override fun onReceivedTitle(view: android.webkit.WebView?, title: String?) { title?.let(titles::add) }
+                }
+                browser = Browser(AndroidPlatformContext(activity, webView))
+                page = browser.page()
+        }
+        runPageTest { page.setContent("<title>Host title</title>") }
+        assertTrue(finished.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        assertTrue(titles.toString(), titles.contains("Host title"))
+    }
+
+    @Test
+    fun rendererCrashFailsThePageWithoutKillingTheApp() = runPageTest {
+        page.setContent("<h1>before crash</h1>")
+        val navigation = page.goto("chrome://crash", com.bernaferrari.kmpwright.core.GotoOptions(timeoutMs = 10_000))
+        assertFalse(navigation.ok)
+        assertTrue(navigation.error.orEmpty(), navigation.error.orEmpty().contains("crashed", ignoreCase = true))
+        try {
+            page.evaluate("1 + 1")
+            org.junit.Assert.fail("Evaluation on a crashed page must fail")
+        } catch (error: com.bernaferrari.kmpwright.core.KmpwrightException) {
+            assertTrue(error.message.orEmpty(), error.message.orEmpty().contains("crash", ignoreCase = true))
+        }
+    }
+
+    @Test
+    fun httpCredentialsAnswerAuthChallengesForTheBoundHost() = runPageTest {
+        val expected = "Basic " + android.util.Base64.encodeToString("user:secret".toByteArray(), android.util.Base64.NO_WRAP)
+        LocalHttpServer { request ->
+            when {
+                !request.path.startsWith("/protected") ->
+                    LocalHttpServer.FixtureResponse(200, "OK", "<iframe src='/protected'></iframe>")
+                request.header("Authorization") == expected ->
+                    LocalHttpServer.FixtureResponse(200, "OK", "<p>authorized</p>")
+                else -> LocalHttpServer.FixtureResponse(401, "Unauthorized", "denied",
+                    headers = mapOf("WWW-Authenticate" to "Basic realm=\"kmpwright\""))
+            }
+        }.use { server ->
+            page.setHTTPCredentials(com.bernaferrari.kmpwright.core.HttpCredentials("user", "secret"))
+            assertTrue(page.goto("${server.origin}/").ok)
+            page.waitForFunction("(function(){var d=document.querySelector('iframe').contentDocument;return !!d && !!d.body && d.body.textContent.indexOf('authorized')>=0;})()")
+        }
+    }
+
+    @Test
+    fun fullPageScreenshotStitchesTilesWithoutGapsOrDuplicates() = runPageTest {
+        val colors = listOf("#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#000000", "#808080", "#ff8000", "#8000ff")
+        val stripeCss = 337
+        page.setContent("""<meta name=viewport content="width=device-width,initial-scale=1">
+            <style>html,body{margin:0;padding:0}div{height:${stripeCss}px;width:100%}</style>
+            ${colors.joinToString("") { "<div style='background:$it'></div>" }}""")
+        val dpr = page.evaluate("window.devicePixelRatio").value.toDouble()
+        val scrollHeight = page.evaluate("document.documentElement.scrollHeight").value.toDouble()
+        val shot = page.screenshot(ScreenshotOptions(fullPage = true))
+        assertEquals(scrollHeight * dpr, shot.height.toDouble(), 3.0)
+        val bitmap = BitmapFactory.decodeByteArray(shot.bytes, 0, shot.bytes.size)
+        try {
+            assertEquals(shot.height, bitmap.height)
+            val x = bitmap.width / 2
+            colors.forEachIndexed { index, hex ->
+                val expected = Color.parseColor(hex)
+                val top = (index * stripeCss * dpr).toInt()
+                val bottom = ((index + 1) * stripeCss * dpr).toInt()
+                for (y in listOf(top + 3, (top + bottom) / 2, bottom - 4)) {
+                    val actual = bitmap.getPixel(x, y.coerceAtMost(bitmap.height - 1))
+                    assertTrue("stripe $index at row $y: expected $hex, got ${Integer.toHexString(actual)}",
+                        kotlin.math.abs(Color.red(actual) - Color.red(expected)) <= 24 &&
+                            kotlin.math.abs(Color.green(actual) - Color.green(expected)) <= 24 &&
+                            kotlin.math.abs(Color.blue(actual) - Color.blue(expected)) <= 24)
+                }
+            }
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    @Test
+    fun dialogsFallBackToHostClientWithoutHandlerAndHandlerWins() {
+        val hostDialogs = java.util.Collections.synchronizedList(mutableListOf<String>())
+        host.scenario.onActivity { activity ->
+            browser.dispose()
+            val webView = activity.resetWebView()
+            webView.webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onJsAlert(view: android.webkit.WebView?, url: String?, message: String?, result: android.webkit.JsResult?): Boolean {
+                    hostDialogs.add("alert:$message"); result?.confirm(); return true
+                }
+                override fun onJsConfirm(view: android.webkit.WebView?, url: String?, message: String?, result: android.webkit.JsResult?): Boolean {
+                    hostDialogs.add("confirm:$message"); result?.cancel(); return true
+                }
+            }
+            browser = Browser(AndroidPlatformContext(activity, webView))
+            page = browser.page()
+        }
         runPageTest {
-            val result = page.evaluate("1 + 1")
-            assertNotNull(result)
+            page.setContent("<h1>dialogs</h1>")
+            assertEquals("false", page.evaluate("alert('native'); confirm('host')").value)
+            assertEquals(listOf("alert:native", "confirm:host"), hostDialogs.toList())
+
+            val handler = page.onDialog { DialogResponse.Accept }
+            assertEquals("true", page.evaluate("confirm('automation')").value)
+            assertEquals(2, hostDialogs.size)
+            handler.close()
+
+            assertEquals("false", page.evaluate("confirm('again')").value)
+            assertEquals("confirm:again", hostDialogs.last())
         }
     }
 
     @Test
-    fun testBrowserIsConnected() {
-        assertNotNull(browser.isConnected)
-    }
-
-    @Test
-    fun testBrowserConnectionError() {
-        assertNotNull(browser.connectionError)
+    fun browserMustBeCreatedOnMainThread() {
+        val activity = AtomicReference<WebViewHarnessActivity>()
+        host.scenario.onActivity(activity::set)
+        try {
+            Browser(AndroidPlatformContext(activity.get()))
+            org.junit.Assert.fail("Creating a Browser off the main thread must fail clearly")
+        } catch (error: IllegalStateException) {
+            assertTrue(error.message.orEmpty().contains("main thread"))
+        }
     }
 
     private fun assertColorNear(actual: Int, expected: Int) {

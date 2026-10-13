@@ -22,90 +22,74 @@ class ElementReferenceTest {
 
     @Test
     fun `parseRef with @e1 format`() {
-        assertEquals("@e1", basePage.parseRef("@e1"))
+        assertEquals("@e1", parseRef("@e1"))
     }
 
     @Test
     fun `parseRef with e1 format`() {
-        assertEquals("@e1", basePage.parseRef("e1"))
+        assertEquals("@e1", parseRef("e1"))
     }
 
     @Test
     fun `parseRef with e10 format`() {
-        assertEquals("@e10", basePage.parseRef("e10"))
+        assertEquals("@e10", parseRef("e10"))
     }
 
     @Test
     fun `parseRef with ref=e1 format`() {
-        assertEquals("@e1", basePage.parseRef("ref=e1"))
+        assertEquals("@e1", parseRef("ref=e1"))
     }
 
     @Test
     fun `parseRef with ref=@e5 format`() {
-        assertEquals("@e5", basePage.parseRef("ref=@e5"))
+        assertEquals("@e5", parseRef("ref=@e5"))
     }
 
     @Test
     fun `parseRef with invalid format returns null`() {
-        assertNull(basePage.parseRef("invalid"))
+        assertNull(parseRef("invalid"))
     }
 
     @Test
     fun `parseRef with empty string returns null`() {
-        assertNull(basePage.parseRef(""))
+        assertNull(parseRef(""))
     }
 
     @Test
     fun `parseRef with e prefix but no digits returns null`() {
-        assertNull(basePage.parseRef("e"))
+        assertNull(parseRef("e"))
     }
 
     @Test
     fun `parseRef with random text returns null`() {
-        assertNull(basePage.parseRef("hello"))
+        assertNull(parseRef("hello"))
     }
 
     @Test
     fun `parseRef trims whitespace`() {
-        assertEquals("@e1", basePage.parseRef("  @e1  "))
-    }
-
-    @Test(expected = KmpwrightException::class)
-    fun `locatorByRef throws for invalid ref format`() {
-        runBlocking {
-            basePage.currentSnapshotRefMap = mapOf("@e1" to RefEntry("@e1", "button", "Click", "#btn"))
-            basePage.locatorByRef("invalid-ref")
-        }
-    }
-
-    @Test(expected = KmpwrightException::class)
-    fun `locatorByRef throws for ref not in snapshot`() {
-        runBlocking {
-            basePage.currentSnapshotRefMap = emptyMap()
-            basePage.locatorByRef("@e1")
-        }
+        assertEquals("@e1", parseRef("  @e1  "))
     }
 
     @Test
-    fun `locatorByRef uses node identity when ref has no CSS selector`() {
+    fun `locator accepts a ref without a CSS selector`() {
         runBlocking {
             basePage.currentSnapshotRefMap = mapOf("@e1" to RefEntry("@e1", "button", "Click", null))
-            assertEquals("ref=@e1", (basePage.locatorByRef("@e1") as TestLocator).selectorStr)
+            assertEquals("@e1", (basePage.locator("@e1") as TestLocator).selectorStr)
         }
     }
 
     @Test
-    fun `locatorByRef delegates to node identity`() {
+    fun `locator accepts @e and bare refs`() {
         runBlocking {
             basePage.currentSnapshotRefMap = mapOf(
                 "@e1" to RefEntry("@e1", "button", "Click", "#my-button"),
                 "@e2" to RefEntry("@e2", "link", "Home", "nav > a:nth-of-type(1)")
             )
-            val locator1 = basePage.locatorByRef("@e1") as TestLocator
-            assertEquals("ref=@e1", locator1.selectorStr)
+            val locator1 = basePage.locator("@e1") as TestLocator
+            assertEquals("@e1", locator1.selectorStr)
 
-            val locator2 = basePage.locatorByRef("e2") as TestLocator
-            assertEquals("ref=@e2", locator2.selectorStr)
+            val locator2 = basePage.locator("e2") as TestLocator
+            assertEquals("e2", locator2.selectorStr)
         }
     }
 
@@ -147,18 +131,14 @@ class ElementReferenceTest {
             override fun setRequestIdleTimeout(timeoutMs: Long) {}
             override fun addDialogListener(listener: DialogListener) {}
             override fun removeDialogListener(listener: DialogListener) {}
-            override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+            override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
             override fun removeRouteHandler(urlPattern: String) {}
             override fun removeAllRouteHandlers() {}
-            override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-            override fun abortRoute(requestId: String, errorCode: String) {}
-            override fun continueRoute(requestId: String, options: ContinueOptions) {}
             override fun setCookie(cookie: Cookie) {}
             override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
             override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
             override fun deleteCookie(name: String, domain: String) {}
             override fun deleteAllCookies() {}
-            override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
         },
         KmpwrightConfig()
     ) {
@@ -168,7 +148,7 @@ class ElementReferenceTest {
 
         override fun createPlatformLocator(selector: String): BaseLocator = TestLocator(selector)
 
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
     }
@@ -201,18 +181,14 @@ class ElementReferenceTest {
             override fun setRequestIdleTimeout(timeoutMs: Long) {}
             override fun addDialogListener(listener: DialogListener) {}
             override fun removeDialogListener(listener: DialogListener) {}
-            override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+            override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
             override fun removeRouteHandler(urlPattern: String) {}
             override fun removeAllRouteHandlers() {}
-            override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-            override fun abortRoute(requestId: String, errorCode: String) {}
-            override fun continueRoute(requestId: String, options: ContinueOptions) {}
             override fun setCookie(cookie: Cookie) {}
             override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
             override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
             override fun deleteCookie(name: String, domain: String) {}
             override fun deleteAllCookies() {}
-            override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
         },
         selector,
         KmpwrightConfig()

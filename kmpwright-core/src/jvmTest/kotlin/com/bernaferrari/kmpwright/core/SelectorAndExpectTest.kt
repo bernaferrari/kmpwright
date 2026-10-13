@@ -7,55 +7,60 @@ import kotlin.test.assertFailsWith
 
 class SelectorAndExpectTest {
     @Test
-    fun `generated resolver handles every public attribute selector`() {
+    fun `runtime implements every public selector engine`() {
         val source = BaseLocator.helpersJsSource()
-        listOf("exact_text=", "placeholder=", "alt=", "title=", "testid=").forEach {
-            assertTrue("missing resolver branch for $it", source.contains("selector.startsWith('$it'))"))
+        listOf("ref", "role", "label", "text", "exact_text", "placeholder", "alt", "title", "testid", "xpath").forEach {
+            assertTrue("missing selector engine $it", source.contains("case '$it'"))
         }
-        assertTrue(source.contains("window.__kmpwright_byAttribute"))
-        assertTrue(source.contains("window.__kmpwright_byAlt"))
     }
 
     @Test
     fun `expect text modes and live values use distinct DOM reads`() = testBlocking {
         val controller = MockWebViewController { onEval { script ->
             when {
-                script.contains("el.innerText") -> "Hello world"
-                script.contains("el.value") -> "live-value"
-                script.contains("resolveAll") -> "true"
+                script.contains("return t.value") -> "live-value"
+                script.contains("el.textContent") -> "Hello   world"
                 else -> null
             }
         } }
         val locator = TestLocator("input", controller)
-        locator.expect().toHaveText("Hello world")
-        locator.expect().toContainText("world")
-        locator.expect().toHaveValue("live-value")
-        assertTrue(controller.executedScripts.any { it.contains("el.value") })
+        expect(locator).toHaveText("Hello world")
+        expect(locator).toHaveText(Regex("^Hello w"))
+        expect(locator).toContainText("world")
+        expect(locator).toHaveValue("live-value")
+        expect(locator).not.toHaveText("Goodbye")
+        assertTrue(controller.executedScripts.any { it.contains("return t.value") })
     }
 
     @Test
     fun `enabled expectation requires an element`() = testBlocking {
-        var observerScript: String? = null
-        val controller = MockWebViewController { onEval { script ->
-            if (script.contains("MutationObserver")) {
-                observerScript = script
-                "__kmpwright_timeout__"
-            } else {
-                "false"
-            }
-        } }
-        val locator = TestLocator("missing", controller)
-
-        assertFailsWith<KmpwrightException> {
-            locator.expect().toBeEnabled(timeoutMs = 10)
-        }
-        assertTrue(observerScript?.contains("!!el && !el.disabled") == true)
+        val locator = TestLocator("missing", MockWebViewController { onEval { "{\"__kw\":1,\"v\":{\"missing\":1}}" } })
+        val error = assertFailsWith<KmpwrightAssertionError> { expect(locator).toBeEnabled(timeoutMs = 50) }
+        assertTrue(error.message!!.contains("No element found"))
     }
 
     @Test
-    fun `role and missing name remain scoped instead of falling back to role`() = testBlocking {
+    fun `negated expectation fails when the condition keeps holding`() = testBlocking {
+        val locator = TestLocator("p", MockWebViewController { onEval { "Visible text" } })
+        assertFailsWith<KmpwrightAssertionError> { expect(locator).not.toContainText("Visible", timeoutMs = 50) }
+    }
+
+    @Test
+    fun `expectation retries until a throwing condition starts to hold`() = testBlocking {
+        var calls = 0
+        val locator = TestLocator("p", MockWebViewController { onEval { script ->
+            if (script.contains("el.textContent")) {
+                if (++calls < 3) "{\"__kw\":1,\"e\":\"not ready\"}" else "Ready"
+            } else null
+        } })
+        expect(locator).toHaveText("Ready", timeoutMs = 2_000)
+        assertTrue(calls >= 3)
+    }
+
+    @Test
+    fun `role and name use accessible-name matching`() = testBlocking {
         val page = TestPage(MockWebViewController())
-        val locator = page.find(role = "button", name = "Absent") as TestLocator
-        assertEquals("role=button >> exact_text=Absent", locator.selectorStr)
+        assertEquals("role=button[name=\"Absent\"]", (page.getByRole("button", name = "Absent") as TestLocator).selectorStr)
+        assertEquals("role=button[name=\"Save \\\"all\\\"\" s]", (page.getByRole("button", name = "Save \"all\"", exact = true) as TestLocator).selectorStr)
     }
 }

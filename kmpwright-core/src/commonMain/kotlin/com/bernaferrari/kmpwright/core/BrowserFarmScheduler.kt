@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.asSharedFlow
  * unpriced or invalidly priced slot is never accidentally selected for a
  * cost-bounded request.
  */
-data class ResourceSelector(
+public data class ResourceSelector(
     val requiredMetadata: Map<String, String> = emptyMap(),
     val maxCostUsdPerHour: Double? = null,
     val predicate: (ResourcePoolSnapshot) -> Boolean = { true }
@@ -33,7 +33,7 @@ data class ResourceSelector(
 }
 
 /** A point-in-time view of scheduler capacity and lifecycle counters. */
-data class ResourceSchedulerMetrics(
+public data class ResourceSchedulerMetrics(
     val capacity: Int,
     val available: Int,
     val busy: Int,
@@ -46,12 +46,17 @@ data class ResourceSchedulerMetrics(
 )
 
 /** Lifecycle signals suitable for logs, dashboards, or a health supervisor. */
-sealed interface ResourceSchedulerEvent {
-    data class Acquired(val id: String, val waitMs: Long) : ResourceSchedulerEvent
-    data class Released(val id: String) : ResourceSchedulerEvent
-    data class Quarantined(val id: String, val reason: String?) : ResourceSchedulerEvent
-    data class HealthCheckFailed(val id: String, val reason: String) : ResourceSchedulerEvent
-    data class AcquisitionFailed(val reason: String) : ResourceSchedulerEvent
+public sealed interface ResourceSchedulerEvent {
+    /** A lease was granted. */
+    public data class Acquired(val id: String, val waitMs: Long) : ResourceSchedulerEvent
+    /** A lease was returned. */
+    public data class Released(val id: String) : ResourceSchedulerEvent
+    /** A resource was taken out of rotation. */
+    public data class Quarantined(val id: String, val reason: String?) : ResourceSchedulerEvent
+    /** A resource failed its health check. */
+    public data class HealthCheckFailed(val id: String, val reason: String) : ResourceSchedulerEvent
+    /** No resource could be leased. */
+    public data class AcquisitionFailed(val reason: String) : ResourceSchedulerEvent
 }
 
 /**
@@ -61,7 +66,7 @@ sealed interface ResourceSchedulerEvent {
  * choose a slot with metadata/capability predicates, use the returned lease,
  * and either release it for reset or mark it broken to quarantine it.
  */
-class ResourceScheduler<T>(resources: List<PooledResource<T>>) {
+public class ResourceScheduler<T>(resources: List<PooledResource<T>>) {
     private val pool = ResourcePool(resources)
     private val _events = MutableSharedFlow<ResourceSchedulerEvent>(
         replay = 16,
@@ -74,9 +79,11 @@ class ResourceScheduler<T>(resources: List<PooledResource<T>>) {
     private val totalWaitMs = atomic(0L)
 
     /** Recent lifecycle events; events contain identifiers, never resources. */
-    val events: SharedFlow<ResourceSchedulerEvent> = _events.asSharedFlow()
+    public val events: SharedFlow<ResourceSchedulerEvent> = _events.asSharedFlow()
 
-    suspend fun acquire(
+    /** Leases a resource matching [selector], waiting up to [timeoutMs]. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun acquire(
         timeoutMs: Long = 30_000,
         selector: ResourceSelector = ResourceSelector()
     ): ResourceLease<T> {
@@ -121,7 +128,9 @@ class ResourceScheduler<T>(resources: List<PooledResource<T>>) {
         }
     }
 
-    suspend fun <R> withLease(
+    /** Runs [block] with a leased resource and releases it afterwards. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun <R> withLease(
         timeoutMs: Long = 30_000,
         selector: ResourceSelector = ResourceSelector(),
         markBrokenOnException: Boolean = true,
@@ -143,7 +152,8 @@ class ResourceScheduler<T>(resources: List<PooledResource<T>>) {
      * A failed probe marks that slot broken and emits both health and
      * quarantine events; the next acquire will skip it.
      */
-    suspend fun healthCheck(
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun healthCheck(
         id: String,
         timeoutMs: Long = 30_000,
         check: suspend (T) -> Boolean
@@ -175,7 +185,8 @@ class ResourceScheduler<T>(resources: List<PooledResource<T>>) {
     }
 
     /** Quarantines an idle slot; use a lease's [ResourceLease.markBroken] while busy. */
-    suspend fun quarantine(id: String, reason: String? = null): Boolean {
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun quarantine(id: String, reason: String? = null): Boolean {
         val quarantined = pool.quarantine(id, reason)
         if (quarantined) {
             quarantines.incrementAndGet()
@@ -184,9 +195,11 @@ class ResourceScheduler<T>(resources: List<PooledResource<T>>) {
         return quarantined
     }
 
-    fun snapshots(): List<ResourcePoolSnapshot> = pool.snapshots()
+    /** State of every pooled resource. */
+    public fun snapshots(): List<ResourcePoolSnapshot> = pool.snapshots()
 
-    fun metrics(): ResourceSchedulerMetrics {
+    /** Scheduler counters. */
+    public fun metrics(): ResourceSchedulerMetrics {
         val snapshots = pool.snapshots()
         return ResourceSchedulerMetrics(
             capacity = snapshots.size,
@@ -201,10 +214,16 @@ class ResourceScheduler<T>(resources: List<PooledResource<T>>) {
         )
     }
 
-    suspend fun close() = pool.close()
+    /** Closes every pooled resource. */
+    @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
+    public suspend fun close(): Unit = pool.close()
 }
 
-typealias BrowserFarmScheduler = ResourceScheduler<Browser>
-typealias BrowserFarmSelector = ResourceSelector
-typealias BrowserFarmMetrics = ResourceSchedulerMetrics
-typealias BrowserFarmEvent = ResourceSchedulerEvent
+/** A scheduler of pooled browsers. */
+public typealias BrowserFarmScheduler = ResourceScheduler<Browser>
+/** Selects a browser by metadata. */
+public typealias BrowserFarmSelector = ResourceSelector
+/** Counters of a [BrowserFarmScheduler]. */
+public typealias BrowserFarmMetrics = ResourceSchedulerMetrics
+/** Events emitted by a [BrowserFarmScheduler]. */
+public typealias BrowserFarmEvent = ResourceSchedulerEvent

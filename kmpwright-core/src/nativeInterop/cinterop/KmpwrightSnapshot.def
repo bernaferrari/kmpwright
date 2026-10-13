@@ -1,4 +1,4 @@
 language = Objective-C
 headers = KmpwrightSnapshot.h
-compilerOpts = -mios-version-min=15.0 -framework UIKit -framework WebKit -framework Security
-linkerOpts = -framework UIKit -framework WebKit -framework Security
+compilerOpts = -mios-version-min=15.0 -framework Security
+linkerOpts = -framework Security

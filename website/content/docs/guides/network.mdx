@@ -1,0 +1,369 @@
+---
+title: Network
+description: Mock, block and rewrite requests with page.route, wait for requests and responses, read the request history and HAR, and set headers, credentials and allowed domains.
+---
+
+```kotlin
+// Mock an API before the page calls it.
+page.route("**/api/user") { route ->
+    route.fulfill(json = """{"name": "Ada"}""")
+}
+// Block images.
+page.route(Regex("""\.(png|jpe?g|webp)$""")) { route -> route.abort() }
+
+val response = page.waitForResponse("**/api/user") {
+    page.goto("https://example.com/profile")
+}
+```
+
+The trailing lambda runs the action after the wait is subscribed, so the response cannot be missed (see [Waiting for requests and responses](#waiting-for-requests-and-responses)).
+
+Routing works on every backend, but each engine exposes a different part of the network to it. Read [Coverage per backend](#coverage-per-backend) before relying on a route for anything other than `fetch`/XHR.
+
+## Routing
+
+```kotlin
+suspend fun route(url: String, handler: suspend (Route) -> Unit)
+suspend fun route(url: Regex, handler: suspend (Route) -> Unit)
+suspend fun unroute(url: String)
+suspend fun unroute(url: Regex)
+suspend fun unrouteAll()
+```
+
+`route` returns once interception is active, so requests issued after it returns are routed (Playwright: `await page.route(...)`). On the JVM this waits for `Fetch.enable`.
+
+The handler receives a `Route` and makes one decision:
+
+| Method | Effect |
+|---|---|
+| `route.fulfill(status = 200, headers = emptyMap(), body = null, bodyBytes = null, contentType = null, json = null)` | Answer without contacting the network. |
+| `route.abort(errorCode = "failed")` | Fail the request with a network error. |
+| `route.resume(url = null, method = null, headers = null, postData = null)` | Send the request to the network, optionally overriding parts of it. Playwright JS `route.continue()`; `continue` is a Kotlin keyword. |
+| `route.fallback()` | Pass the request to the next older matching route, or to the network. |
+
+`route.request` is the intercepted [`Request`](#request-and-response).
+
+A handler that returns without calling any method falls back. Calling a second method on the same `Route` throws `KmpwrightException("Route is already handled")`.
+
+### Fulfill
+
+- `json` sets the body; it wins over `body` and `bodyBytes`.
+- `bodyBytes` wins over `body` for binary payloads.
+- `contentType` defaults to `application/json` when you don't pass it. Pass `contentType = "text/html"` (or the type you serve) for anything that isn't JSON.
+- `headers` are sent as response headers. If they also contain `Content-Type`, which one wins depends on the backend, so set the type through `contentType` only.
+- Android cannot fulfill with a redirect status (3xx) or a status outside 100..599; such a fulfill aborts the request.
+
+```kotlin
+page.route("https://example.com/") { route ->
+    route.fulfill(body = "<h1>Offline copy</h1>", contentType = "text/html")
+}
+```
+
+### Abort
+
+`errorCode` is a network error name. On the JVM it is mapped to a CDP `Network.ErrorReason`: `"failed"`, `"aborted"`, `"timedout"`, `"accessdenied"`, `"blockedbyclient"` and `"blockedbyresponse"` (any case), or an exact CDP name such as `"ConnectionRefused"` or `"NameNotResolved"`; anything else becomes `Failed`. On Android and iOS the request fails as a generic network error and `errorCode` is only reported in events and history.
+
+### Resume with overrides
+
+```kotlin
+page.route("**/api/**") { route ->
+    route.resume(headers = route.request.headers + ("x-test-run" to "42"))
+}
+```
+
+`headers` replaces the request headers; it does not merge. Copy `route.request.headers` as above to add one. `postData` replaces the body.
+
+How overrides are applied differs per backend; see [Coverage per backend](#coverage-per-backend).
+
+### URL matching
+
+A `String` pattern is a glob matched against the whole URL:
+
+| Glob | Matches |
+|---|---|
+| `*` | Any characters except `/` |
+| `**` | Any characters, including `/` |
+| `?` | Exactly one character |
+| anything else | Itself, literally |
+
+A string without wildcards must equal the full URL (`"https://example.com/api"` does not match `https://example.com/api?x=1`). Use `**` at either end to match a part: `"**/api/user*"`.
+
+A `Regex` pattern matches when it is found anywhere in the URL (like `Regex.containsMatchIn`). Anchor it with `^` and `$` for a full match.
+
+Playwright: the same `*`/`**` rules. Differences: `?` is a single-character wildcard here (Playwright matches it literally), `{a,b}` alternation is not supported (braces are literal), and there is no `baseURL` resolution. Use a `Regex` for anything more complex.
+
+### Order and fallback
+
+```kotlin
+page.route("**/*") { route ->
+    if (route.request.method == "POST") route.abort() else route.fallback()
+}
+page.route("**/api/**") { route ->
+    // Registered last, so it runs first.
+    if (route.request.url.endsWith("/health")) route.fulfill(body = "ok", contentType = "text/plain")
+    // Returning without a decision falls back to the "**/*" route above.
+}
+```
+
+- The most recently registered matching route runs first (Playwright order).
+- `fallback()`, or returning without a decision, hands the request to the next older matching route, and finally to the network.
+- Registering the same pattern again replaces its handler and makes it the newest route. Patterns are compared as written: `"**/api/**"` and `Regex("""/api/""")` are different routes.
+- `unroute(url)` removes the route registered with exactly that pattern; `unrouteAll()` removes every route.
+- Routes are copied to tabs opened with `page.openNewTab()`.
+
+### Handler time limits and errors
+
+Handlers run while the request is paused, so they are bounded:
+
+| Backend | Time limit | On timeout | On exception |
+|---|---|---|---|
+| Android | 10 s | Aborted (`timedout`) | Aborted (`failed`) |
+| iOS | 5 s | Aborted (`timedout`) | Aborted (`failed`) |
+| JVM (CDP) | 5 s | Aborted (`TimedOut`) | Aborted (`Failed`) |
+
+A failing handler never lets the request through silently. The failure is logged, not thrown to your code.
+
+On iOS the in-page bridge also gives up after 10 seconds without an answer from native code and rejects the `fetch`/XHR.
+
+## Coverage per backend
+
+`PageCapability.RouteInterception` is `Supported` on the JVM and `Partial` on Android and iOS.
+
+| | Android WebView | iOS WKWebView | JVM (CDP) |
+|---|---|---|---|
+| Mechanism | `WebViewClient.shouldInterceptRequest` | A document-start script that wraps `fetch` and `XMLHttpRequest` and asks native code over a script-message bridge; optional custom URL scheme | `Fetch` domain (`Fetch.enable` with pattern `*` on the page and its child frame sessions) |
+| Requests that reach routes | What WebView passes to `shouldInterceptRequest`: documents, subresources, `fetch`, XHR | `fetch` and XHR from the main frame (same origin as the page); document and subresource loads only through the custom scheme (below) | Every HTTP(S) request of the page and its frames |
+| `route.request.postData` | Always `null` (WebView does not expose request bodies) | The `fetch`/XHR body | The request body as CDP reports it |
+| `resume()` without overrides | WebView loads the request itself | The original `fetch`/XHR runs | `Fetch.continueRequest` |
+| `resume()` with overrides | KMPwright re-issues the request with `HttpURLConnection` (http/https only, cookies from `CookieManager`, final 3xx is an error, connect 15 s / read 30 s timeouts). Without `postData` a POST is re-sent without its body. | The `fetch`/XHR runs with the new URL, method, headers and body | `Fetch.continueRequest` with the overrides |
+| Responses in events/history | Only for fulfilled, resumed-with-overrides and failed requests; other requests finish without a status | Status and headers of bridged `fetch`/XHR and scheme requests | All |
+
+The `notes` of `page.capabilities()` repeat the important limits:
+
+- Android: "Fulfill and abort are supported; continue overrides are applied only for requests WebView exposes to shouldInterceptRequest."
+- iOS: "WKWebView routing covers fetch, XHR, and optional custom-scheme interception, but full browser-network parity remains partial."
+
+### iOS custom-scheme interception
+
+WKWebView never shows its own `http`/`https` document requests to apps. To route document and subresource loads on iOS, configure a custom scheme and load your pages through it:
+
+```kotlin
+val config = KmpwrightConfig(
+    iosSchemeInterception = IosSchemeInterceptionConfig(scheme = "kmpwright", fallbackScheme = "https")
+)
+// page.goto("kmpwright://example.com/") is fetched natively as https://example.com/
+```
+
+Requests to `kmpwright://…` are rewritten to `fallbackScheme://…`, offered to your routes (with the rewritten URL), and fetched with `NSURLSession` when they fall through. The scheme handler can only be registered when KMPwright creates the `WKWebView`; it is ignored (with a log message) for a host-provided web view.
+
+## Waiting for requests and responses
+
+```kotlin
+val request = page.waitForRequest("**/api/orders")
+val response = page.waitForResponse(Regex("""/api/orders/\d+$"""))
+val created = page.waitForResponse { it.url.endsWith("/api/orders") && it.status == 201 }
+```
+
+| Overload | Matches |
+|---|---|
+| `waitForRequest(url: String, timeoutMs: Long? = null): Request` | Glob when `url` contains `*` or `?`, substring otherwise; a `regex:` prefix makes it a regular expression |
+| `waitForRequest(url: Regex, timeoutMs: Long? = null): Request` | Regex found anywhere in the URL |
+| `waitForRequest(timeoutMs: Long? = null, predicate: (Request) -> Boolean): Request` | Your predicate |
+
+`waitForResponse` has the same three overloads and returns `Response`. `timeoutMs = null` uses `TimeoutConfig.default`; on timeout they throw `KmpwrightTimeoutException`.
+
+These functions only see requests issued after they start waiting: the event streams are hot and do not replay. Prefer the action-scoped extensions, which subscribe first and then run your action (the Kotlin form of Playwright's `Promise.all([page.waitForResponse(...), action()])`):
+
+```kotlin
+val response = page.waitForResponse("**/api/items") { click("#load") }
+val request = page.waitForRequest(Regex("/api/items")) { click("#load") }
+```
+
+They exist for `String` and `Regex` patterns: `waitForRequest(url, timeoutMs = null) { … }` and `waitForResponse(url, timeoutMs = null) { … }`. The lambda's receiver is the `Page`. If the action throws, the wait is cancelled and the exception propagates.
+
+`waitForResponse` does not resolve for failed requests. Failures are emitted on `page.events.response` with `status = 0` and the error in `statusText`.
+
+Playwright: same names, returning `Request`/`Response` objects. Difference: a string without wildcards is a substring match here, not an exact URL.
+
+### Events
+
+`page.events.request` and `page.events.response` are `SharedFlow<Request>` and `SharedFlow<Response>`, the Kotlin form of `page.on("request")` and `page.on("response")`:
+
+```kotlin
+val job = launch {
+    page.events.response.collect { if (!it.ok) println("${it.status} ${it.url}") }
+}
+```
+
+What they report is limited by the same per-backend coverage as routes.
+
+## Request and response
+
+```kotlin
+data class Request(
+    val url: String,
+    val method: String = "GET",
+    val headers: Map<String, String> = emptyMap(),
+    val postData: String? = null,
+    val postDataJSON: String? = null,
+    val resourceType: String = "document",
+    val timestamp: Long,      // epoch milliseconds
+    val id: String            // backend request id
+)
+
+data class Response(
+    val url: String,
+    val status: Int,
+    val statusText: String? = null,
+    val headers: Map<String, String> = emptyMap(),
+    val body: String? = null,
+    val fromCache: Boolean = false,
+    val timestamp: Long,
+    val id: String            // id of the matching Request
+) { val ok: Boolean /* status in 200..299 */ }
+```
+
+Both are plain, serializable data classes, not live handles: there is no `response.body()` or `request.response()`.
+
+- `resourceType` is the lowercase CDP resource type (`"xhr"`, `"fetch"`, `"script"`, …) for requests observed through CDP network events. Requests handed to route handlers, and every request on Android and iOS, carry the default `"document"`.
+- `postDataJSON` and `Response.body` are not filled by any backend today. Read bodies through [`page.network.responseBody`](#request-history).
+- `fromCache` is reported on the JVM (disk cache or service worker).
+- `Response.id` equals the `id` of its `Request`, which is how you correlate them and how you find a request in the history.
+
+## Request history
+
+`page.network` keeps a bounded history of the page's requests from the moment the page is attached, across navigations (agent-browser `network requests`).
+
+```kotlin
+page.goto("https://example.com")
+
+val apiCalls = page.network.requests(filter = "/api/", limit = 20)
+for (record in apiCalls) {
+    println("#${record.id} ${record.request.method} ${record.request.url} -> ${record.response?.status} ${record.state}")
+}
+
+val record = apiCalls.first { it.state == NetworkRequestState.Finished }
+val body = page.network.responseBody(record.id)
+println(if (body.base64Encoded) "binary, ${body.content.length} base64 chars" else body.content)
+```
+
+| Member | Description |
+|---|---|
+| `requests(filter: String? = null, limit: Int = 100): List<NetworkRequestRecord>` | Newest first. `filter` keeps records whose URL contains it (case-insensitive) or whose method equals it. `limit` must be 1..500. |
+| `detail(id: Long): NetworkRequestRecord?` | One record, or `null` when it is no longer retained. |
+| `suspend responseBody(id: Long, maxBytes: Int = 1_048_576): NetworkResponseBody` | Reads the response body of a finished request. `maxBytes` must be 1..4 MiB. |
+| `clear()` | Forgets every record. |
+| `suspend startHar()` / `suspend stopHar(): String` | [HAR capture](#har). |
+
+`NetworkRequestRecord(id: Long, request: Request, response: Response?, state: NetworkRequestState, error: String?, finishedAt: Long?)`. `id` is a per-page counter starting at 1; each redirect hop gets its own record. `state` is `Pending`, `Finished` or `Failed`.
+
+`NetworkResponseBody(content: String, base64Encoded: Boolean, truncated: Boolean)`: text bodies are returned as UTF-8 text, binary bodies as base64; `truncated` is set when the body was longer than `maxBytes`.
+
+Retention: at most 500 records and an estimated 4 MiB; the oldest records are dropped first. URLs are kept up to 8 KiB, post data up to 64 KiB and headers up to 32 KiB per request. The history is cleared when the page closes.
+
+`responseBody` throws `KmpwrightException` when the record is no longer retained, has no completed response, or is an earlier hop of a redirect chain (CDP reuses the request id; only the last hop has a body). It requires `KmpwrightConfig.allowDomExtraction` and passes the action policy as `ActionType.Evaluate`.
+
+| | Android | iOS | JVM (CDP) |
+|---|---|---|---|
+| `PageCapability.NetworkHistory` | `Partial` | `Partial` | `Partial` |
+| Records | Requests seen by `shouldInterceptRequest`; most have no `response` | Main-frame `fetch`/XHR and custom-scheme requests | Every request of the page and its frames |
+| `responseBody` | `UnsupportedOperationException` | `UnsupportedOperationException` | `Network.getResponseBody`; bodies larger than one protocol message are refused |
+
+To read the body of a `Response` you waited for, look up its record by id:
+
+```kotlin
+val response = page.waitForResponse("**/api/orders")
+val record = page.network.requests(limit = 500).first { it.request.id == response.id }
+val json = page.network.responseBody(record.id).content
+```
+
+## HAR
+
+```kotlin
+page.network.startHar()
+page.goto("https://example.com")
+page.getByRole("button", name = "Load more").click()
+val har: String = page.network.stopHar()
+// JVM: java.io.File("session.har").writeText(har)
+```
+
+`stopHar()` returns the archive as a HAR 1.2 JSON string (`{"log": {"version": "1.2", "creator": {"name": "kmpwright", …}, "entries": […]}}`). Nothing is written to disk. This is agent-browser `network har start|stop`; Playwright's `recordHar` context option and `routeFromHAR` replay have no equivalent.
+
+- `startHar()` while a capture is running keeps the running capture. `stopHar()` without a capture returns an empty log.
+- Entries are created when a response arrives, including failed requests (status 0, error in `statusText`).
+- Timings are coarse: `wait` and `receive` from event times; `blocked`, `dns`, `connect` and `ssl` are `-1`.
+- Response bodies are fetched for finished, non-redirect, non-failed responses: up to 1 MiB of text (or the base64 equivalent), at most 32 fetches at a time, 1.5 s each. `stopHar` waits up to 2 s for pending fetches. A truncated body is marked with the custom field `"_kmpwrightTruncated": true`.
+- At most 500 entries and 16 MiB; the oldest entries are dropped first.
+- `startHar` requires `KmpwrightConfig.allowDomExtraction` and passes the action policy as `ActionType.Evaluate`.
+
+`PageCapability.HarRecording` is `Supported` on the JVM and `Partial` on Android and iOS. On Android and iOS the archive contains metadata only (no bodies, since `responseBody` is unavailable), and only for the requests listed in the history table above. On Android that means pass-through requests, which never get a response status, produce no entries.
+
+## Extra headers and HTTP credentials
+
+```kotlin
+page.setExtraHTTPHeaders(mapOf("x-test-run" to "42"))
+page.setHTTPCredentials(HttpCredentials(username = "admin", password = "secret"))
+page.goto("https://staging.example.com")
+page.setHTTPCredentials(null) // clear
+```
+
+`setExtraHTTPHeaders(headers)` sends the headers with every request of the page. It works on the JVM only (`Network.setExtraHTTPHeaders`). On Android and iOS it throws `KmpwrightException`: neither WebView offers a native way to add headers to every subrequest, and KMPwright refuses to inject them through page JavaScript. Passing an empty map is allowed everywhere.
+
+`setHTTPCredentials(credentials)` answers HTTP authentication. The credentials are bound to one HTTP(S) origin: the page's origin when you call it. On Android and iOS, calling it before the first navigation binds them to the origin of the first navigation. On the JVM, calling it while the page has no HTTP(S) URL (for example on `about:blank`) binds nothing, so navigate first. Credentials are never sent to other origins.
+
+| Backend | How credentials are used |
+|---|---|
+| Android | `Authorization: Basic` on KMPwright-initiated navigations to the bound origin, and `onReceivedHttpAuthRequest` for the bound host (one attempt per host and realm) |
+| iOS | `Authorization: Basic` on KMPwright-initiated navigations to the bound origin |
+| JVM (CDP) | `Authorization: Basic` added through `Fetch` interception to every request to the bound origin |
+
+`HttpCredentials.toString()` masks the password. Both calls pass the action policy as `ActionType.Network`, and both are copied to tabs opened with `openNewTab()`.
+
+Playwright: `setExtraHTTPHeaders` is the same; `httpCredentials` is a context option there, `setHTTPCredentials(HttpCredentials?)` here.
+
+## Allowed domains
+
+```kotlin
+page.setAllowedDomains(listOf("example.com", "*.example-cdn.com"))
+page.setAllowedDomains(emptyList()) // remove the restriction
+```
+
+`setAllowedDomains` restricts the hosts the page may contact (agent-browser `--allowed-domains`). `"*.example.com"` matches `example.com` and every subdomain. Requests to other hosts fail as network errors. The list also applies to `page.read(url)`.
+
+Enforcement differs per backend (`PageCapability.DomainFiltering`: `Supported` on the JVM and iOS, `Partial` on Android). Android cannot filter server redirects of subresources, WebSockets or service-worker requests; the JVM does not filter WebSocket handshakes. See [Security](/docs/security) for the full model.
+
+## File uploads
+
+On JVM Chromium, use a file-input locator or handle a file chooser:
+
+```kotlin
+page.locator("input[type=file]").setInputFiles(listOf("/absolute/path/report.csv"))
+```
+
+With `launchBrowser`, Chromium and the JVM share the local filesystem. With an explicit CDP endpoint or a cloud provider, uploads are rejected by default: a file on the JVM machine is not automatically available to that browser.
+
+If both processes intentionally share the same absolute paths, set `CdpConfig(remoteBrowserSharesFileSystem = true)`. This option applies to locator uploads and `FileChooser.setFiles`; it does not transfer files. Clearing a selection with an empty list does not require filesystem access.
+
+Non-empty file uploads are unavailable in native WebViews. Check `PageCapability.FileChooser` and the [capability matrix](/docs/platforms/capabilities) before requesting an upload.
+
+## Downloads
+
+```kotlin
+page.setDownloadPath("/tmp/downloads")
+val download = page.waitForDownload("**/*.csv") { getByText("Export CSV").click() }
+println(download.suggestedFilename)
+download.saveAs("/tmp/report.csv")
+```
+
+Downloads are reported on the JVM only (`PageCapability.Downloads`). On Android and iOS, `waitForDownload`, `setDownloadPath` and `setDownloadBehavior` throw `UnsupportedOperationException`.
+
+- `waitForDownload(url: String? = null, timeoutMs: Long? = null): Download` waits for the next download, optionally one whose URL matches `url` (same string rules as `waitForRequest`). The action-scoped overload `waitForDownload(url, timeoutMs) { … }` runs the click after subscribing.
+- `Download.url` and `Download.suggestedFilename` are available immediately. `path()` waits for the download to finish and returns the saved file, or `null` when it was not saved to disk. `saveAs(path)` copies it and throws `KmpwrightException` when nothing was saved.
+- Files are only saved when a download path is set with `setDownloadPath`. `setDownloadBehavior(DownloadBehavior.SaveToDownloadPath | Allow | Deny)` controls whether downloads are saved, allowed or denied.
+
+## Related
+
+- [Capabilities](/docs/platforms/capabilities): support levels and notes per backend.
+- [Security](/docs/security): allowed domains, action policies and `allowDomExtraction`.
+- [Emulation](/docs/guides/emulation): `setOffline` and `emulateNetworkConditions`.
+- [Page reference](/docs/reference/page)

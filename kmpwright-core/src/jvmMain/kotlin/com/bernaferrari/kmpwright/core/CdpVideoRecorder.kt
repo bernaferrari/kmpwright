@@ -21,8 +21,9 @@ internal class CdpVideoRecorder private constructor(private val options: Recordi
     private val contactOutput: Path?, private val contactTemporary: Path?) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val queueLock = Any()
-    private val frames = ArrayDeque<ScreencastFrame>()
-    private val first = CompletableDeferred<ScreencastFrame>()
+    private data class Captured(val frame: ScreencastFrame, val receivedAtNanos: Long)
+    private val frames = ArrayDeque<Captured>()
+    private val first = CompletableDeferred<Captured>()
     private val ready = CompletableDeferred<Unit>()
     private val failure = AtomicReference<Throwable?>(null)
     private val stopping = AtomicBoolean(false)
@@ -46,11 +47,12 @@ internal class CdpVideoRecorder private constructor(private val options: Recordi
         capture = scope.launch {
             try {
                 source.collect { frame ->
+                    val sample = Captured(frame, System.nanoTime())
                     synchronized(queueLock) {
                         if (frames.size >= 16) throw KmpwrightException("Recording frame queue exceeded its 16-frame budget")
-                        frames.addLast(frame)
+                        frames.addLast(sample)
                     }
-                    first.complete(frame)
+                    first.complete(sample)
                 }
                 if (!stopping.get()) fail(KmpwrightException("Screencast ended during recording"))
             } catch (error: Throwable) { if (!stopping.get()) fail(error) }
@@ -59,12 +61,21 @@ internal class CdpVideoRecorder private constructor(private val options: Recordi
             try { encode(first.await()) }
             catch (error: Throwable) { fail(error) }
         }
-        try { withTimeout(10_000) { ready.await() } }
-        catch (error: Throwable) { abort(); throw error }
+        try {
+            withTimeoutOrNull(FIRST_FRAME_TIMEOUT_MS) { ready.await() }
+                ?: throw KmpwrightTimeoutException(
+                    "Video recording did not receive its first screencast frame within ${FIRST_FRAME_TIMEOUT_MS}ms; " +
+                        "the page may be hidden or not painting"
+                )
+        } catch (error: Throwable) {
+            abort()
+            throw if (error is KmpwrightException || error is kotlinx.coroutines.CancellationException) error
+                else KmpwrightException("Video recording failed to start: ${error.message ?: error::class.simpleName}", error)
+        }
     }
 
-    private suspend fun encode(initial: ScreencastFrame) {
-        var current = initial
+    private suspend fun encode(initial: Captured) {
+        var current = initial.frame
         var decoded = decode(current)
         width = (decoded.width + 1) / 2 * 2
         height = (decoded.height + 1) / 2 * 2
@@ -72,19 +83,23 @@ internal class CdpVideoRecorder private constructor(private val options: Recordi
         val g = canvas.createGraphics()
         val process = FfmpegEncoder.start(options.ffmpegExecutable, temporary, width, height, options.fps, scope)
         encoder = process
-        val started = System.nanoTime()
+        // Browser capture clocks (including remote clock adjustments) cannot schedule
+        // local output. Anchor after the first write so encoder/font startup does not
+        // consume the live backlog budget; later frames retain the 500ms bound.
+        var started = System.nanoTime()
+        var cursorEpoch = currentTimeMillis().toDouble()
         try {
             while (!stopping.get()) {
                 val scheduled = started + frameCount * 1_000_000_000L / options.fps
                 val remaining = scheduled - System.nanoTime()
                 if (remaining > 0) delay(maxOf(1, remaining / 1_000_000))
-                if (System.nanoTime() - scheduled > 500_000_000L) throw KmpwrightException("Video encoder fell more than 500 ms behind capture")
-                val timestamp = initial.timestampMs + frameCount * 1000.0 / options.fps
-                var next: ScreencastFrame? = null
+                if (frameCount > 0 && System.nanoTime() - scheduled > 500_000_000L) throw KmpwrightException("Video encoder fell more than 500 ms behind capture")
+                val timestamp = cursorEpoch + frameCount * 1000.0 / options.fps
+                var next: Captured? = null
                 synchronized(queueLock) {
-                    while (frames.isNotEmpty() && frames.first().timestampMs <= timestamp) next = frames.removeFirst()
+                    while (frames.isNotEmpty() && frames.first().receivedAtNanos <= scheduled) next = frames.removeFirst()
                 }
-                if (next != null && next !== current) { current = requireNotNull(next); decoded = decode(current) }
+                if (next != null && next.frame !== current) { current = next.frame; decoded = decode(current) }
                 g.color = Color.BLACK; g.fillRect(0, 0, width, height)
                 g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
                 val scale = minOf(width.toDouble() / decoded.width, height.toDouble() / decoded.height)
@@ -102,8 +117,12 @@ internal class CdpVideoRecorder private constructor(private val options: Recordi
                     } finally { translated.dispose() }
                 }
                 process.write((canvas.raster.dataBuffer as DataBufferByte).data)
+                if (frameCount == 0L) {
+                    started = System.nanoTime()
+                    cursorEpoch = currentTimeMillis().toDouble()
+                    ready.complete(Unit)
+                }
                 frameCount++
-                ready.complete(Unit)
             }
         } finally { g.dispose() }
     }
@@ -160,6 +179,8 @@ internal class CdpVideoRecorder private constructor(private val options: Recordi
     }
 
     companion object {
+        private const val FIRST_FRAME_TIMEOUT_MS = 10_000L
+
         suspend fun start(source: Flow<ScreencastFrame>, options: RecordingOptions, cursor: RecordingCursorTimeline): CdpVideoRecorder =
             withContext(Dispatchers.IO) {
                 FfmpegEncoder.requireAvailable(options.ffmpegExecutable)

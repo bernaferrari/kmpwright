@@ -1,96 +1,97 @@
 package com.bernaferrari.kmpwright.core
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.withLock
 
-class IOSTouch(
-    private val controller: WebViewController
-) : Touch {
+internal class IOSTouch(
+    private val controller: WebViewController,
+    private val config: KmpwrightConfig = KmpwrightConfig()
+) : Touchscreen {
+    private val mutex = kotlinx.coroutines.sync.Mutex()
+    private val slot = "__kmpwright_touch_" + kotlin.random.Random.nextLong().toULong().toString(16)
+    private var lastX = 0.0
+    private var lastY = 0.0
 
-    override suspend fun tap(x: Double, y: Double, options: TapOptions) {
-        injectTouchEvent("touchstart", x, y)
-        delay(10)
-        injectTouchEvent("touchend", x, y)
-    }
-
-    override suspend fun longTap(x: Double, y: Double, options: LongTapOptions) {
-        injectTouchEvent("touchstart", x, y)
-        delay(options.durationMs)
-        injectTouchEvent("touchend", x, y)
-    }
-
-    override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, options: ScrollOptions) {
-        injectTouchEvent("touchstart", x, y)
-
-        val steps = options.steps.coerceAtLeast(1)
-        val stepX = deltaX / steps
-        val stepY = deltaY / steps
-
-        for (i in 1..steps) {
-            val newX = x + stepX * i
-            val newY = y + stepY * i
-            injectTouchEvent("touchmove", newX, newY)
-            delay(5)
+    private suspend fun gesture(x: Double, y: Double, block: suspend () -> Unit) = mutex.withLock {
+        try {
+            injectTouchEvent("touchstart", x, y)
+            block()
+            injectTouchEvent("touchend", lastX, lastY)
+        } catch (error: Throwable) {
+            try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    kotlinx.coroutines.withTimeout(1_000) { injectTouchEvent("touchcancel", lastX, lastY) }
+                }
+            } catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
+            throw error
         }
-
-        injectTouchEvent("touchend", x + deltaX, y + deltaY)
     }
 
-    override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, options: SwipeOptions) {
-        val dx = x2 - x1
-        val dy = y2 - y1
-        val distance = kotlin.math.sqrt(dx * dx + dy * dy).toFloat()
-        val duration = (distance / options.speed * 1000).toLong()
-        val steps = (duration / 16).coerceAtLeast(1)
+    override suspend fun tap(x: Double, y: Double, options: TapOptions): Unit = config.inputAction(options.timeoutMs, "tap") {
+        gesture(x, y) { delay(10) }
+    }
 
-        injectTouchEvent("touchstart", x1, y1)
+    override suspend fun longTap(x: Double, y: Double, options: LongTapOptions): Unit = config.inputAction(options.timeoutMs, "long tap") {
+        gesture(x, y) { delay(options.durationMs) }
+    }
 
-        for (i in 1..steps) {
-            val progress = i.toFloat() / steps
-            val x = x1 + (x2 - x1) * progress
-            val y = y1 + (y2 - y1) * progress
-            injectTouchEvent("touchmove", x, y)
-            delay(16)
+    override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, options: ScrollOptions): Unit = config.inputAction(options.timeoutMs, "touch scroll") {
+        gesture(x, y) {
+            val steps = options.steps.coerceAtLeast(1)
+            for (i in 1..steps) {
+                injectTouchEvent("touchmove", x + deltaX * i / steps, y + deltaY * i / steps)
+                delay(5)
+            }
         }
+    }
 
-        injectTouchEvent("touchend", x2, y2)
+    override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, options: SwipeOptions): Unit = config.inputAction(options.timeoutMs, "swipe") {
+        require(options.speed.isFinite() && options.speed > 0) { "Swipe speed must be finite and positive" }
+        val distance = kotlin.math.hypot(x2 - x1, y2 - y1)
+        val steps = (distance / options.speed * 1000 / 16).toInt().coerceAtLeast(1)
+        gesture(x1, y1) {
+            for (i in 1..steps) {
+                val fraction = i.toDouble() / steps
+                injectTouchEvent("touchmove", x1 + (x2 - x1) * fraction, y1 + (y2 - y1) * fraction)
+                delay(16)
+            }
+        }
     }
 
     override suspend fun pinch(x: Double, y: Double, scale: Double, options: PinchOptions): Unit =
-        throw UnsupportedOperationException("WKWebView cannot synthesize a trusted native pinch gesture")
+        throw KmpwrightUnsupportedException("WKWebView cannot synthesize a trusted native pinch gesture")
 
-    private fun injectTouchEvent(type: String, x: Double, y: Double) {
-        val jsType = jsStringLiteral(type)
-        controller.evaluateJavaScript("""
+    private suspend fun injectTouchEvent(type: String, x: Double, y: Double) {
+        lastX = x
+        lastY = y
+        controller.evaluateJavaScriptAsync("""
             (function() {
-                var el = document.elementFromPoint($x, $y);
-                if (el) {
-                    var touch = new Touch({
-                        identifier: Date.now(),
-                        target: el,
-                        clientX: $x,
-                        clientY: $y,
-                        pageX: $x,
-                        pageY: $y
-                    });
-                    var keepTouch = $jsType !== 'touchend' && $jsType !== 'touchcancel';
-                    var event = new TouchEvent($jsType, {
-                        bubbles: true,
-                        cancelable: true,
-                        touches: keepTouch ? [touch] : [],
-                        targetTouches: keepTouch ? [touch] : [],
-                        changedTouches: [touch]
-                    });
-                    el.dispatchEvent(event);
+                var slot = ${jsStringLiteral(slot)}, kind = ${jsStringLiteral(type)};
+                var state = window[slot];
+                if (kind === 'touchstart') {
+                    var target = document.elementFromPoint($x, $y);
+                    if (!target) throw new Error('No element at touch coordinates');
+                    state = window[slot] = {target: target, identifier: Date.now()};
                 }
+                if (!state) return;
+                var ended = kind === 'touchend' || kind === 'touchcancel';
+                var touch = new Touch({identifier: state.identifier, target: state.target,
+                    clientX: $x, clientY: $y, pageX: $x + window.scrollX, pageY: $y + window.scrollY});
+                // Clear before dispatch so a throwing listener cannot retain a finished gesture.
+                if (ended) delete window[slot];
+                state.target.dispatchEvent(new TouchEvent(kind, {bubbles: true, cancelable: true,
+                    touches: ended ? [] : [touch], targetTouches: ended ? [] : [touch], changedTouches: [touch]}));
             })()
-        """.trimIndent()) { }
+        """.trimIndent())
     }
 }
 
-class IOSMouse(
-    private val controller: WebViewController
+internal class IOSMouse(
+    private val controller: WebViewController,
+    /** Resolves per-call timeouts; a null `timeoutMs` uses [TimeoutConfig.action]. */
+    private val config: KmpwrightConfig = KmpwrightConfig()
 ) : Mouse {
-    private val touch = IOSTouch(controller)
+    private val touch = IOSTouch(controller, config)
     private var lastX = 0.0
     private var lastY = 0.0
     private val pressedButtons = linkedSetOf<MouseButton>()
@@ -129,10 +130,6 @@ class IOSMouse(
         click(x, y, options.copy(clickCount = 2))
     }
 
-    override suspend fun tripleclick(x: Double, y: Double, options: MouseClickOptions) {
-        click(x, y, options.copy(clickCount = 3))
-    }
-
     override suspend fun down(options: MouseDownOptions) {
         pressedButtons.add(options.button)
         dispatchMouseEvent(
@@ -159,7 +156,7 @@ class IOSMouse(
     }
 
     override suspend fun wheel(deltaX: Double, deltaY: Double, options: WheelOptions) {
-        controller.evaluateJavaScript("""
+        controller.evaluateJavaScriptAsync("""
             (function() {
                 var target = document.elementFromPoint($lastX, $lastY) || document.scrollingElement || document.documentElement || document.body;
                 if (!target) return;
@@ -175,7 +172,7 @@ class IOSMouse(
                     deltaMode: 0
                 });
                 var accepted = target.dispatchEvent(event);
-                if (!accepted || !event.defaultPrevented) {
+                if (accepted && !event.defaultPrevented) {
                     if (target === document.body || target === document.documentElement || target === document.scrollingElement) {
                         window.scrollBy($deltaX, $deltaY);
                     } else {
@@ -184,11 +181,13 @@ class IOSMouse(
                     }
                 }
             })()
-        """.trimIndent()) { }
+        """.trimIndent())
     }
 
-    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions) {
-        move(startX, startY, MoveOptions(timeoutMs = options.timeoutMs))
+    override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, options: DragOptions): Unit =
+        config.inputAction(options.timeoutMs, "mouse drag") {
+        val timeoutMs = config.actionTimeout(options.timeoutMs)
+        move(startX, startY, MoveOptions(timeoutMs = timeoutMs))
         down(MouseDownOptions())
         dispatchMouseEvent("dragstart", startX, startY, MouseButton.LEFT, mouseButtonsBitfield(pressedButtons), 0)
         touch.swipe(
@@ -196,17 +195,17 @@ class IOSMouse(
             y1 = startY,
             x2 = endX,
             y2 = endY,
-            options = SwipeOptions(timeoutMs = options.timeoutMs)
+            options = SwipeOptions(timeoutMs = timeoutMs)
         )
-        move(endX, endY, MoveOptions(timeoutMs = options.timeoutMs))
+        move(endX, endY, MoveOptions(timeoutMs = timeoutMs))
         dispatchMouseEvent("drop", endX, endY, MouseButton.LEFT, mouseButtonsBitfield(pressedButtons), 0)
         up(MouseUpOptions())
         dispatchMouseEvent("dragend", endX, endY, MouseButton.LEFT, mouseButtonsBitfield(pressedButtons), 0)
     }
 
-    private fun dispatchMoveEvent(x: Double, y: Double) {
+    private suspend fun dispatchMoveEvent(x: Double, y: Double) {
         val buttons = mouseButtonsBitfield(pressedButtons)
-        controller.evaluateJavaScript("""
+        controller.evaluateJavaScriptAsync("""
             (function() {
                 var previous = window.__kmpwrightLastMouseTarget || null;
                 var next = document.elementFromPoint($x, $y);
@@ -244,12 +243,12 @@ class IOSMouse(
                     buttons: $buttons
                 }));
             })()
-        """.trimIndent()) { }
+        """.trimIndent())
     }
 
-    private fun dispatchMouseEvent(type: String, x: Double, y: Double, button: MouseButton, buttons: Int, detail: Int) {
+    private suspend fun dispatchMouseEvent(type: String, x: Double, y: Double, button: MouseButton, buttons: Int, detail: Int) {
         val jsType = jsStringLiteral(type)
-        controller.evaluateJavaScript("""
+        controller.evaluateJavaScriptAsync("""
             (function() {
                 var el = document.elementFromPoint($x, $y) || window.__kmpwrightLastMouseTarget || document;
                 if (!el) return;
@@ -265,19 +264,21 @@ class IOSMouse(
                     detail: $detail
                 }));
             })()
-        """.trimIndent()) { }
+        """.trimIndent())
     }
 }
 
-class IOSKeyboard(
-    private val controller: WebViewController
+internal class IOSKeyboard(
+    private val controller: WebViewController,
+    /** Resolves per-call timeouts; a null `timeoutMs` uses [TimeoutConfig.action]. */
+    private val config: KmpwrightConfig = KmpwrightConfig()
 ) : Keyboard {
 
     private val pressedKeys = mutableSetOf<String>()
 
     override suspend fun insertText(text: String) {
         val jsText = jsStringLiteral(text)
-        controller.evaluateJavaScript("""
+        controller.evaluateJavaScriptAsync("""
             (function() {
                 var active = document.activeElement;
                 var text = $jsText;
@@ -335,14 +336,14 @@ class IOSKeyboard(
                 }
                 return false;
             })()
-        """.trimIndent()) { }
+        """.trimIndent())
     }
 
-    override suspend fun type(text: String, options: TypeOptions) {
-        for (unit in text.toUnicodeTextUnits()) {
-            insertText(unit)
-            delay(options.delayMs)
-        }
+    private val focused = FocusedElementInput(controller, config)
+
+    /** Playwright `keyboard.type`: a full key event sequence (keydown, keypress, input, keyup) per character. */
+    override suspend fun type(text: String, options: TypeOptions): Unit = config.inputAction(options.timeoutMs, "keyboard type") {
+        focused.type(text, options.delayMs)
     }
 
     override suspend fun down(key: String) {
@@ -357,57 +358,27 @@ class IOSKeyboard(
         dispatchKeyEvent("keyup", canonicalKey)
     }
 
-    override suspend fun press(key: String, options: PressOptions) {
-        val canonicalKey = canonicalModifierKey(key)
-        val eventKey = keyValueForPhysicalKey(canonicalKey, pressedKeys)
-        val printableText = textForKeyPress(canonicalKey, pressedKeys)
-        when {
-            printableText != null && !canonicalKey.isModifierKey() -> {
-                dispatchKeyEvent("keydown", eventKey, canonicalKey)
-                if (options.delayMs > 0) delay(options.delayMs)
-                dispatchKeyEvent("keypress", eventKey, canonicalKey)
-                insertText(printableText)
-                dispatchKeyEvent("keyup", eventKey, canonicalKey)
-            }
-            isSelectAllShortcut(canonicalKey, pressedKeys) -> {
-                dispatchKeyEvent("keydown", eventKey, canonicalKey)
-                if (options.delayMs > 0) delay(options.delayMs)
-                applyShortcutKey(canonicalKey)
-                dispatchKeyEvent("keyup", eventKey, canonicalKey)
-            }
-            canonicalKey.shouldApplyDomEditing() -> {
-                dispatchKeyEvent("keydown", canonicalKey)
-                if (options.delayMs > 0) delay(options.delayMs)
-                applyEditingKey(canonicalKey)
-                dispatchKeyEvent("keyup", canonicalKey)
-            }
-            else -> {
-                down(canonicalKey)
-                if (options.delayMs > 0) delay(options.delayMs)
-                up(canonicalKey)
-            }
-        }
+    /**
+     * Playwright `keyboard.press`: combinations such as `"Control+A"`/`"ControlOrMeta+A"` (Meta on iOS),
+     * default actions (text insertion, select-all, Enter, Tab, Backspace, arrows) and [PressOptions.delayMs]
+     * between keydown and keyup. Modifiers held with [down] apply to the key.
+     */
+    override suspend fun press(key: String, options: PressOptions): Unit = config.inputAction(options.timeoutMs, "keyboard press") {
+        focused.press(key, options.delayMs, pressedKeys.filter { it.isModifierKey() }.toSet())
     }
 
-    override suspend fun downAndUp(key: String, options: TypeOptions) {
-        press(key, PressOptions(delayMs = options.delayMs, timeoutMs = options.timeoutMs))
-    }
+    internal fun isModifierPressed(key: String): Boolean = pressedKeys.contains(canonicalModifierKey(key))
 
-    override fun isModifierPressed(key: String): Boolean {
-        return pressedKeys.contains(canonicalModifierKey(key))
-    }
+    internal fun modifiers(): Set<String> = pressedKeys.toSet()
 
-    override fun modifiers(): Set<String> {
-        return pressedKeys.toSet()
-    }
-
-    private fun dispatchKeyEvent(type: String, key: String, physicalKey: String = key) {
+    /** Returns false when a listener called preventDefault(). */
+    private suspend fun dispatchKeyEvent(type: String, key: String, physicalKey: String = key): Boolean {
         val keyCode = domKeyCodeForPhysicalKey(physicalKey)
         val code = domCodeForPhysicalKey(physicalKey)
         val jsKey = jsStringLiteral(key)
         val jsCode = jsStringLiteral(code)
 
-        controller.evaluateJavaScript("""
+        return controller.evaluateJavaScriptAsync("""
             (function() {
                 var target = document.activeElement || document;
                 var event = new KeyboardEvent('${escapeJsString(type)}', {
@@ -422,149 +393,9 @@ class IOSKeyboard(
                     altKey: ${pressedKeys.contains(KeyboardModifiers.ALT)},
                     metaKey: ${pressedKeys.contains(KeyboardModifiers.META)}
                 });
-                target.dispatchEvent(event);
+                return target.dispatchEvent(event);
             })()
-        """.trimIndent()) { }
-    }
-
-    private fun applyShortcutKey(key: String) {
-        controller.evaluateJavaScript("""
-            (function() {
-                var active = document.activeElement;
-                var key = ${jsStringLiteral(key)};
-                if (!active) return false;
-
-                if (key.toLowerCase() === 'a') {
-                    if (active.isContentEditable) {
-                        var selection = window.getSelection();
-                        if (!selection) return false;
-                        var range = document.createRange();
-                        range.selectNodeContents(active);
-                        selection.removeAllRanges();
-                        selection.addRange(range);
-                        return true;
-                    }
-                    if (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') {
-                        var value = active.value || '';
-                        active.selectionStart = 0;
-                        active.selectionEnd = value.length;
-                        return true;
-                    }
-                }
-
-                return false;
-            })()
-        """.trimIndent()) { }
-    }
-
-    private fun applyEditingKey(key: String) {
-        controller.evaluateJavaScript("""
-            (function() {
-                var active = document.activeElement;
-                if (!active) return false;
-                var key = ${jsStringLiteral(key)};
-                var isTextControl = active.tagName === 'INPUT' || active.tagName === 'TEXTAREA';
-                var isEditable = isTextControl || active.isContentEditable;
-                var shiftHeld = ${pressedKeys.contains(KeyboardModifiers.SHIFT)};
-
-                if (key === 'Tab') {
-                    var tabbables = Array.from(document.querySelectorAll('a[href], button, input, textarea, select, [tabindex]:not([tabindex="-1"])'))
-                        .filter(function(el) {
-                            return !el.disabled && el.tabIndex >= 0 && el.offsetParent !== null;
-                        });
-                    if (tabbables.length === 0) return false;
-                    var index = tabbables.indexOf(active);
-                    var next = shiftHeld
-                        ? (index <= 0 ? tabbables.length - 1 : index - 1)
-                        : (index + 1) % tabbables.length;
-                    tabbables[next].focus();
-                    return true;
-                }
-
-                if (key === 'Escape') {
-                    if (active.blur) active.blur();
-                    return true;
-                }
-
-                if (!isEditable) {
-                    if (key === 'Enter' && active.form && active.form.requestSubmit) {
-                        active.form.requestSubmit();
-                        return true;
-                    }
-                    return false;
-                }
-
-                if (active.isContentEditable) {
-                    if (key === 'Enter') {
-                        document.execCommand('insertLineBreak');
-                        active.dispatchEvent(new Event('input', { bubbles: true }));
-                        return true;
-                    }
-                    if (key === 'Backspace') {
-                        document.execCommand('delete');
-                        active.dispatchEvent(new Event('input', { bubbles: true }));
-                        return true;
-                    }
-                    if (key === 'Delete') {
-                        document.execCommand('forwardDelete');
-                        active.dispatchEvent(new Event('input', { bubbles: true }));
-                        return true;
-                    }
-                    return false;
-                }
-
-                var value = active.value || '';
-                var start = active.selectionStart || 0;
-                var end = active.selectionEnd || start;
-
-                function updateValue(nextValue, nextStart, nextEnd) {
-                    active.value = nextValue;
-                    active.selectionStart = nextStart;
-                    active.selectionEnd = nextEnd;
-                    active.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-
-                switch (key) {
-                    case 'Backspace':
-                        if (start !== end) {
-                            updateValue(value.substring(0, start) + value.substring(end), start, start);
-                        } else if (start > 0) {
-                            updateValue(value.substring(0, start - 1) + value.substring(end), start - 1, start - 1);
-                        }
-                        return true;
-                    case 'Delete':
-                        if (start !== end) {
-                            updateValue(value.substring(0, start) + value.substring(end), start, start);
-                        } else if (start < value.length) {
-                            updateValue(value.substring(0, start) + value.substring(start + 1), start, start);
-                        }
-                        return true;
-                    case 'Enter':
-                        if (active.tagName === 'TEXTAREA') {
-                            updateValue(value.substring(0, start) + '\\n' + value.substring(end), start + 1, start + 1);
-                        } else if (active.form && active.form.requestSubmit) {
-                            active.form.requestSubmit();
-                        } else {
-                            active.dispatchEvent(new Event('change', { bubbles: true }));
-                        }
-                        return true;
-                    case 'ArrowLeft':
-                        active.selectionStart = active.selectionEnd = Math.max(0, start - 1);
-                        return true;
-                    case 'ArrowRight':
-                        active.selectionStart = active.selectionEnd = Math.min(value.length, end + 1);
-                        return true;
-                    case 'Home':
-                        active.selectionStart = active.selectionEnd = 0;
-                        return true;
-                    case 'End':
-                        active.selectionStart = active.selectionEnd = value.length;
-                        return true;
-                    default:
-                        return false;
-                }
-            })()
-        """.trimIndent()) { }
+        """.trimIndent()) != "false"
     }
 
 }

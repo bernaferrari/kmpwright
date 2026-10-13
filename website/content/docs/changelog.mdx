@@ -1,0 +1,48 @@
+---
+title: Changelog
+description: Release notes for KMPwright, starting with the unreleased 0.1.0 alpha.
+---
+
+## 0.1.0 (unreleased)
+
+First public version. Not yet published to Maven Central; the iOS XCFramework release asset is not yet available. APIs may change before release. See [Installation](/docs/installation).
+
+### Platforms
+
+- Android `WebView` (API 26+), attaching to an app's own `WebView` or a managed one, plus an optional Compose wrapper (`kmpwright-compose`: `KmpwrightWebView`, `rememberKmpwrightController`, `KmpwrightDebugOverlay`).
+- iOS `WKWebView` (iOS 15+, arm64 device and simulator), as a Kotlin Multiplatform dependency or a static `KmpwrightCore` XCFramework.
+- JVM Chromium over CDP (JDK 17): launch an owned Chromium with `launchBrowser` (headless or headed, persistent or snapshot profiles, extensions, WebGPU, private CA trust), connect to a CDP endpoint, auto-connect to a local Chrome, or use Browserbase, Browserless, Browser Use or Kernel.
+- Runtime capability reporting (`page.capabilities()`, `requireCapabilities`) with Supported / Partial / Unsupported levels and per-backend notes.
+
+### Playwright-style API
+
+- `Browser`, `BrowserContext`, `Page`, `Locator`, `FrameLocator` with Playwright JS names; all page operations are `suspend`, options are data classes, `timeoutMs = null` uses the configured default.
+- Navigation and waits: `goto`, `reload`, `goBack`/`goForward`, `waitForURL`, `waitForLoadState`, `waitForNavigation`, `waitForRequest`/`waitForResponse`, `waitForFunction`, plus action-scoped forms that cannot miss fast events.
+- Locators: CSS (open shadow roots), `text=`, `role=`, `label=`, `placeholder=`, `alt=`, `title=`, `testid=`, `xpath=`, `>>` chaining, snapshot refs; `getBy*` finders; `filter`, `and`, `or`, `nth`; actionability checks and strict mode.
+- Web-first assertions: `expect(locator)` and `expect(page)`, with `.not`.
+- Network: `route` with `fulfill`, `abort`, `resume` and `fallback`; request history; HAR 1.2 capture; extra headers and HTTP credentials.
+- State: cookies, `localStorage`/`sessionStorage`, clipboard, `storageState()` with encrypted files and autosave.
+- Emulation: color scheme, geolocation, offline and network conditions, viewport, user agent, scale factor, device presets.
+- Input devices: `keyboard`, `mouse`, `touchscreen` (tap, long tap, scroll, swipe, pinch).
+- Dialogs, frames, downloads and file choosers, screenshots (viewport, full page, element, annotated), PDF.
+- CDP extras: browser targets and windows, Chrome tracing, V8 profiling, screencast frames, video recording with cursor overlay and contact sheets.
+
+### Agent features (from agent-browser)
+
+- Accessibility snapshots with `@e` refs usable as locators, and snapshot diffs.
+- `page.runCommand(...)`: the agent-browser command grammar for navigation, snapshots, actions, queries, waits, screenshots, console, cookies and storage.
+- Annotated screenshots, HTTP reading as Markdown (`page.read`, `HttpReader`), URL diffs, visual diffs.
+- Accessibility audits (axe-core), Web Vitals, React component inspection, experimental WebMCP tools.
+- Login profiles (`AuthManager`, `page.login`).
+
+### Security
+
+- `KmpwrightConfig` origin rules and switches for evaluation, DOM extraction, trace export and production mode.
+- Action policies with confirmation callbacks.
+- `setAllowedDomains` enforced at the request layer on every backend (Partial on Android).
+- Content boundaries for page text returned to models.
+- A sealed, tamper-detecting in-page runtime.
+
+### Sample app
+
+- Compose Multiplatform sample for Android and iOS with an agent console, live ref badges over the page, runnable recipes and an inspector; native Liquid Glass navigation on iOS 26. See [Sample app](/docs/sample-app).

@@ -29,7 +29,7 @@ class IOSBackendContractTest {
                 PageCapability.Pdf to SupportLevel.Partial,
                 PageCapability.BrowserContexts to SupportLevel.Partial,
                 PageCapability.ServiceWorkers to SupportLevel.Unsupported,
-                PageCapability.DomainFiltering to SupportLevel.Partial,
+                PageCapability.DomainFiltering to SupportLevel.Supported,
                 PageCapability.NetworkEmulation to SupportLevel.Partial,
                 PageCapability.HarRecording to SupportLevel.Partial,
                 PageCapability.Downloads to SupportLevel.Unsupported,
@@ -46,7 +46,8 @@ class IOSBackendContractTest {
                 PageCapability.HttpRead to SupportLevel.Supported,
                 PageCapability.NetworkHistory to SupportLevel.Partial,
                 PageCapability.VideoRecording to SupportLevel.Unsupported,
-            PageCapability.Screencast to SupportLevel.Unsupported
+            PageCapability.Screencast to SupportLevel.Unsupported,
+                PageCapability.CrossOriginFrames to SupportLevel.Unsupported
             ),
             capabilities.supportLevels()
         )
@@ -66,7 +67,8 @@ class IOSBackendContractTest {
         val locator = page.locator("button.submit")
         assertEquals("fixture text", locator.innerText())
         locator.click()
-        assertTrue(controller.evaluations.any { it.contains("el.click()") })
+        // Legacy click script or the shared actionability pipeline (H.perform).
+        assertTrue(controller.evaluations.any { it.contains("el.click()") || it.contains("H.perform(el, 'click'") })
         assertEquals(BackendKind.IOSWebView, page.capabilities().backend)
 
         page.close()
@@ -80,19 +82,18 @@ class IOSBackendContractTest {
         val controller = RecordingIOSController()
         val page = testPage(controller)
         page.goto("https://fixture.invalid/state")
-        page.setCookie(Cookie("session", "one", "fixture.invalid"))
-        page.setLocalStorage("token", "one")
-        page.setSessionStorage("tab", "one")
-        page.saveState("fixture")
+        page.addCookies(listOf(Cookie("session", "one", "fixture.invalid")))
+        page.localStorage.set("token", "one")
+        page.sessionStorage.set("tab", "one")
+        val saved = page.storageState()
 
         controller.cookies.clear()
         controller.localStorage.clear()
         controller.sessionStorage.clear()
-        assertTrue(page.loadState("fixture"))
-        assertEquals("one", page.getCookie("session")?.value)
-        assertEquals("one", page.getLocalStorage("token"))
-        assertEquals("one", page.getSessionStorage("tab"))
-        assertEquals(listOf("fixture"), page.stateNames())
+        page.setStorageState(saved)
+        assertEquals("one", page.cookies().firstOrNull { it.name == "session" }?.value)
+        assertEquals("one", page.localStorage.get("token"))
+        assertEquals("one", page.sessionStorage.get("tab"))
         page.close()
     }
 
@@ -103,10 +104,10 @@ class IOSBackendContractTest {
         var routeCalled = false
         page.route("**/api/**") {
             routeCalled = true
-            RouteHandler.Fallthrough
+            it.fallback()
         }
         assertEquals(1, controller.routeHandlerCount)
-        page.unroute()
+        page.unrouteAll()
         assertEquals(0, controller.routeHandlerCount)
 
         val request = async(start = CoroutineStart.UNDISPATCHED) {
@@ -145,7 +146,7 @@ class IOSBackendContractTest {
 
         val page = testPage(RecordingIOSController())
         assertFails { page.setExtraHTTPHeaders(mapOf("X-Secret" to "not-exposed")) }
-        assertFails { page.setHTTPCredentials("user", "secret") }
+        assertFails { page.setHTTPCredentials(HttpCredentials("user", "secret")) }
         page.close()
     }
 
@@ -268,18 +269,14 @@ class IOSBackendContractTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) { routeHandlerCount += 1 }
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) { routeHandlerCount += 1 }
         override fun removeRouteHandler(urlPattern: String) { routeHandlerCount = (routeHandlerCount - 1).coerceAtLeast(0) }
         override fun removeAllRouteHandlers() { routeHandlerCount = 0 }
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
         override fun setCookie(cookie: Cookie) { cookies.removeAll { it.name == cookie.name }; cookies += cookie }
         override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) { callback(cookies.firstOrNull { it.name == name }) }
         override fun getAllCookies(callback: (List<Cookie>) -> Unit) { callback(cookies.toList()) }
         override fun deleteCookie(name: String, domain: String) { cookies.removeAll { it.name == name } }
         override fun deleteAllCookies() { cookies.clear() }
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) { onResult(RouteAction.Fallthrough) }
 
         fun emitRequest(request: Request) {
             requestListeners.forEach { it.onRequestStarted(request) }

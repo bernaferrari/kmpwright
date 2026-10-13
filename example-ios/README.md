@@ -1,43 +1,42 @@
-# iOS Example Host (SwiftUI)
+# iOS example host
 
-This folder contains the debug SwiftUI/Xcode host for the shared Compose
-Multiplatform example. It evaluates source from an owner-supplied checkout;
-it is not the public `KmpwrightCore` consumer.
+The SwiftUI host for the shared Compose Multiplatform sample in
+[`kmpwright-example-shared`](../kmpwright-example-shared).
 
-## 1) Build the KMP framework
+| iOS | Navigation |
+| --- | --- |
+| 26 and later | Native SwiftUI `TabView` and `NavigationStack`, so the system draws the Liquid Glass tab bar and navigation bar. Compose renders each screen. |
+| 15–25 | The whole sample, navigation included, is drawn by Compose. |
 
-From the repo root:
+## Run it
+
+From the repository root, build the shared framework, then open the project:
 
 ```bash
 ./gradlew :kmpwright-example-shared:linkDebugFrameworkIosSim
+open example-ios/KmpwrightExampleApp.xcodeproj
 ```
 
-The framework will be at:
+Run the `KmpwrightExampleApp` scheme on an arm64 simulator. The project's build
+phase relinks the framework on each build. For an optimized framework, run
+`./gradlew :kmpwright-example-shared:linkReleaseFrameworkIosSim`.
 
-```
-kmpwright-example-shared/build/bin/iosSim/debugFramework/KmpwrightExampleShared.framework
-```
+## How the native shell works
 
-## 2) Open the Xcode project
+- `NativeStudio` (Kotlin, `iosMain`) owns one browser session: a single
+  `WKWebView`, `Browser` and page shared by every tab.
+- `tabViewController(tab:)` and `recipeViewController(id:)` return Compose
+  controllers for each tab root and pushed recipe.
+- Each screen reports `screenDidAppear(key:)`; the visible screen adopts the
+  shared `WKWebView`, so the page you are driving follows you between tabs.
+- Compose sends navigation back to Swift through the `onSelectTab` and
+  `onOpenRecipe` callbacks. See the
+  [Liquid Glass guide](https://kotlinlang.org/docs/multiplatform/ios-liquid-glass.html)
+  for the pattern.
 
-Open:
+## Browser contract mode
 
-```
-example-ios/KmpwrightExampleApp.xcodeproj
-```
-
-Then run on an arm64 iOS Simulator (Apple Silicon). Current Compose
-Multiplatform releases no longer ship Intel simulator artifacts. The standalone
-core XCFramework also supports arm64 devices and simulators.
-
-## Notes
-
-- The SwiftUI host calls `createViewController()` from the KMP module, which returns a Compose-powered UIViewController.
-- The project links the debug framework from `kmpwright-example-shared/build/bin/iosSim/debugFramework`.
-- For a release build, run:
-  ```bash
-  ./gradlew :kmpwright-example-shared:linkReleaseFrameworkIosSim
-  ```
-- The separately distributed `KmpwrightCore.xcframework` is the static core
-  library for consumers after external promotion. It is not this example UI
-  framework; link that release asset with **Do Not Embed**.
+When `KMPWRIGHT_RELIABILITY_BASE_URL` is set, the app skips the UI and runs the
+iOS reliability probe against that fixture server instead. The
+[`run-ios-browser-contracts.sh`](../scripts/run-ios-browser-contracts.sh) script
+sets it up.

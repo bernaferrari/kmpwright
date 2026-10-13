@@ -8,7 +8,7 @@ import kotlin.test.*
 class StateAutosaveTest {
     @Test fun `autosave writes immediately periodically and stops without a final write`() = runTest {
         var saves = 0
-        val autosave = StateAutosave(this, 1_000) { saves++ }.start()
+        val autosave = StorageStateAutosave(this, 1_000) { saves++ }.start()
         assertEquals(1, saves)
         runCurrent()
         advanceTimeBy(1_000); runCurrent()
@@ -21,7 +21,7 @@ class StateAutosaveTest {
     }
     @Test fun `a periodic write error is observable and stops later writes`() = runTest {
         var saves = 0
-        val autosave = StateAutosave(this, 1_000) { if (++saves > 1) error("disk unavailable") }.start()
+        val autosave = StorageStateAutosave(this, 1_000) { if (++saves > 1) error("disk unavailable") }.start()
         runCurrent(); advanceTimeBy(1_000); runCurrent()
         assertEquals("disk unavailable", autosave.error.value)
         assertFalse(autosave.isActive)
@@ -29,6 +29,6 @@ class StateAutosaveTest {
         assertEquals(2, saves)
     }
     @Test fun `initial write failure does not leave a lazy job behind`() = runTest {
-        assertFailsWith<IllegalStateException> { StateAutosave(this, 1_000) { error("first write") }.start() }
+        assertFailsWith<IllegalStateException> { StorageStateAutosave(this, 1_000) { error("first write") }.start() }
     }
 }

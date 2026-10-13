@@ -21,13 +21,13 @@ class DownloadFileChooserTest {
     }
 
     @Test
-    fun `setDownloadPath stores path`() {
+    fun `setDownloadPath stores path`() = testBlocking {
         page.setDownloadPath("/tmp/downloads")
         // No exception = success
     }
 
     @Test
-    fun `setDownloadBehavior changes behavior`() {
+    fun `setDownloadBehavior changes behavior`() = testBlocking {
         page.setDownloadBehavior(DownloadBehavior.Deny)
         page.setDownloadBehavior(DownloadBehavior.Allow)
         page.setDownloadBehavior(DownloadBehavior.SaveToDownloadPath)
@@ -35,14 +35,14 @@ class DownloadFileChooserTest {
 
     @Test
     fun `reportDownload emits to download flow`() {
-        val event = DownloadEvent("https://example.com/file.pdf", "file.pdf")
+        val event = Download("https://example.com/file.pdf", "file.pdf", { null }, { _, _ -> })
         page.reportDownload(event)
         // Event is emitted (buffered) — accessing it via waitForDownload in real usage
     }
 
     @Test
     fun `reportFileChooser emits to fileChooser flow`() {
-        val event = FileChooserEvent("input[type=file]", false)
+        val event = FileChooser("input[type=file]", false) { _, _ -> }
         page.reportFileChooser(event)
     }
 
@@ -79,7 +79,7 @@ class DownloadFileChooserTest {
         runBlocking {
             CoroutineScope(Dispatchers.Default).launch {
                 delay(50)
-                page.reportDownload(DownloadEvent("https://example.com/report.csv", "report.csv"))
+                page.reportDownload(Download("https://example.com/report.csv", "report.csv", { null }, { _, _ -> }))
             }
             val event = page.waitForDownload(timeoutMs = 1000)
             assertEquals("report.csv", event.suggestedFilename)
@@ -92,9 +92,9 @@ class DownloadFileChooserTest {
         runBlocking {
             CoroutineScope(Dispatchers.Default).launch {
                 delay(50)
-                page.reportDownload(DownloadEvent("https://cdn.example.com/data.json", "data.json"))
+                page.reportDownload(Download("https://cdn.example.com/data.json", "data.json", { null }, { _, _ -> }))
             }
-            val event = page.waitForDownload(urlPattern = ".*\\.json", timeoutMs = 1000)
+            val event = page.waitForDownload(url = "**/*.json", timeoutMs = 1000)
             assertEquals("data.json", event.suggestedFilename)
         }
     }
@@ -109,7 +109,7 @@ class DownloadFileChooserTest {
                 override suspend fun evaluateJavaScriptAsync(script: String): String? = null
             }
 
-        override fun createTouch(): Touch = throw UnsupportedOperationException()
+        override fun createTouch(): Touchscreen = throw UnsupportedOperationException()
         override fun createMouse(): Mouse = throw UnsupportedOperationException()
         override fun createKeyboard(): Keyboard = throw UnsupportedOperationException()
     }
@@ -141,17 +141,13 @@ class DownloadFileChooserTest {
         override fun setRequestIdleTimeout(timeoutMs: Long) {}
         override fun addDialogListener(listener: DialogListener) {}
         override fun removeDialogListener(listener: DialogListener) {}
-        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> RouteHandler) {}
+        override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {}
         override fun removeRouteHandler(urlPattern: String) {}
         override fun removeAllRouteHandlers() {}
-        override fun fulfillRoute(requestId: String, options: FulfillOptions) {}
-        override fun abortRoute(requestId: String, errorCode: String) {}
-        override fun continueRoute(requestId: String, options: ContinueOptions) {}
         override fun setCookie(cookie: Cookie) {}
         override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {}
         override fun getAllCookies(callback: (List<Cookie>) -> Unit) {}
         override fun deleteCookie(name: String, domain: String) {}
         override fun deleteAllCookies() {}
-        override fun interceptRequest(url: String, method: String, headers: Map<String, String>, onResult: (RouteAction?) -> Unit) {}
     }
 }
