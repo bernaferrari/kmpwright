@@ -109,13 +109,7 @@ jobs:
           api-level: 35
           arch: x86_64
           disable-linux-hw-accel: false
-          script: |
-            timeout 12m ./scripts/run-android-tests.sh emulator-5554 || {
-              adb logcat -d > android-instrumentation-logcat.txt
-              adb shell screencap -p /sdcard/kmpwright-failure.png
-              adb pull /sdcard/kmpwright-failure.png android-instrumentation-failure.png
-              exit 1
-            }
+          script: ./scripts/run-android-tests-ci.sh emulator-5554
       - name: Upload instrumentation diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

@@ -13,4 +13,4 @@ trap 'rm -f "$result"' EXIT
 adb -s "$serial" shell am instrument -w -e waitForActivitiesToComplete false \
   -e package com.bernaferrari.kmpwright.test \
   com.bernaferrari.kmpwright.test.test/androidx.test.runner.AndroidJUnitRunner | tee "$result"
-rg -q '^OK \([0-9]+ tests\)' "$result" || { echo "Android instrumentation did not pass" >&2; exit 1; }
+grep -Eq '^OK \([0-9]+ tests\)' "$result" || { echo "Android instrumentation did not pass" >&2; exit 1; }
