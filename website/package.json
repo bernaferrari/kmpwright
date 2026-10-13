@@ -7,12 +7,13 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "next build",
-    "dev": "next dev",
+    "build": "pnpm demo:build && next build",
+    "dev": "pnpm demo:build && next dev",
     "start": "next start",
-    "types:check": "next typegen && tsc --noEmit",
+    "types:check": "pnpm demo:build && next typegen && tsc --noEmit",
     "lint": "biome check",
-    "format": "biome format --write"
+    "format": "biome format --write",
+    "demo:build": "cd .. && ./gradlew :kmpwright-web-demo:syncWebsiteDemo"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

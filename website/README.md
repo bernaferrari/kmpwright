@@ -6,7 +6,7 @@ API and platform limitations.
 
 ## Develop
 
-Use Node.js 24 or newer and pnpm 11.25.0. From this directory, install the locked
+Use Node.js 24 or newer, pnpm 11.25.0, Java 17 and the Android SDK (the shared Gradle build configures the Android modules). From this directory, install the locked
 dependencies and start the server:
 
 ```bash
@@ -31,9 +31,10 @@ not deploy the site or publish the library's Maven artifacts.
 ## Edit content
 
 - `app/(home)/page.tsx`: landing page and runnable shared Kotlin example.
-- `components/workflow-preview.tsx`: interactive illustration of the Kotlin
-  workflow. It demonstrates the steps in React; the complete Kotlin example and
-  platform setup are linked alongside it.
+- `components/live-demo.tsx`: the live browser demo, backed by the real Kotlin engine.
+- `../kmpwright-web-demo/`: Kotlin source for the demo. Website development, type
+  checking and production builds generate its JavaScript and declarations in
+  `lib/kmpwright-demo/`. That directory is ignored and must not be committed.
 - `content/docs/`: MDX guides and API reference; `meta.json` controls navigation.
 - `lib/layout.shared.tsx`: shared header links and project identity.
 - `lib/shared.ts`: GitHub source links and Markdown/image route paths.

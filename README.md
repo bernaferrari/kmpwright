@@ -23,7 +23,7 @@ page.runCommand("click @e2")
 ```
 
 > [!IMPORTANT]
-> **Alpha · 0.1.0.** Public Maven artifacts and release assets have not been
+> **Alpha · 0.0.1.** Public Maven artifacts and release assets have not been
 > published yet. Try the examples or build from source. APIs and platform
 > coverage may change before the first release.
 
@@ -109,7 +109,7 @@ For an external project, use the published dependencies once the release is avai
 
 ### Published dependencies
 
-After `0.1.0` is published, add Maven Central to your dependency repositories
+After `0.0.1` is published, add Maven Central to your dependency repositories
 and use these coordinates:
 
 ```kotlin
@@ -118,11 +118,11 @@ repositories { mavenCentral() }
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("io.github.bernaferrari:kmpwright-core:0.1.0")
+            implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
         }
         androidMain.dependencies {
             // Optional Android Compose WebView wrapper.
-            implementation("io.github.bernaferrari:kmpwright-compose:0.1.0")
+            implementation("io.github.bernaferrari:kmpwright-compose:0.0.1")
         }
     }
 }

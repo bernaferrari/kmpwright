@@ -4,7 +4,7 @@ description: Add kmpwright-core (and optionally kmpwright-compose) to a Kotlin M
 ---
 
 <Callout type="warn">
-**Not published yet.** Version `0.1.0` is alpha. The Maven Central artifacts and the `KmpwrightCore` XCFramework release asset do not exist yet. Until they do, use the source-build steps below. The published coordinates are fixed and listed here so you can prepare your build.
+**Not published yet.** Version `0.0.1` is alpha. The Maven Central artifacts and the `KmpwrightCore` XCFramework release asset do not exist yet. Until they do, use the source-build steps below. The published coordinates are fixed and listed here so you can prepare your build.
 </Callout>
 
 ## Build from source (today)
@@ -41,9 +41,9 @@ To try the published-coordinate setup without Maven Central, `./scripts/verify-p
 
 | Artifact | Coordinates | Targets |
 | --- | --- | --- |
-| Core | `io.github.bernaferrari:kmpwright-core:0.1.0` | Android, iOS (`iosArm64`, `iosSimulatorArm64`), JVM |
-| Compose wrapper (optional) | `io.github.bernaferrari:kmpwright-compose:0.1.0` | Android only |
-| iOS XCFramework (Swift/Xcode) | `KmpwrightCore-0.1.0.xcframework.zip` release asset | arm64 device, arm64 simulator |
+| Core | `io.github.bernaferrari:kmpwright-core:0.0.1` | Android, iOS (`iosArm64`, `iosSimulatorArm64`), JVM |
+| Compose wrapper (optional) | `io.github.bernaferrari:kmpwright-compose:0.0.1` | Android only |
+| iOS XCFramework (Swift/Xcode) | `KmpwrightCore-0.0.1.xcframework.zip` release asset | arm64 device, arm64 simulator |
 
 Everything public lives in one package: `com.bernaferrari.kmpwright.core` (core) and `com.bernaferrari.kmpwright.compose` (Compose wrapper).
 
@@ -69,11 +69,11 @@ repositories { mavenCentral() }
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("io.github.bernaferrari:kmpwright-core:0.1.0")
+            implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
         }
         androidMain.dependencies {
             // Optional: Compose WebView wrapper (Android only).
-            implementation("io.github.bernaferrari:kmpwright-compose:0.1.0")
+            implementation("io.github.bernaferrari:kmpwright-compose:0.0.1")
         }
     }
 }
@@ -86,8 +86,8 @@ Your shared code then works with `Browser`, `Page` and `Locator`. Each platform 
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("io.github.bernaferrari:kmpwright-core:0.1.0")
-    implementation("io.github.bernaferrari:kmpwright-compose:0.1.0") // optional
+    implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
+    implementation("io.github.bernaferrari:kmpwright-compose:0.0.1") // optional
 }
 ```
 
@@ -109,7 +109,7 @@ You have two options.
 
 <Steps>
 <Step>
-Download `KmpwrightCore-0.1.0.xcframework.zip` and verify it against the adjacent `.sha256` file.
+Download `KmpwrightCore-0.0.1.xcframework.zip` and verify it against the adjacent `.sha256` file.
 </Step>
 <Step>
 Add `KmpwrightCore.xcframework` to your Xcode target and set **Do Not Embed** (it is a static library).
@@ -133,7 +133,7 @@ See [`docs/releasing.md`](https://github.com/bernaferrari/kmpwright/blob/main/do
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.github.bernaferrari:kmpwright-core:0.1.0")
+    implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
 }
 ```
 

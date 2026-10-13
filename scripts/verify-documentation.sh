@@ -14,9 +14,9 @@ if rg -n '<repository-url>|composite build|local snapshot|root `LICENSE` file ha
   echo "Stale public documentation claim found" >&2
   exit 1
 fi
-rg -q 'io\.github\.bernaferrari:kmpwright-core:0\.1\.0' README.md
-rg -q 'io\.github\.bernaferrari:kmpwright-compose:0\.1\.0' README.md
-rg -q 'After `0\.1\.0` is published' README.md
+rg -q 'io\.github\.bernaferrari:kmpwright-core:0\.0\.1' README.md
+rg -q 'io\.github\.bernaferrari:kmpwright-compose:0\.0\.1' README.md
+rg -q 'After `0\.0\.1` is published' README.md
 rg -q 'Maven Central' docs/releasing.md
 rg -q 'Do Not Embed' docs/releasing.md example-ios/README.md
 rg -q 'capabilities\(\)' README.md

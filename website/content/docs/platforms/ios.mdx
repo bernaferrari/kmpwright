@@ -116,7 +116,7 @@ do {
 
 A `goto` that fails to load does not throw: it returns a `NavigationResult` with `ok == false`. Kotlin exceptions outside the declared types (a bug, not an expected failure) still terminate the app, as Kotlin/Native does for any undeclared exception.
 
-The repository's Swift consumer, [`smoke/ios-swift`](https://github.com/bernaferrari/kmpwright/tree/main/smoke/ios-swift), is built against the packaged XCFramework and run on a simulator by `scripts/verify-ios-xcframework.sh`; it catches a locator timeout, a failed assertion and a constructor `require` failure this way.
+The repository's Swift consumer, [`tests/consumers/swift`](https://github.com/bernaferrari/kmpwright/tree/main/tests/consumers/swift), is built against the packaged XCFramework and run on a simulator by `scripts/verify-ios-xcframework.sh`; it catches a locator timeout, a failed assertion and a constructor `require` failure this way.
 
 ## Web view ownership and retention
 

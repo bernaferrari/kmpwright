@@ -3,8 +3,8 @@ plugins {
 }
 
 // The live demo on the docs site: KMPwright's real Kotlin engine compiled to JavaScript, driving a
-// same-origin <iframe>. `./gradlew :kmpwright-web-demo:syncWebsiteDemo` refreshes the committed copy
-// in website/lib/kmpwright-demo, so the website builds without Gradle.
+// same-origin <iframe>. Website commands generate the bundle in the ignored
+// website/lib/kmpwright-demo directory; only Kotlin source is committed.
 kotlin {
     js {
         outputModuleName = "kmpwright-demo"
