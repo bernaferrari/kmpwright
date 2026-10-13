@@ -13,11 +13,19 @@ Kotlin API, or give an AI agent the same browser through compact commands.
 > [!NOTE]
 > **0.0.1 alpha.** Maven Central publication is pending. APIs and platform coverage may change.
 
-## Add to your project
+## Installation
 
-In your existing Kotlin Multiplatform module, add **one dependency** to `commonMain`.
-Gradle selects the matching platform artifact automatically. Available after
-`0.0.1` is published to Maven Central:
+Add to `commonMain.dependencies` in your module’s `build.gradle.kts`:
+
+```kotlin
+implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
+```
+
+One dependency covers Android, iOS and JVM. Gradle selects the platform variant.
+Requires `mavenCentral()` in your project's repositories.
+
+<details>
+<summary>Full Gradle setup and optional Compose integration</summary>
 
 ```kotlin
 repositories { mavenCentral() }
@@ -31,12 +39,15 @@ kotlin {
 }
 ```
 
-For the optional Android Compose wrapper, add
-`implementation("io.github.bernaferrari:kmpwright-compose:0.0.1")` to `androidMain`.
-Swift integration is covered in the
-[iOS guide](website/content/docs/platforms/ios.mdx).
+For the Android Compose wrapper, add this to `androidMain.dependencies`:
 
-## One shared workflow
+```kotlin
+implementation("io.github.bernaferrari:kmpwright-compose:0.0.1")
+```
+
+</details>
+
+## Usage
 
 ```kotlin
 import com.bernaferrari.kmpwright.core.*
@@ -52,7 +63,11 @@ suspend fun signIn(page: Page) {
 Locators wait for actionable elements; assertions wait for the expected result.
 Use semantic finders, filters and frame scopes to select the element you mean.
 
-### Connect your browser
+Connect your platform's browser, then pass its `Page` to the shared workflow.
+Run suspending APIs in a coroutine, on the main thread for mobile WebViews.
+
+<details>
+<summary>Android, iOS and JVM examples</summary>
 
 **Android** — attach to your app’s WebView:
 
@@ -78,11 +93,13 @@ launchBrowser(executablePath).use { launched ->
 }
 ```
 
-Run these suspending APIs in a coroutine, on the main thread for mobile WebViews.
-You can also attach to an existing Chromium instance or connect to a
-[cloud browser](website/content/docs/platforms/jvm.mdx).
+See the platform guides for [Android](website/content/docs/platforms/android.mdx),
+[iOS and Swift](website/content/docs/platforms/ios.mdx), and
+[JVM and cloud browsers](website/content/docs/platforms/jvm.mdx).
 
-## Give an agent the controls
+</details>
+
+## AI agents
 
 ```kotlin
 page.runCommand("snapshot -i")
@@ -97,7 +114,7 @@ Expose `runCommand()` as a tool to your LLM SDK. The model reads snapshots and
 acts on element references, using the documented
 [agent-browser command subset](website/content/docs/agents/commands.mdx).
 
-## More than clicks
+## Features
 
 | Workflow | Guide |
 | --- | --- |
@@ -119,7 +136,7 @@ Features follow each backend’s abilities. Inspect `page.capabilities()` before
 using an optional feature; the [capability matrix](website/content/docs/platforms/capabilities.mdx)
 explains partial and unsupported behavior.
 
-## Project and provenance
+## Contributing and attribution
 
 KMPwright adapts browser behavior from [agent-browser](https://github.com/vercel-labs/agent-browser)
 into Kotlin APIs. It is independent of Playwright. The
