@@ -76,6 +76,7 @@ export function LiveDemo() {
   const frame = useRef<HTMLIFrameElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const layer = useRef<RefLayer | null>(null);
   const demo = useRef<Demo | null>(null);
   const running = useRef(false);
   const nextId = useRef(0);
@@ -89,11 +90,13 @@ export function LiveDemo() {
   const [draft, setDraft] = useState("");
   const [refs, setRefs] = useState<Ref[]>([]);
   const [showRefs, setShowRefs] = useState(true);
-  const [scroll, setScroll] = useState({ x: 0, y: 0 });
   const [ran, setRan] = useState<Set<string>>(() => new Set());
   const [host, setHost] = useState("");
   const showRefsRef = useRef(showRefs);
   showRefsRef.current = showRefs;
+  const refsRef = useRef(refs);
+  refsRef.current = refs;
+  const pickRef = useRef<(ref: string) => void>(() => {});
 
   const refreshRefs = useCallback(async () => {
     const current = demo.current;
@@ -186,8 +189,8 @@ export function LiveDemo() {
     };
   }, [run]);
 
-  // Follow the frame's scroll so the badges stay on their elements, and re-measure after the
-  // visitor uses the page directly.
+  // Draw the ref badges inside the page itself, so they scroll with it on the compositor, with no
+  // lag on touch, wheel or trackpad. Re-measure after the visitor uses the page directly.
   useEffect(() => {
     const element = frame.current;
     if (!element) return;
@@ -204,24 +207,21 @@ export function LiveDemo() {
       }
       if (!win) return;
       const target = win;
-      let frameRequest = 0;
-      const onScroll = () => {
-        cancelAnimationFrame(frameRequest);
-        frameRequest = requestAnimationFrame(() =>
-          setScroll({ x: target.scrollX, y: target.scrollY }),
-        );
-      };
+      const refLayer = mountRefLayer(target.document, (ref) =>
+        pickRef.current(ref),
+      );
+      layer.current = refLayer;
+      refLayer.paint(showRefsRef.current ? refsRef.current : []);
       const onUse = () => {
         clearTimeout(timer);
         timer = setTimeout(refreshRefs, 350);
       };
-      target.addEventListener("scroll", onScroll, { passive: true });
       target.addEventListener("resize", onUse);
       target.document.addEventListener("input", onUse, true);
       target.document.addEventListener("click", onUse, true);
-      onScroll();
       detach = () => {
-        target.removeEventListener("scroll", onScroll);
+        refLayer.dispose();
+        if (layer.current === refLayer) layer.current = null;
         target.removeEventListener("resize", onUse);
         target.document.removeEventListener("input", onUse, true);
         target.document.removeEventListener("click", onUse, true);
@@ -234,6 +234,10 @@ export function LiveDemo() {
       detach();
     };
   }, [refreshRefs]);
+
+  useEffect(() => {
+    layer.current?.paint(showRefs ? refs : []);
+  }, [refs, showRefs]);
 
   // Keep the newest output in view, like a terminal.
   useLayoutEffect(() => {
@@ -278,6 +282,8 @@ export function LiveDemo() {
     );
     input.current?.focus();
   }
+
+  pickRef.current = insertRef;
 
   async function reset() {
     setEntries([]);
@@ -369,37 +375,6 @@ export function LiveDemo() {
               title="KMPwright playground page"
               className="block size-full [color-scheme:light] dark:[color-scheme:dark]"
             />
-            <div
-              aria-hidden={!showRefs}
-              className="pointer-events-none absolute inset-0"
-              style={{
-                transform: `translate(${-scroll.x}px, ${-scroll.y}px)`,
-              }}
-            >
-              {showRefs &&
-                refs.map((ref) => (
-                  <div
-                    key={ref.ref}
-                    className="live-demo-ref absolute rounded-md"
-                    style={{
-                      left: ref.x,
-                      top: ref.y,
-                      width: ref.width,
-                      height: ref.height,
-                    }}
-                  >
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      title={`${ref.role} "${ref.name}" · click to use`}
-                      onClick={() => insertRef(ref.ref)}
-                      className="live-demo-badge pointer-events-auto absolute -top-2 -right-2 rounded-full px-1.5 font-mono text-[10px] leading-4 font-semibold"
-                    >
-                      {ref.ref}
-                    </button>
-                  </div>
-                ))}
-            </div>
           </div>
         </div>
 
@@ -526,4 +501,130 @@ function linkRefs(text: string, use: (ref: string) => void): ReactNode[] {
       part
     ),
   );
+}
+
+type RefLayer = { paint(refs: Ref[]): void; dispose(): void };
+
+const REF_LAYER_CSS = `
+  :host { all: initial; }
+  .box {
+    position: absolute;
+    box-sizing: border-box;
+    border-radius: 6px;
+    outline: 1.5px solid color-mix(in oklch, var(--kw-primary) 55%, transparent);
+    outline-offset: 1px;
+    background: color-mix(in oklch, var(--kw-primary) 6%, transparent);
+    transition: background-color 120ms ease;
+  }
+  .box.hover { background: color-mix(in oklch, var(--kw-primary) 18%, transparent); }
+  .badge {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--kw-primary);
+    color: var(--kw-primary-foreground);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 25%);
+    font: 600 10px/16px ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: nowrap;
+  }
+`;
+
+/**
+ * Draws ref badges inside the automated page, in a closed shadow root under an aria-hidden host with
+ * pointer-events: none. Living in the page, the badges scroll with it natively. The engine cannot see
+ * them: snapshots skip aria-hidden hosts and cannot enter closed shadow roots, and hit-testing skips
+ * pointer-events: none, so automated clicks still land on the page. Real clicks on a badge are caught
+ * by position and turned into `onPick(ref)`.
+ */
+function mountRefLayer(doc: Document, onPick: (ref: string) => void): RefLayer {
+  const host = doc.createElement("kmpwright-refs");
+  host.setAttribute("aria-hidden", "true");
+  host.style.cssText =
+    "position:absolute;top:0;left:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147483647;display:block;contain:layout style;";
+  const root = host.attachShadow({ mode: "closed" });
+  const style = doc.createElement("style");
+  style.textContent = REF_LAYER_CSS;
+  const list = doc.createElement("div");
+  root.append(style, list);
+  doc.documentElement.appendChild(host);
+
+  let badges: Array<{ ref: string; badge: HTMLElement; box: HTMLElement }> = [];
+  let hovered: HTMLElement | null = null;
+
+  const hit = (event: MouseEvent) => {
+    if (!event.isTrusted) return null;
+    return (
+      badges.find(({ badge }) => {
+        const r = badge.getBoundingClientRect();
+        return (
+          event.clientX >= r.left - 2 &&
+          event.clientX <= r.right + 2 &&
+          event.clientY >= r.top - 2 &&
+          event.clientY <= r.bottom + 2
+        );
+      }) ?? null
+    );
+  };
+  const swallow = (event: Event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  const onDown = (event: PointerEvent) => {
+    if (hit(event)) swallow(event);
+  };
+  const onMouseDown = (event: MouseEvent) => {
+    if (hit(event)) swallow(event);
+  };
+  const onClick = (event: MouseEvent) => {
+    const target = hit(event);
+    if (!target) return;
+    swallow(event);
+    onPick(target.ref);
+  };
+  const onMove = (event: PointerEvent) => {
+    const box = hit(event)?.box ?? null;
+    if (box === hovered) return;
+    hovered?.classList.remove("hover");
+    box?.classList.add("hover");
+    hovered = box;
+  };
+  doc.addEventListener("pointerdown", onDown, true);
+  doc.addEventListener("mousedown", onMouseDown, true);
+  doc.addEventListener("click", onClick, true);
+  doc.addEventListener("pointermove", onMove, { capture: true, passive: true });
+
+  return {
+    paint(refs) {
+      const theme = getComputedStyle(document.documentElement);
+      host.style.setProperty(
+        "--kw-primary",
+        theme.getPropertyValue("--primary").trim() || "#5b4fc4",
+      );
+      host.style.setProperty(
+        "--kw-primary-foreground",
+        theme.getPropertyValue("--primary-foreground").trim() || "#fff",
+      );
+      hovered = null;
+      badges = refs.map((ref) => {
+        const box = doc.createElement("div");
+        box.className = "box";
+        box.style.cssText = `left:${ref.x}px;top:${ref.y}px;width:${ref.width}px;height:${ref.height}px;`;
+        const badge = doc.createElement("span");
+        badge.className = "badge";
+        badge.textContent = ref.ref;
+        box.append(badge);
+        return { ref: ref.ref, badge, box };
+      });
+      list.replaceChildren(...badges.map(({ box }) => box));
+    },
+    dispose() {
+      doc.removeEventListener("pointerdown", onDown, true);
+      doc.removeEventListener("mousedown", onMouseDown, true);
+      doc.removeEventListener("click", onClick, true);
+      doc.removeEventListener("pointermove", onMove, true);
+      host.remove();
+    },
+  };
 }

@@ -173,24 +173,6 @@ html > body[data-scroll-locked] {
     0 12px 32px color-mix(in oklch, var(--foreground) 4%, transparent);
 }
 
-.live-demo-ref {
-  outline: 1.5px solid color-mix(in oklch, var(--primary) 55%, transparent);
-  outline-offset: 1px;
-  background: color-mix(in oklch, var(--primary) 6%, transparent);
-  transition: background-color 120ms ease;
-}
-
-.live-demo-ref:has(.live-demo-badge:hover) {
-  background: color-mix(in oklch, var(--primary) 18%, transparent);
-}
-
-.live-demo-badge {
-  background: var(--primary);
-  color: var(--primary-foreground);
-  box-shadow: 0 1px 3px color-mix(in oklch, black 25%, transparent);
-  cursor: pointer;
-}
-
 /* Landing page */
 
 .landing-hero {
@@ -309,10 +291,6 @@ html > body[data-scroll-locked] {
 .landing-card:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 3px;
-}
-
-.landing-guard {
-  background: color-mix(in oklch, var(--primary) 5%, var(--background));
 }
 
 .landing-cta {

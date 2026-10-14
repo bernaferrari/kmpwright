@@ -13,7 +13,7 @@ export const metadata: Metadata = {
     template: "%s · KMPwright",
   },
   description:
-    "Playwright-style automation and agent-browser commands for Android WebView, iOS WKWebView and Chromium, in one Kotlin API.",
+    "Automate web pages on Android, iOS and desktop with one Kotlin API, or hand the controls to an AI agent.",
   metadataBase: new URL(
     process.env.SITE_URL ??
       (process.env.VERCEL_PROJECT_PRODUCTION_URL
