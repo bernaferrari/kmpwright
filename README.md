@@ -8,7 +8,7 @@
 inside Android WebView, iOS WKWebView or JVM Chromium. Use a Playwright-inspired
 Kotlin API, or give an AI agent the same browser through compact commands.
 
-[Documentation](docs/README.md) · [Agent guide](website/content/docs/agents/index.mdx) · [Examples](kmpwright-example-shared)
+[Website](https://kmpwright.vercel.app) · [Documentation](https://kmpwright.vercel.app/docs) · [Examples](kmpwright-example-shared)
 
 > [!NOTE]
 > **0.0.1 alpha.** Available on Maven Central. APIs and platform coverage may change.

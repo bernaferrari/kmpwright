@@ -313,7 +313,7 @@ export default function HomePage() {
               End with a result.
             </h2>
             <p className="mt-4 leading-7 text-muted-foreground">
-              The preview’s complete workflow supplies its own HTML. Fill the
+              This complete workflow supplies its own HTML. Fill the
               form, click, assert the result, and return the screenshot bytes.
             </p>
             <Link href="/docs/quick-start" className="landing-text-link mt-5">
