@@ -141,14 +141,6 @@ html > body[data-scroll-locked] {
   }
 }
 
-.landing-hero {
-  background: radial-gradient(
-    ellipse at 15% 0%,
-    color-mix(in oklch, var(--primary) 9%, transparent),
-    transparent 65%
-  );
-}
-
 .landing-eyebrow {
   color: var(--muted-foreground);
   font-size: 0.6875rem;
@@ -181,10 +173,6 @@ html > body[data-scroll-locked] {
     0 12px 32px color-mix(in oklch, var(--foreground) 4%, transparent);
 }
 
-.landing-agent-card {
-  background: color-mix(in oklch, var(--primary) 5%, var(--background));
-}
-
 .live-demo-ref {
   outline: 1.5px solid color-mix(in oklch, var(--primary) 55%, transparent);
   outline-offset: 1px;
@@ -201,4 +189,150 @@ html > body[data-scroll-locked] {
   color: var(--primary-foreground);
   box-shadow: 0 1px 3px color-mix(in oklch, black 25%, transparent);
   cursor: pointer;
+}
+
+/* Landing page */
+
+.landing-hero {
+  background:
+    radial-gradient(
+      60% 55% at 80% 20%,
+      color-mix(in oklch, var(--primary) 16%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      45% 40% at 5% 0%,
+      color-mix(in oklch, oklch(0.7 0.13 190) 10%, transparent),
+      transparent 70%
+    );
+}
+
+.landing-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(
+    ellipse 70% 60% at 50% 0%,
+    black,
+    transparent 75%
+  );
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.landing-gradient-text {
+  background: linear-gradient(
+    100deg,
+    var(--primary) 10%,
+    color-mix(in oklch, var(--primary) 55%, oklch(0.7 0.13 190)) 90%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.landing-inline-code {
+  border-radius: 0.375rem;
+  background: color-mix(in oklch, var(--primary) 9%, transparent);
+  padding: 0.1em 0.35em;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.85em;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.landing-device-glow {
+  position: absolute;
+  inset: 12% 8% 6% 14%;
+  border-radius: 50%;
+  background: color-mix(in oklch, var(--primary) 28%, transparent);
+  filter: blur(70px);
+  opacity: 0.6;
+}
+
+.landing-tablet,
+.landing-phone {
+  overflow: hidden;
+  margin: 0;
+  background: #0b0b0f;
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent),
+    0 30px 60px -20px color-mix(in oklch, black 45%, transparent),
+    0 12px 24px -12px color-mix(in oklch, black 30%, transparent);
+}
+
+.landing-tablet {
+  border: 9px solid #0b0b0f;
+  border-radius: 1.75rem;
+  transform: rotate(2deg);
+}
+
+.landing-tablet img {
+  border-radius: 1.1rem;
+}
+
+.landing-phone {
+  border: 6px solid #0b0b0f;
+  border-radius: 2rem;
+  transform: rotate(-3deg);
+}
+
+.landing-phone img {
+  border-radius: 1.55rem;
+}
+
+.landing-terminal {
+  background: color-mix(in oklch, var(--primary) 4%, var(--card));
+}
+
+.landing-code-panel figure {
+  margin: 0;
+  height: 100%;
+}
+
+.landing-card {
+  transition:
+    border-color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.landing-card:hover {
+  border-color: color-mix(in oklch, var(--primary) 35%, var(--border));
+  box-shadow: 0 10px 30px -18px
+    color-mix(in oklch, var(--primary) 60%, transparent);
+}
+
+.landing-card:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
+.landing-guard {
+  background: color-mix(in oklch, var(--primary) 5%, var(--background));
+}
+
+.landing-cta {
+  background:
+    radial-gradient(
+      70% 90% at 0% 0%,
+      color-mix(in oklch, var(--primary) 14%, transparent),
+      transparent 70%
+    ),
+    var(--card);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .landing-float {
+    animation: landing-float 6s ease-in-out infinite;
+  }
+}
+
+@keyframes landing-float {
+  50% {
+    transform: translateY(-6px);
+  }
 }
