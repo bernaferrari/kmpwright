@@ -77,6 +77,7 @@ export function LiveDemo() {
   const log = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const demo = useRef<Demo | null>(null);
+  const running = useRef(false);
   const nextId = useRef(0);
   const history = useRef<string[]>([]);
   const historyIndex = useRef(-1);
@@ -108,11 +109,12 @@ export function LiveDemo() {
     async (command: string) => {
       const current = demo.current;
       const line = command.trim();
-      if (!current || !line) return;
+      if (!current || !line || running.current) return;
       if (line === "clear") {
         setEntries([]);
         return;
       }
+      running.current = true;
       const id = nextId.current++;
       setEntries((list) => [
         ...list,
@@ -137,7 +139,23 @@ export function LiveDemo() {
         if (result.changedPage || line.startsWith("snapshot")) {
           await refreshRefs();
         }
+      } catch (error) {
+        setEntries((list) =>
+          list.map((entry) =>
+            entry.id === id
+              ? {
+                  ...entry,
+                  state: "error",
+                  output:
+                    error instanceof Error
+                      ? error.message
+                      : "Command failed. Try resetting the demo.",
+                }
+              : entry,
+          ),
+        );
       } finally {
+        running.current = false;
         setBusy(false);
       }
     },
@@ -287,7 +305,7 @@ export function LiveDemo() {
             <span
               className={cn(
                 "absolute inline-flex size-full rounded-full",
-                status === "ready" && "animate-ping bg-emerald-500/60",
+                status === "ready" && "bg-emerald-500/60",
               )}
             />
             <span
@@ -472,7 +490,7 @@ export function LiveDemo() {
                 autoComplete="off"
                 autoCapitalize="off"
                 spellCheck={false}
-                className="h-10 min-w-0 flex-1 bg-transparent font-mono text-[13px] outline-none placeholder:font-sans placeholder:text-muted-foreground/70"
+                className="h-10 min-w-0 flex-1 bg-transparent font-mono text-base sm:text-[13px] outline-none placeholder:font-sans placeholder:text-muted-foreground/70"
               />
               <button
                 type="button"

@@ -173,14 +173,11 @@ export default function HomePage() {
               </span>
             ))}
           </div>
-          <div className="mt-7">
+          <div id="demo" className="mt-7 scroll-mt-24">
             <LiveDemo />
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-muted-foreground">
-            <p>
-              Open source · Build from source today · Maven publication planned
-              for the first release
-            </p>
+            <p>Open source · MIT licensed · Available on Maven Central</p>
             <Link
               href="/docs/quick-start"
               className="inline-flex items-center gap-1.5 py-2 font-medium text-foreground hover:underline underline-offset-4"
@@ -188,6 +185,40 @@ export default function HomePage() {
               Run the real Kotlin example{" "}
               <ArrowRight aria-hidden className="size-3.5" />
             </Link>
+          </div>
+        </div>
+      </section>
+
+      <section
+        aria-labelledby="install-heading"
+        className="border-y bg-muted/20"
+      >
+        <div className="mx-auto grid w-full max-w-6xl items-center gap-6 px-6 py-8 lg:grid-cols-[0.7fr_1.3fr]">
+          <div>
+            <h2
+              id="install-heading"
+              className="text-xl font-semibold tracking-tight"
+            >
+              One dependency. Three platforms.
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Add to <code>commonMain.dependencies</code>. Gradle selects the
+              platform variant.
+            </p>
+            <Link
+              href="/docs/installation"
+              className="landing-text-link mt-2 text-sm"
+            >
+              Installation guide <ArrowRight aria-hidden className="size-4" />
+            </Link>
+          </div>
+          <div className="min-w-0">
+            <DynamicCodeBlock
+              lang="kotlin"
+              code={
+                'implementation("io.github.bernaferrari:kmpwright-core:0.0.1")'
+              }
+            />
           </div>
         </div>
       </section>

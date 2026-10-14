@@ -49,10 +49,11 @@ released artifacts, and describe native WebView limits alongside each feature.
 
 ## Vercel
 
-Import this repository and set the project Root Directory to `website`, with
-Node.js 24. `vercel.json` supplies the install and build commands. Request the
-project name `kmpwright` for `kmpwright.vercel.app`, subject to availability.
-Set `SITE_URL` if the production domain differs.
+The `kmpwright` Vercel project is connected to `bernaferrari/kmpwright`. Its
+Root Directory is `website`, with Node.js 24. Pushes to `main` deploy production;
+other branches create previews. `vercel.json` supplies the install and build
+commands. The production URL is `https://kmpwright.vercel.app`.
+Set `SITE_URL` if the production domain changes.
 
 The Next.js build is Node-only: `demo-runtime.json` pins the compiled Kotlin demo
 and its SHA-256 checksums. Generated JavaScript stays in GitHub release assets,
