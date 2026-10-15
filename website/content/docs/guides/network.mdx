@@ -205,8 +205,7 @@ data class Request(
     val method: String = "GET",
     val headers: Map<String, String> = emptyMap(),
     val postData: String? = null,
-    val postDataJSON: String? = null,
-    val resourceType: String = "document",
+    val resourceType: String = "other",
     val timestamp: Long,      // epoch milliseconds
     val id: String            // backend request id
 )
@@ -216,17 +215,19 @@ data class Response(
     val status: Int,
     val statusText: String? = null,
     val headers: Map<String, String> = emptyMap(),
-    val body: String? = null,
     val fromCache: Boolean = false,
     val timestamp: Long,
     val id: String            // id of the matching Request
 ) { val ok: Boolean /* status in 200..299 */ }
 ```
 
-Both are plain, serializable data classes, not live handles: there is no `response.body()` or `request.response()`.
+Both are serializable data classes. A response delivered by a page also carries
+an internal body reader: use `response.body()`, `response.text()` or
+`response.json()` on the JVM. Copies and deserialized responses have no reader;
+use [`page.network.responseBody`](#request-history) while their record is retained.
 
-- `resourceType` is the lowercase CDP resource type (`"xhr"`, `"fetch"`, `"script"`, …) for requests observed through CDP network events. Requests handed to route handlers, and every request on Android and iOS, carry the default `"document"`.
-- `postDataJSON` and `Response.body` are not filled by any backend today. Read bodies through [`page.network.responseBody`](#request-history).
+- `resourceType` is the lowercase Chromium type on CDP. Android reports `document` for the main frame and `other` for subresources; iOS reports `fetch`/`xhr` for shim requests, `document` for intercepted main documents and `other` otherwise.
+- `request.postDataJSON()` parses JSON or URL-encoded form data from `postData`, returning `null` when there is no body.
 - `fromCache` is reported on the JVM (disk cache or service worker).
 - `Response.id` equals the `id` of its `Request`, which is how you correlate them and how you find a request in the history.
 
@@ -251,7 +252,8 @@ println(if (body.base64Encoded) "binary, ${body.content.length} base64 chars" el
 |---|---|
 | `requests(filter: String? = null, limit: Int = 100): List<NetworkRequestRecord>` | Newest first. `filter` keeps records whose URL contains it (case-insensitive) or whose method equals it. `limit` must be 1..500. |
 | `detail(id: Long): NetworkRequestRecord?` | One record, or `null` when it is no longer retained. |
-| `suspend responseBody(id: Long, maxBytes: Int = 1_048_576): NetworkResponseBody` | Reads the response body of a finished request. `maxBytes` must be 1..4 MiB. |
+| `suspend responseBody(id: Long, maxBytes: Int = 1_048_576): NetworkResponseBody` | Waits for the request to finish, then reads its body. `maxBytes` must be 1..4 MiB. |
+| `suspend responseBody(response: Response, maxBytes: Int = 1_048_576): NetworkResponseBody` | Finds the retained request for this response, then reads its body. |
 | `clear()` | Forgets every record. |
 | `suspend startHar()` / `suspend stopHar(): String` | [HAR capture](#har). |
 
@@ -261,7 +263,15 @@ println(if (body.base64Encoded) "binary, ${body.content.length} base64 chars" el
 
 Retention: at most 500 records and an estimated 4 MiB; the oldest records are dropped first. URLs are kept up to 8 KiB, post data up to 64 KiB and headers up to 32 KiB per request. The history is cleared when the page closes.
 
-`responseBody` throws `KmpwrightException` when the record is no longer retained, has no completed response, or is an earlier hop of a redirect chain (CDP reuses the request id; only the last hop has a body). It requires `KmpwrightConfig.allowDomExtraction` and passes the action policy as `ActionType.Evaluate`.
+Headers can arrive before the response body finishes downloading. Body reads wait
+for completion, then read the bytes within one `TimeoutConfig.default` budget.
+Closing the page, a failed request, clearing history or evicting the record ends
+a pending read with `KmpwrightException`. Deadline expiry throws
+`KmpwrightTimeoutException`.
+
+Reads also fail when a finished record has no response or represents an earlier
+redirect hop (CDP reuses request IDs; only the last hop has a body). They require
+`KmpwrightConfig.allowDomExtraction` and check the action policy as `ActionType.Evaluate`.
 
 | | Android | iOS | JVM (CDP) |
 |---|---|---|---|
@@ -269,12 +279,13 @@ Retention: at most 500 records and an estimated 4 MiB; the oldest records are dr
 | Records | Requests seen by `shouldInterceptRequest`; most have no `response` | Main-frame `fetch`/XHR and custom-scheme requests | Every request of the page and its frames |
 | `responseBody` | `KmpwrightUnsupportedException` | `KmpwrightUnsupportedException` | `Network.getResponseBody`; bodies larger than one protocol message are refused |
 
-To read the body of a `Response` you waited for, look up its record by id:
+Read a response directly after an action-scoped wait:
 
 ```kotlin
-val response = page.waitForResponse("**/api/orders")
-val record = page.network.requests(limit = 500).first { it.request.id == response.id }
-val json = page.network.responseBody(record.id).content
+val response = page.waitForResponse("**/api/orders") {
+    getByRole("button", name = "Refresh").click()
+}
+val json = response.json()
 ```
 
 ## HAR

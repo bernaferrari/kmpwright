@@ -279,3 +279,14 @@ and six desktop/mobile browser contracts passed. All-target Kotlin ABI validatio
 Android builds, Compose lint, the Kotlin/JS runtime build, website production
 build/types/lint and repository metadata checks passed. The public API is unchanged.
 Maven Central `0.0.1` remains immutable; these changes require a later library release.
+
+
+The first remote CI run of this refinement exposed two callback-ordering defects
+that the initial local run missed. `Response.text()` could race `loadingFinished`,
+and `waitForURL()` could observe the live destination while `page.url` retained
+the old URL. Both now have deterministic regressions that failed before repair.
+Response bodies await terminal request state through a state flow, with one
+policy/completion/read deadline and page lifetime; failure, clear and eviction
+also wake readers. URL observations update page state independently of navigation
+event deduplication, preserving delayed same-document events. A real streamed
+HTTP response additionally checks body reading between headers and completion.

@@ -59,6 +59,9 @@ internal abstract class BasePage protected constructor(
     private fun forgetSetup(key: String) = inheritedSetup.forget(key)
     internal suspend fun inheritSetupTo(page: Page) = inheritedSetup.applyTo(page)
 
+    // A live URL observation can lead the backend's queued lifecycle delivery. Keep event
+    // deduplication separate so observing location.href never suppresses a later real event.
+    private val lastNavigationUrl = atomic<String?>(null)
     private val _url = MutableStateFlow<String?>(null)
     override val url: StateFlow<String?> = _url.asStateFlow()
 
@@ -148,6 +151,7 @@ internal abstract class BasePage protected constructor(
         if (validated.committed) _url.value = validated.url else controller.getUrl()?.let { _url.value = it }
         _title.value = controller.getTitle()
         approvedNavigationUrl.value = null
+        lastNavigationUrl.value = validated.url
         navigationResultFlow.tryEmit(validated)
         sinks.navigationSink.tryEmit(NavigationEvent(validated.url, validated.status, NavigationType.NewDocument))
         if (validated.committed) {
@@ -163,7 +167,7 @@ internal abstract class BasePage protected constructor(
      * traversal): updates [url]/[title] and resolves `waitForNavigation`, as Playwright does. Idempotent per URL.
      */
     private fun sameDocumentNavigated(url: String, title: String? = controller.getTitle()): Boolean {
-        if (closed.value || url.isBlank() || url == _url.value) return false
+        if (closed.value || url.isBlank() || lastNavigationUrl.getAndSet(url) == url) return false
         _url.value = url
         title?.let { _title.value = it }
         val result = NavigationResult(url, 200, true)
@@ -353,7 +357,7 @@ internal abstract class BasePage protected constructor(
         if (!config.allowDomExtraction) throw KmpwrightException("HAR capture is disabled by KmpwrightConfig.allowDomExtraction")
         checkPolicy(ActionType.Evaluate, currentPageUrl())
         harCapture.start()
-    }, harStop = { harCapture.stop() })
+    }, harStop = { harCapture.stop() }, timeoutMs = config.timeouts.default, closed = closeSignal)
     override val network: NetworkHistory get() = networkHistory
 
     private val requestListener = object : RequestListener {
@@ -728,14 +732,17 @@ internal abstract class BasePage protected constructor(
     private suspend fun awaitUrl(description: String, waitUntil: LoadState, timeoutMs: Long?, matches: (String) -> Boolean) = awaitPageOperation(closeSignal) {
         val timeout = config.navigationTimeout(timeoutMs)
         withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for a URL $description" }) {
+            var matchedUrl: String
             while (true) {
+                val before = url.value
                 val href = try { evalString("location.href") }
                 catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                 catch (_: KmpwrightException) { null } ?: currentPageUrl()
-                if (href != null && matches(href)) break
-                withTimeoutOrNull(100) { url.first { it != href } }
+                if (href != null && matches(href)) { matchedUrl = href; break }
+                withTimeoutOrNull(100) { url.first { it != before } }
             }
             awaitLoadState(waitUntil, timeout)
+            _url.value = matchedUrl
         }
     }
 

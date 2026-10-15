@@ -1,6 +1,8 @@
 package com.bernaferrari.kmpwright.core
 
-import kotlinx.atomicfu.atomic
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.Serializable
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -30,7 +32,7 @@ public interface NetworkHistory {
     /** The record with history [id], or null when it is no longer retained. */
     public fun detail(id: Long): NetworkRequestRecord?
 
-    /** Reads the response body of a finished request by its history [NetworkRequestRecord.id]. */
+    /** Reads a response body by history [NetworkRequestRecord.id], waiting for the request to finish. */
     @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, CancellationException::class)
     public suspend fun responseBody(id: Long, maxBytes: Int = 1024 * 1024): NetworkResponseBody
 
@@ -58,12 +60,14 @@ internal class PageNetworkHistory(private val readBody: suspend (String, Int) ->
     private val harStart: suspend () -> Unit = { throw KmpwrightUnsupportedException("HAR capture is unavailable on this backend") },
     private val harStop: suspend () -> String = { throw KmpwrightUnsupportedException("HAR capture is unavailable on this backend") },
     private val capacity: Int = 500,
-    private val byteBudget: Int = 4 * 1024 * 1024) : NetworkHistory {
+    private val byteBudget: Int = 4 * 1024 * 1024,
+    private val timeoutMs: Long = 30_000,
+    private val closed: Deferred<Unit>? = null) : NetworkHistory {
     override suspend fun startHar() = harStart()
     override suspend fun stopHar(): String = harStop()
     private data class State(val nextId: Long = 1, val records: List<NetworkRequestRecord> = emptyList())
-    private val state = atomic(State())
-    init { require(capacity > 0 && byteBudget > 0) }
+    private val state = MutableStateFlow(State())
+    init { require(capacity > 0 && byteBudget > 0 && timeoutMs > 0) }
 
     override fun requests(filter: String?, limit: Int): List<NetworkRequestRecord> {
         require(limit in 1..500) { "Request limit must be between 1 and 500" }
@@ -72,18 +76,27 @@ internal class PageNetworkHistory(private val readBody: suspend (String, Int) ->
             .take(limit).toList()
     }
     override fun detail(id: Long): NetworkRequestRecord? = state.value.records.firstOrNull { it.id == id }
-    override suspend fun responseBody(id: Long, maxBytes: Int): NetworkResponseBody {
+    override suspend fun responseBody(id: Long, maxBytes: Int): NetworkResponseBody = awaitPageOperation(closed) {
         require(maxBytes in 1..4 * 1024 * 1024) { "Response body budget must be between 1 byte and 4 MiB" }
-        checkRead()
-        val record = detail(id) ?: throw KmpwrightException("Network request $id is no longer retained")
-        if (record.state != NetworkRequestState.Finished || record.response == null) {
-            throw KmpwrightException("Network request $id has no completed response")
+        withKmpwrightTimeout(timeoutMs, { "Timeout ${timeoutMs}ms exceeded reading the response body of network request $id" }) {
+            checkRead()
+            // Headers arrive before loadingFinished. Await the terminal snapshot, also waking
+            // when clear/eviction removes the record; no polling or per-request job registry.
+            val terminal = state.first { snapshot ->
+                snapshot.records.firstOrNull { it.id == id }?.state != NetworkRequestState.Pending
+            }
+            val record = terminal.records.firstOrNull { it.id == id }
+                ?: throw KmpwrightException("Network request $id is no longer retained")
+            if (record.state == NetworkRequestState.Failed) {
+                throw KmpwrightException("Network request $id failed: ${record.error.orEmpty()}")
+            }
+            if (record.response == null) throw KmpwrightException("Network request $id has no completed response")
+            // CDP reuses request IDs for redirects. Its body belongs only to the latest hop.
+            if (terminal.records.any { it.id > id && it.request.id == record.request.id }) {
+                throw KmpwrightException("Response body is unavailable for a redirect hop")
+            }
+            readBody(record.request.id, maxBytes)
         }
-        // CDP reuses request IDs for redirects. Its body belongs only to the latest hop.
-        if (state.value.records.any { it.id > id && it.request.id == record.request.id }) {
-            throw KmpwrightException("Response body is unavailable for a redirect hop")
-        }
-        return readBody(record.request.id, maxBytes)
     }
     override suspend fun responseBody(response: Response, maxBytes: Int): NetworkResponseBody {
         val record = state.value.records.lastOrNull { it.request.id == response.id }

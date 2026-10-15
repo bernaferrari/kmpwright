@@ -1,6 +1,6 @@
 {
-  "release": "web-demo-runtime-20261015-3",
-  "baseUrl": "https://github.com/bernaferrari/kmpwright/releases/download/web-demo-runtime-20261015-3/",
+  "release": "web-demo-runtime-20261015-4",
+  "baseUrl": "https://github.com/bernaferrari/kmpwright/releases/download/web-demo-runtime-20261015-4/",
   "assets": [
     {
       "file": "kmpwright-demo.LICENSE.txt",
@@ -12,7 +12,7 @@
     },
     {
       "file": "kmpwright-demo.mjs",
-      "sha256": "8fbeadb2174e6f85c025d0c9375446ff3b5a9b576e54f4a10fe22fb939d7f2b9"
+      "sha256": "d7b5de30ce7220dc944b3a5479421e599f6a8effca050e9ecdf041ec579e4d4a"
     }
   ]
 }

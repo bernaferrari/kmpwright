@@ -142,6 +142,26 @@ class PageWaitLifecycleTest {
         } finally { page.close() }
     }
 
+    @Test fun `URL waits publish observed locations without suppressing a delayed lifecycle event`() = runBlocking {
+        val controller = MockWebViewController()
+        val page = WaitPage(controller)
+        try {
+            page.goto("https://example.com/before")
+            controller.evalHandler = { script ->
+                when (script) {
+                    "location.href" -> "https://example.com/after"
+                    "document.readyState" -> "complete"
+                    else -> null
+                }
+            }
+            page.waitForURL("**/after", timeoutMs = 1_000)
+            kotlin.test.assertEquals("https://example.com/after", page.url.value)
+            val event = async(start = CoroutineStart.UNDISPATCHED) { page.waitForEvent("navigation", 500) }
+            controller.lifecycleCallback!!(PageLifecycleEvent.SameDocument("https://example.com/after"))
+            kotlin.test.assertEquals(NavigationType.SameDocument, (event.await() as? NavigationEvent)?.navigationType)
+        } finally { page.close() }
+    }
+
     @Test fun `network idle event requires a quiet interval after a failed or finished request`() = runBlocking {
         var requests: RequestListener? = null
         var pending = 0

@@ -173,6 +173,15 @@ class CdpConsistencyBrowserTest {
         page.close()
     }
 
+    @Test fun `response text waits for a streamed body after the headers arrive`() = withChrome { browser, origin ->
+        val page = browser.newPage()
+        try {
+            page.goto(origin)
+            val response = page.waitForResponse("**/stream.json") { evaluate("fetch('/stream.json').then(r => r.status)") }
+            assertEquals("""{"streamed":true}""", response.text())
+        } finally { page.close() }
+    }
+
     @Test fun `repeated contexts do not inherit routes state or pending waiters`() = withChrome { browser, origin ->
         repeat(8) { round ->
             val context = browser.newContext()
@@ -218,6 +227,17 @@ class CdpConsistencyBrowserTest {
                 exchange.responseHeaders.add("Location", "http://$host:${server.address.port}/arrived")
                 exchange.sendResponseHeaders(302, -1)
                 exchange.close()
+                return@createContext
+            }
+            if (exchange.requestURI.path == "/stream.json") {
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, 0)
+                exchange.responseBody.use { output ->
+                    output.write("{\"streamed\":".encodeToByteArray())
+                    output.flush()
+                    Thread.sleep(200)
+                    output.write("true}".encodeToByteArray())
+                }
                 return@createContext
             }
             val body = when (exchange.requestURI.path) {
