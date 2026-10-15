@@ -221,3 +221,12 @@ waits, reads and screenshot preparation in their operation deadline. The focused
 regressions failed before this repair; the complete 942-test JVM suite then passed.
 CI compile-checks the private sample's debug framework; release framework and
 artifact-only Swift consumer checks remain enabled for the library.
+
+The final Android CI run exposed a fixture assumption: its 300ms ambiguity check
+could exhaust the now-complete action deadline during cold helper setup. The
+fixture now establishes its two frames first and uses a two-second diagnostic
+budget. Android retains its strict-error assertion; iOS now asserts that message
+too, rather than accepting a timeout as an ambiguity failure. All 12 Android
+consistency tests and four hosted iOS repair tests passed after this test-only
+adjustment. Short-deadline enforcement remains covered separately by delayed
+bridge and multi-stage regressions.

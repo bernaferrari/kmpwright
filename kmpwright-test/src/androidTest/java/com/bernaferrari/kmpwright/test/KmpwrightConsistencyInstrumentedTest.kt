@@ -60,8 +60,10 @@ class KmpwrightConsistencyInstrumentedTest {
 
     @Test fun frameAmbiguityAndClosedBrowserAreRejected() = runPageTest {
         page.setContent("<div id=frames><iframe srcdoc='<button>First</button>'></iframe><iframe srcdoc='<button>Second</button>'></iframe></div>")
+        assertEquals(2, page.locator("iframe").count())
         for (frame in listOf(page.frameLocator("iframe"), page.locator("#frames").frameLocator("iframe"))) {
-            val failure = expect<KmpwrightException> { frame.locator("button").click(timeoutMs = 300) }
+            // This checks the diagnostic, not cold WebView startup speed. Deadline tests use short budgets separately.
+            val failure = expect<KmpwrightException> { frame.locator("button").click(timeoutMs = 2_000) }
             assertTrue(failure.message!!, failure.message!!.contains("Strict", ignoreCase = true))
         }
         browser.close()

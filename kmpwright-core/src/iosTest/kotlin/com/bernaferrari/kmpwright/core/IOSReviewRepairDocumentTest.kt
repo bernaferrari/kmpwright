@@ -77,8 +77,10 @@ class IOSReviewRepairDocumentTest {
         try {
             val page = browser.page()
             page.setContent("<div id=frames><iframe srcdoc='<button>First</button>'></iframe><iframe srcdoc='<button>Second</button>'></iframe></div>")
+            assertEquals(2, page.locator("iframe").count())
             for (frame in listOf(page.frameLocator("iframe"), page.locator("#frames").frameLocator("iframe"))) {
-                assertFailsWith<KmpwrightException> { frame.locator("button").click(timeoutMs = 300) }
+                val failure = assertFailsWith<KmpwrightException> { frame.locator("button").click(timeoutMs = 2_000) }
+                assertTrue(failure.message.orEmpty().contains("Strict", ignoreCase = true), failure.message)
             }
             context.close()
             assertFailsWith<IllegalStateException> { context.newPage() }
