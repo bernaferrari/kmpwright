@@ -29,12 +29,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * An Android [WebView] driven by Kmpwright.
  *
  * @param controller state holder; create it with [rememberKmpwrightController].
- * @param startUrl loaded once per attached WebView; `null` leaves the page blank.
+ * @param startUrl loaded when the WebView attaches or this value changes; `null` leaves navigation to the caller.
  * @param captureBackPresses when true, system back navigates the WebView history while it can go back.
  * @param onCreated called with the new WebView before Kmpwright attaches; clients installed here keep
  *   receiving every callback.
@@ -74,7 +75,7 @@ public fun KmpwrightWebView(
         )
         val page = controller.page
         LaunchedEffect(page, startUrl) {
-            if (page != null && startUrl != null) controller.loadUrl(startUrl)
+            if (page != null && startUrl != null) controller.loadStartUrl(startUrl)
         }
     }
 }
@@ -166,6 +167,8 @@ public class KmpwrightWebViewController(private val config: KmpwrightConfig = Km
         browser = null
         page = null
         webView = null
+        url = null
+        title = null
         isLoading = false
         canGoBack = false
         canGoForward = false
@@ -184,23 +187,31 @@ public class KmpwrightWebViewController(private val config: KmpwrightConfig = Km
         lastError = null
     }
 
+    private suspend fun reportOperation(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            lastError = failure
+        }
+    }
+
     private fun launchOperation(block: suspend () -> Unit) {
-        scope.launch {
-            try {
-                block()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Throwable) {
-                lastError = failure
-            }
+        scope.launch { reportOperation(block) }
+    }
+
+    // Keep the effect's cancellation, but dispatch WebView continuations independently of Compose's
+    // frame clock. A paused composition must not hold the page's navigation mutex.
+    internal suspend fun loadStartUrl(url: String): Unit = withContext(Dispatchers.Main.immediate) {
+        reportOperation {
+            val result = goto(url)
+            if (!result.ok) throw KmpwrightException(result.error ?: "Navigation to $url failed with status ${result.status}")
         }
     }
 
     /** Fire-and-forget navigation; failures are reported through [lastError]. */
-    public fun loadUrl(url: String): Unit = launchOperation {
-        val result = goto(url)
-        if (!result.ok) throw KmpwrightException(result.error ?: "Navigation to $url failed with status ${result.status}")
-    }
+    public fun loadUrl(url: String): Unit = launchOperation { loadStartUrl(url) }
 
     /** Fire-and-forget reload; failures are reported through [lastError]. */
     public fun reload(): Unit = launchOperation { attachedPage().reload() }

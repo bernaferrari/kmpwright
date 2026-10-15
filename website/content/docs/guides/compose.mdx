@@ -78,7 +78,15 @@ KmpwrightWebView(
 )
 ```
 
-When the composable leaves the composition, the controller detaches, the `Browser` is disposed and the `WebView` is destroyed.
+When the composable leaves the composition or its controller is replaced, the old
+controller detaches, its `Browser` is disposed and its `WebView` is destroyed.
+`page`, `url` and `title` become `null`, and history/loading flags reset. Previously
+retained pages reject new operations because they are closed.
+
+The `startUrl` navigation belongs to the composition. Changing it cancels the old
+wait before starting the new one; removing the view cancels the navigation too.
+Use `controller.goto()` inside your own coroutine when a workflow needs to await
+the navigation result.
 
 If the WebView's renderer process crashes or is killed, the controller sets `lastError`, and the composable creates a new WebView with a new `Page`. Code that held the old `controller.page` must read it again.
 

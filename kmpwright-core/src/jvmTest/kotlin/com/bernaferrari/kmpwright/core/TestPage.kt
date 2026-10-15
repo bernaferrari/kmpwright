@@ -33,6 +33,8 @@ internal class MockWebViewController : WebViewController {
     var disposed: Boolean = false
     var disposeCount: Int = 0
     var navigationCallbackSetCount: Int = 0
+    var lifecycleCallbackSetCount: Int = 0
+    var lifecycleCallback: ((PageLifecycleEvent) -> Unit)? = null
     var removeRequestListenerCount: Int = 0
     var removeDialogListenerCount: Int = 0
     var removeAllRouteHandlersCount: Int = 0
@@ -127,6 +129,11 @@ internal class MockWebViewController : WebViewController {
         navigationCallbackSetCount += 1
         if (throwOnNavigationCallback) throw IllegalStateException("synthetic navigation cleanup failure")
         _navigationCallback = callback
+    }
+
+    override fun setLifecycleListener(listener: ((PageLifecycleEvent) -> Unit)?) {
+        lifecycleCallbackSetCount++
+        lifecycleCallback = listener
     }
 
     override fun generatePdf(options: PdfOptions, callback: (ByteArray?) -> Unit) {}

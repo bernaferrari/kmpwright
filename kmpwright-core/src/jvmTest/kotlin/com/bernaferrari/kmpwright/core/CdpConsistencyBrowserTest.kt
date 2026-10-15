@@ -1,5 +1,6 @@
 package com.bernaferrari.kmpwright.core
 
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -170,6 +171,39 @@ class CdpConsistencyBrowserTest {
         val boxes = page.refBoundingBoxes(refs)
         refs.forEach { assertEquals(page.locator(it).boundingBox(), boxes[it]) }
         page.close()
+    }
+
+    @Test fun `repeated contexts do not inherit routes state or pending waiters`() = withChrome { browser, origin ->
+        repeat(8) { round ->
+            val context = browser.newContext()
+            try {
+                val page = context.newPage()
+                page.goto(origin)
+                assertTrue("Cookies leaked into round $round", page.cookies().isEmpty())
+                assertTrue("Storage leaked into round $round", page.localStorage.entries().isEmpty())
+                page.route("**/data.json") { it.fulfill(body = "intercepted-$round") }
+                val intercepted = page.waitForResponse("**/data.json") { evaluate("fetch('/data.json').then(r => r.text())") }
+                assertEquals("intercepted-$round", intercepted.text())
+                page.unroute("**/data.json")
+                val actual = page.waitForResponse("**/data.json") { evaluate("fetch('/data.json').then(r => r.text())") }
+                assertEquals("""{"hello":"world"}""", actual.text())
+                page.addCookies(listOf(Cookie("owner", "$round", "127.0.0.1")))
+                page.localStorage.set("owner", "$round")
+                val saved = page.storageState()
+                page.localStorage.set("owner", "changed")
+                page.setStorageState(saved)
+                assertEquals("$round", page.localStorage.get("owner"))
+                kotlinx.coroutines.coroutineScope {
+                    val wait = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                        runCatching { page.waitForResponse("**/never", 60_000) }
+                    }
+                    page.close()
+                    val failure = withTimeout(1_000) { wait.await() }.exceptionOrNull()
+                    assertTrue("Closing round $round left a waiter alive: $failure", failure is KmpwrightException)
+                }
+                assertTrue(context.pages().isEmpty())
+            } finally { context.close() }
+        }
     }
 
     // ------------------------------------------------------------- real Chromium

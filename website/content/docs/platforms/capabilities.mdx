@@ -18,7 +18,7 @@ page.requireCapabilities(
 )
 ```
 
-Playwright has no equivalent: every Playwright browser is a full browser. KMPwright also drives embedded WebViews, which expose far fewer hooks, so it makes the differences explicit.
+KMPwright drives both full browsers and embedded WebViews. Their available hooks differ, so portable workflows check the capabilities they need before starting.
 
 ## Types
 
@@ -32,7 +32,7 @@ A closed enum of the features that differ per backend:
 
 | Value | Meaning |
 |---|---|
-| `Supported` | Works as on Chromium with Playwright. |
+| `Supported` | Implements the documented behavior and options for this backend. |
 | `Partial` | Works with documented gaps. The gaps are described in `notes`. |
 | `Unsupported` | Calling the API throws `KmpwrightUnsupportedException`. |
 

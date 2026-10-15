@@ -13,11 +13,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -30,29 +30,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.time.TimeSource
-
-/** Mutable sinks behind the read-only [PageEvents] view. Emission never suspends; slow collectors lose the oldest events. */
-internal class PageEventSinks : PageEvents {
-    private fun <T> sink(capacity: Int) = MutableSharedFlow<T>(extraBufferCapacity = capacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    val consoleSink = sink<ConsoleMessage>(256)
-    val navigationSink = sink<NavigationEvent>(64)
-    val loadStateSink = sink<LoadState>(16)
-    val dialogSink = sink<DialogEvent>(16)
-    val requestSink = sink<Request>(256)
-    val responseSink = sink<Response>(256)
-    val downloadSink = sink<Download>(32)
-    val fileChooserSink = sink<FileChooser>(16)
-    val pageErrorSink = sink<PageError>(64)
-    override val console: SharedFlow<ConsoleMessage> = consoleSink.asSharedFlow()
-    override val navigation: SharedFlow<NavigationEvent> = navigationSink.asSharedFlow()
-    override val loadState: SharedFlow<LoadState> = loadStateSink.asSharedFlow()
-    override val dialog: SharedFlow<DialogEvent> = dialogSink.asSharedFlow()
-    override val request: SharedFlow<Request> = requestSink.asSharedFlow()
-    override val response: SharedFlow<Response> = responseSink.asSharedFlow()
-    override val download: SharedFlow<Download> = downloadSink.asSharedFlow()
-    override val fileChooser: SharedFlow<FileChooser> = fileChooserSink.asSharedFlow()
-    override val pageError: SharedFlow<PageError> = pageErrorSink.asSharedFlow()
-}
 
 internal abstract class BasePage protected constructor(
     protected val controller: WebViewController,
@@ -93,53 +70,21 @@ internal abstract class BasePage protected constructor(
     }
 
     override val touchscreen: Touchscreen
-        get() = touchDevice
+        get() = inputDevices.touchscreen
 
     override val mouse: Mouse
-        get() = mouseDevice
+        get() = inputDevices.mouse
 
     override val keyboard: Keyboard
-        get() = keyboardDevice
+        get() = inputDevices.keyboard
 
-    private val touchDevice by lazy(LazyThreadSafetyMode.NONE) { guardedTouch(createTouch()) }
-    private val mouseDevice by lazy(LazyThreadSafetyMode.NONE) { guardedMouse(createMouse()) }
-    private val keyboardDevice by lazy(LazyThreadSafetyMode.NONE) { guardedKeyboard(createKeyboard()) }
+    private val inputDevices = PageInputDevices(
+        config, closeSignal, { checkPolicy(it, currentPageUrl()) }, ::createTouch, ::createMouse, ::createKeyboard
+    )
 
     protected abstract fun createTouch(): Touchscreen
     protected abstract fun createMouse(): Mouse
     protected abstract fun createKeyboard(): Keyboard
-
-    private fun guardedTouch(delegate: Touchscreen): Touchscreen = object : Touchscreen {
-        override suspend fun tap(x: Double, y: Double, modifiers: Int, timeoutMs: Long?) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.tap(x, y, modifiers, timeoutMs) }
-        override suspend fun longTap(x: Double, y: Double, durationMs: Long, timeoutMs: Long?) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.longTap(x, y, durationMs, timeoutMs) }
-        override suspend fun scroll(x: Double, y: Double, deltaX: Double, deltaY: Double, steps: Int, timeoutMs: Long?) { checkPolicy(ActionType.Scroll, currentPageUrl()); delegate.scroll(x, y, deltaX, deltaY, steps, timeoutMs) }
-        override suspend fun swipe(x1: Double, y1: Double, x2: Double, y2: Double, speed: Double, timeoutMs: Long?) { checkPolicy(ActionType.Drag, currentPageUrl()); delegate.swipe(x1, y1, x2, y2, speed, timeoutMs) }
-        override suspend fun pinch(x: Double, y: Double, scale: Double, timeoutMs: Long?) { checkPolicy(ActionType.Scroll, currentPageUrl()); delegate.pinch(x, y, scale, timeoutMs) }
-    }
-
-    private fun guardedMouse(delegate: Mouse): Mouse = object : Mouse {
-        override suspend fun move(x: Double, y: Double, steps: Int, timeoutMs: Long?) { checkPolicy(ActionType.Hover, currentPageUrl()); delegate.move(x, y, steps, timeoutMs) }
-        override suspend fun click(x: Double, y: Double, button: MouseButton, clickCount: Int, delayMs: Long, timeoutMs: Long?) {
-            checkPolicy(ActionType.Click, currentPageUrl()); delegate.click(x, y, button, clickCount, delayMs, timeoutMs)
-        }
-        override suspend fun dblclick(x: Double, y: Double, button: MouseButton, delayMs: Long, timeoutMs: Long?) {
-            checkPolicy(ActionType.Click, currentPageUrl()); delegate.dblclick(x, y, button, delayMs, timeoutMs)
-        }
-        override suspend fun down(button: MouseButton, clickCount: Int) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.down(button, clickCount) }
-        override suspend fun up(button: MouseButton) { checkPolicy(ActionType.Click, currentPageUrl()); delegate.up(button) }
-        override suspend fun wheel(deltaX: Double, deltaY: Double, timeoutMs: Long?) { checkPolicy(ActionType.Scroll, currentPageUrl()); delegate.wheel(deltaX, deltaY, timeoutMs) }
-        override suspend fun drag(startX: Double, startY: Double, endX: Double, endY: Double, timeoutMs: Long?) {
-            checkPolicy(ActionType.Drag, currentPageUrl()); delegate.drag(startX, startY, endX, endY, timeoutMs)
-        }
-    }
-
-    private fun guardedKeyboard(delegate: Keyboard): Keyboard = object : Keyboard {
-        override suspend fun insertText(text: String) { checkPolicy(ActionType.Type, currentPageUrl()); delegate.insertText(text) }
-        override suspend fun type(text: String, delayMs: Long, timeoutMs: Long?) { checkPolicy(ActionType.Type, currentPageUrl()); delegate.type(text, delayMs, timeoutMs) }
-        override suspend fun down(key: String) { checkPolicy(ActionType.Press, currentPageUrl()); delegate.down(key) }
-        override suspend fun up(key: String) { checkPolicy(ActionType.Press, currentPageUrl()); delegate.up(key) }
-        override suspend fun press(key: String, delayMs: Long, timeoutMs: Long?) { checkPolicy(ActionType.Press, currentPageUrl()); delegate.press(key, delayMs, timeoutMs) }
-    }
 
     override fun capabilities(): PageCapabilities = PageCapabilities()
 
@@ -149,10 +94,14 @@ internal abstract class BasePage protected constructor(
     // Shared mutable state is held in atomics: backend callbacks arrive on
     // arbitrary threads (WebView/binder threads, CDP socket readers).
     private val routeHandlers = atomic(persistentMapOf<String, Pair<Regex, suspend (Route) -> Unit>>())
-    private val requestFlow = MutableSharedFlow<Request>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    private val responseFlow = MutableSharedFlow<Response>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    // Actual responses only; events.response also carries synthetic network-failure diagnostics.
+    private val receivedResponses = MutableSharedFlow<Response>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private val navigationResultFlow = MutableSharedFlow<NavigationResult>(extraBufferCapacity = 16, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    private val networkIdleSince = atomic(0L)
+    private val loadStates = PageLoadStates(
+        controller::getPendingRequestCount, closeSignal, events.loadState, { evalString("document.readyState") }, pageScope,
+        hasLoadListeners = { sinks.loadStateSink.subscriptionCount.value > 0 },
+        emitIdle = { sinks.loadStateSink.tryEmit(LoadState.NetworkIdle) }
+    )
     private val navigationMutex = Mutex()
 
     private class PendingNavigation(
@@ -263,6 +212,7 @@ internal abstract class BasePage protected constructor(
         val before = currentPageUrl()
         val pending = PendingNavigation(CompletableDeferred(), target, before, acceptSameUrl, localContent, waitUntil)
         pendingNavigation.value = pending
+        approvedNavigationUrl.value = target
         try {
             awaitPageOperation(closeSignal) {
                 controller.setNavigationCallback(::navigationCompleted)
@@ -272,6 +222,7 @@ internal abstract class BasePage protected constructor(
                     markCurrentDocument()
                 } else null
                 if (!controller.reportsDomContentLoaded) domContentLoadedEmitted.value = false
+                currentCoroutineContext().ensureActive()
                 start()
                 withKmpwrightTimeout(timeoutMs, { "Timeout ${timeoutMs}ms exceeded while $description" }) {
                     if (documentMark != null) return@withKmpwrightTimeout awaitDomContentLoaded(pending, documentMark)
@@ -327,12 +278,14 @@ internal abstract class BasePage protected constructor(
     /** Marks the current document with a private token; null when the document cannot be marked. */
     private suspend fun markCurrentDocument(): DocumentMark? {
         val mark = DocumentMark("__kmpwright_doc_" + PageHelpers.key.takeLast(12), PageHelpers.seal.take(16) + currentTimeMillis())
-        val marked = runCatching {
+        val marked = try {
             controller.normalizeJavaScriptResult(controller.evaluateJavaScriptAsync(
                 "(function(){try{Object.defineProperty(window,${jsStringLiteral(mark.key)},{value:${jsStringLiteral(mark.token)},configurable:true});" +
                     "return window[${jsStringLiteral(mark.key)}]===${jsStringLiteral(mark.token)}?'ok':'no';}catch(e){return 'no';}})()"
             ))
-        }.getOrNull()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) { null }
         return mark.takeIf { marked == "ok" }
     }
 
@@ -407,36 +360,31 @@ internal abstract class BasePage protected constructor(
         override fun onRequestStarted(request: Request) {
             networkHistory.started(request)
             harCapture.started(request)
-            networkIdleSince.value = 0
-            requestFlow.tryEmit(request)
+            loadStates.networkChanged()
             sinks.requestSink.tryEmit(request)
         }
 
         override fun onResponseReceived(response: Response) {
-            if (response.status == 0 && response.statusText == "idle") {
-                networkIdleSince.value = currentTimeMillis()
-                sinks.loadStateSink.tryEmit(LoadState.NetworkIdle)
-            } else {
-                response.bodyReader = { maxBytes -> networkHistory.responseBody(response, maxBytes) }
-                networkHistory.received(response)
-                harCapture.received(response)
-                responseFlow.tryEmit(response)
-                sinks.responseSink.tryEmit(response)
-            }
+            // Android's legacy idle signal is not a new request transition. The common
+            // monitor measures the quiet interval from request completion.
+            if (response.status == 0 && response.statusText == "idle") return
+            response.bodyReader = { maxBytes -> networkHistory.responseBody(response, maxBytes) }
+            networkHistory.received(response)
+            harCapture.received(response)
+            receivedResponses.tryEmit(response)
+            sinks.responseSink.tryEmit(response)
         }
 
         override fun onRequestFinished(request: Request) {
             networkHistory.finished(request)
             harCapture.finished(request)
-            if (controller.getPendingRequestCount() == 0) {
-                networkIdleSince.value = currentTimeMillis()
-                sinks.loadStateSink.tryEmit(LoadState.NetworkIdle)
-            }
+            loadStates.networkChanged()
         }
 
         override fun onRequestFailed(request: Request, error: String) {
             networkHistory.failed(request, error)
             harCapture.failed(request, error)
+            loadStates.networkChanged()
             sinks.responseSink.tryEmit(Response(url = request.url, status = 0, statusText = error, id = request.id))
         }
     }
@@ -453,10 +401,10 @@ internal abstract class BasePage protected constructor(
     private val dialogWaiters = atomic(0)
 
     /** Runs [block] (which waits for a dialog event) while counting as a dialog listener. */
-    internal suspend fun <T> awaitingDialog(block: suspend () -> T): T {
+    internal suspend fun <T> awaitingDialog(block: suspend () -> T): T = awaitPageOperation(closeSignal) {
         dialogWaiters.incrementAndGet()
         try {
-            return block()
+            block()
         } finally {
             dialogWaiters.decrementAndGet()
         }
@@ -503,17 +451,23 @@ internal abstract class BasePage protected constructor(
 
     // ------------------------------------------------------------------ navigation
 
-    override suspend fun goto(url: String, waitUntil: LoadState, timeoutMs: Long?): NavigationResult {
-        checkPolicy(ActionType.Navigate, url)
-        return gotoApproved(url, waitUntil, timeoutMs)
-    }
+    override suspend fun goto(url: String, waitUntil: LoadState, timeoutMs: Long?): NavigationResult =
+        navigationOperation(timeoutMs, "navigating to \"$url\"") {
+            checkPolicy(ActionType.Navigate, url)
+            gotoApproved(url, waitUntil, timeoutMs)
+        }
+
+    private suspend fun <T> navigationOperation(timeoutMs: Long?, description: String, block: suspend () -> T): T =
+        awaitPageOperation(closeSignal) {
+            val timeout = config.navigationTimeout(timeoutMs)
+            withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded while $description" }) { block() }
+        }
 
     private suspend fun gotoApproved(url: String, waitUntil: LoadState = LoadState.Load, timeoutMs: Long? = null): NavigationResult {
         validateNavigationOrigin(url)
         val timeout = config.navigationTimeout(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
-        approvedNavigationUrl.value = url
-        networkIdleSince.value = 0
+        loadStates.networkChanged()
         invalidateOnNavigation()
         val previous = currentPageUrl()
         val result = navigate(timeout, url, acceptSameUrl = previous != null && sameUrl(previous, url),
@@ -535,18 +489,20 @@ internal abstract class BasePage protected constructor(
         }
     }
 
-    override suspend fun reload(waitUntil: LoadState, timeoutMs: Long?): NavigationResult {
+    override suspend fun reload(waitUntil: LoadState, timeoutMs: Long?): NavigationResult = navigationOperation(timeoutMs, "reloading") {
         checkPolicy(ActionType.Navigate, currentPageUrl())
         val timeout = config.navigationTimeout(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
         invalidateOnNavigation()
         val result = navigate(timeout, currentPageUrl(), acceptSameUrl = true, description = "reloading", waitUntil = waitUntil) { controller.reload() }
-        return finishLoad(result, waitUntil, started, timeout)
+        finishLoad(result, waitUntil, started, timeout)
     }
 
-    override suspend fun goBack(waitUntil: LoadState, timeoutMs: Long?): NavigationResult? = traverseHistory(-1, waitUntil, timeoutMs)
+    override suspend fun goBack(waitUntil: LoadState, timeoutMs: Long?): NavigationResult? =
+        navigationOperation(timeoutMs, "going back") { traverseHistory(-1, waitUntil, timeoutMs) }
 
-    override suspend fun goForward(waitUntil: LoadState, timeoutMs: Long?): NavigationResult? = traverseHistory(1, waitUntil, timeoutMs)
+    override suspend fun goForward(waitUntil: LoadState, timeoutMs: Long?): NavigationResult? =
+        navigationOperation(timeoutMs, "going forward") { traverseHistory(1, waitUntil, timeoutMs) }
 
     private suspend fun traverseHistory(delta: Int, waitUntil: LoadState, timeoutMs: Long?): NavigationResult? {
         checkPolicy(ActionType.Navigate, currentPageUrl())
@@ -611,11 +567,11 @@ internal abstract class BasePage protected constructor(
         return null
     }
 
-    override suspend fun setContent(html: String, waitUntil: LoadState, timeoutMs: Long?) {
+    override suspend fun setContent(html: String, waitUntil: LoadState, timeoutMs: Long?): Unit = navigationOperation(timeoutMs, "setting page content") {
         checkPolicy(ActionType.SetContent, currentPageUrl())
         val timeout = config.navigationTimeout(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
-        networkIdleSince.value = 0
+        loadStates.networkChanged()
         invalidateOnNavigation()
         val result = navigate(timeout, null, acceptSameUrl = true, description = "setting page content", localContent = true,
             waitUntil = waitUntil) { controller.loadHtml(html, null) }
@@ -732,70 +688,14 @@ internal abstract class BasePage protected constructor(
     }
 
     private suspend fun awaitLoadState(state: LoadState, timeoutMs: Long) {
-        val startTime = currentTimeMillis()
-
-        when (state) {
-            LoadState.DOMContentLoaded -> {
-                val ready = evalString("document.readyState")
-                if (ready == "interactive" || ready == "complete") return
-                if (waitForReadyStateOrLoadEvent(
-                        startTime,
-                        timeoutMs,
-                        accepts = { it == LoadState.DOMContentLoaded || it == LoadState.Load },
-                        isReady = { it == "interactive" || it == "complete" }
-                    )) return
-                throw KmpwrightTimeoutException("Timeout ${timeoutMs}ms exceeded waiting for DOMContentLoaded")
+        if (!loadStates.await(state, timeoutMs)) {
+            val label = when (state) {
+                LoadState.DOMContentLoaded -> "DOMContentLoaded"
+                LoadState.Load -> "load"
+                LoadState.NetworkIdle -> "network idle"
             }
-            LoadState.Load -> {
-                val ready = evalString("document.readyState")
-                if (ready == "complete") return
-                if (waitForReadyStateOrLoadEvent(
-                        startTime,
-                        timeoutMs,
-                        accepts = { it == LoadState.Load },
-                        isReady = { it == "complete" }
-                    )) return
-                throw KmpwrightTimeoutException("Timeout ${timeoutMs}ms exceeded waiting for load")
-            }
-            LoadState.NetworkIdle -> {
-                var quietSince = if (controller.getPendingRequestCount() == 0) currentTimeMillis() else 0L
-                while (currentTimeMillis() - startTime < timeoutMs) {
-                    checkPageOpen()
-                    val now = currentTimeMillis()
-                    if (controller.getPendingRequestCount() != 0) quietSince = 0L
-                    if (controller.getPendingRequestCount() == 0) {
-                        if (quietSince == 0L) quietSince = now
-                        // A request can start and finish between probes; its completion
-                        // timestamp resets the continuous quiet interval as well.
-                        quietSince = maxOf(quietSince, networkIdleSince.value)
-                        if (now - quietSince >= 500) return
-                    }
-                    delay(minOf(25L, (timeoutMs - (now - startTime)).coerceAtLeast(1)))
-                }
-                throw KmpwrightTimeoutException("Timeout ${timeoutMs}ms exceeded waiting for network idle")
-            }
+            throw KmpwrightTimeoutException("Timeout ${timeoutMs}ms exceeded waiting for $label")
         }
-    }
-
-    /**
-     * Waits in event-sized windows and probes readyState only between windows.
-     * This keeps normal navigation bridge-free while preserving a fallback for
-     * controllers that do not surface load-state events.
-     */
-    private suspend fun waitForReadyStateOrLoadEvent(
-        startTime: Long,
-        timeoutMs: Long,
-        accepts: (LoadState) -> Boolean,
-        isReady: (String?) -> Boolean
-    ): Boolean {
-        while (currentTimeMillis() - startTime < timeoutMs) {
-            val remaining = (timeoutMs - (currentTimeMillis() - startTime)).coerceAtLeast(1)
-            if (withTimeoutOrNull(minOf(500L, remaining)) {
-                    events.loadState.first(accepts)
-                } != null) return true
-            if (isReady(evalString("document.readyState"))) return true
-        }
-        return false
     }
 
     override suspend fun waitForTimeout(ms: Long) = delay(ms)
@@ -825,18 +725,18 @@ internal abstract class BasePage protected constructor(
         awaitUrl("accepted by the predicate", waitUntil, timeoutMs, predicate)
 
     /** Polls the live `location.href` (so same-document navigations count), then waits for [waitUntil]. */
-    private suspend fun awaitUrl(description: String, waitUntil: LoadState, timeoutMs: Long?, matches: (String) -> Boolean) {
+    private suspend fun awaitUrl(description: String, waitUntil: LoadState, timeoutMs: Long?, matches: (String) -> Boolean) = awaitPageOperation(closeSignal) {
         val timeout = config.navigationTimeout(timeoutMs)
-        val started = TimeSource.Monotonic.markNow()
         withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for a URL $description" }) {
             while (true) {
-                checkPageOpen()
-                val href = runCatching { evalString("location.href") }.getOrNull() ?: currentPageUrl()
+                val href = try { evalString("location.href") }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: KmpwrightException) { null } ?: currentPageUrl()
                 if (href != null && matches(href)) break
                 withTimeoutOrNull(100) { url.first { it != href } }
             }
+            awaitLoadState(waitUntil, timeout)
         }
-        awaitLoadState(waitUntil, (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(1))
     }
 
     override suspend fun waitForEvent(event: String, timeoutMs: Long?, predicate: ((Any?) -> Boolean)?): Any? = awaitPageOperation(closeSignal) {
@@ -870,7 +770,7 @@ internal abstract class BasePage protected constructor(
     private suspend fun awaitRequest(description: String, timeoutMs: Long?, matches: (Request) -> Boolean): Request = awaitPageOperation(closeSignal) {
         val timeout = config.defaultTimeout(timeoutMs)
         withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for a request $description" }) {
-            requestFlow.first(matches)
+            events.request.first(matches)
         }
     }
 
@@ -886,7 +786,7 @@ internal abstract class BasePage protected constructor(
     private suspend fun awaitResponse(description: String, timeoutMs: Long?, matches: (Response) -> Boolean): Response = awaitPageOperation(closeSignal) {
         val timeout = config.defaultTimeout(timeoutMs)
         withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for a response $description" }) {
-            responseFlow.first(matches)
+            receivedResponses.first(matches)
         }
     }
 
@@ -1714,16 +1614,16 @@ internal abstract class BasePage protected constructor(
         sinks.fileChooserSink.tryEmit(chooser)
     }
 
-    override suspend fun waitForDownload(url: String?, timeoutMs: Long?): Download {
+    override suspend fun waitForDownload(url: String?, timeoutMs: Long?): Download = awaitPageOperation(closeSignal) {
         val timeout = config.defaultTimeout(timeoutMs)
-        return withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for download${if (url != null) " matching $url" else ""}" }) {
+        withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for download${if (url != null) " matching $url" else ""}" }) {
             if (url != null) events.download.first { waitUrlPatternMatches(url, it.url) } else events.download.first()
         }
     }
 
-    override suspend fun waitForFileChooser(timeoutMs: Long?): FileChooser {
+    override suspend fun waitForFileChooser(timeoutMs: Long?): FileChooser = awaitPageOperation(closeSignal) {
         val timeout = config.defaultTimeout(timeoutMs)
-        return withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for file chooser" }) {
+        withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for file chooser" }) {
             events.fileChooser.first()
         }
     }
@@ -1773,6 +1673,7 @@ internal abstract class BasePage protected constructor(
         // A navigation callback can otherwise retain this page through the
         // callback closure until the next navigation (or forever on a dead target).
         runCatching { controller.setNavigationCallback(null) }
+        runCatching { controller.setLifecycleListener(null) }
         runCatching { controller.setNavigationGuard(null) }
         runCatching { controller.removeAllRouteHandlers() }
         runCatching { controller.removeRequestListener(requestListener) }

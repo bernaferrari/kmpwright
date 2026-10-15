@@ -32,6 +32,8 @@ class PageLifecycleTest {
         assertTrue(controller.disposed)
         assertEquals(1, controller.disposeCount)
         assertEquals(2, controller.navigationCallbackSetCount)
+        assertEquals(2, controller.lifecycleCallbackSetCount)
+        org.junit.Assert.assertNull(controller.lifecycleCallback)
         assertEquals(1, controller.removeRequestListenerCount)
         assertEquals(1, controller.removeDialogListenerCount)
         assertEquals(routeSyncCount + 1, controller.removeAllRouteHandlersCount)
@@ -65,6 +67,8 @@ class PageLifecycleTest {
 
         assertTrue(controller.disposed)
         assertEquals(2, controller.navigationCallbackSetCount)
+        assertEquals(2, controller.lifecycleCallbackSetCount)
+        org.junit.Assert.assertNull(controller.lifecycleCallback)
         assertEquals(1, controller.removeRequestListenerCount)
         assertEquals(1, controller.removeDialogListenerCount)
         assertEquals(routeSyncCount + 1, controller.removeAllRouteHandlersCount)

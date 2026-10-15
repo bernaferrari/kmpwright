@@ -3,6 +3,8 @@
 package com.bernaferrari.kmpwright.core
 
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -29,6 +31,36 @@ class IOSReviewRepairDocumentTest {
             page.setStorageState(saved.copy(localStorage = emptyMap(), sessionStorage = emptyMap()))
             assertTrue(page.localStorage.entries().isEmpty())
             assertTrue(page.sessionStorage.entries().isEmpty())
+        } finally { page.close() }
+    }
+
+    @Test fun workflows_survive_document_replacement_and_policy_timeouts() = runWebKitTest {
+        requireWebKitDocuments()
+        val page = IOSPage(IOSWebViewController())
+        try {
+            repeat(4) { round ->
+                page.setContent("""<label for=name>Name</label><input id=name>
+                    <button onclick="document.querySelector('[role=status]').textContent='Hello, '+document.getElementById('name').value">Greet</button>
+                    <p role=status></p>""")
+                page.getByLabel("Name").fill("Ada $round")
+                page.getByRole("button", name = "Greet").click()
+                expect(page.getByRole("status")).toHaveText("Hello, Ada $round")
+                page.waitForLoadState(LoadState.Load, timeoutMs = 1_000)
+            }
+            page.setActionPolicy(ActionPolicy(confirmActions = setOf(ActionType.Type)))
+            page.setPolicyConfirmCallback { _, _ -> delay(5_000); true }
+            withTimeout(2_000) {
+                assertFailsWith<KmpwrightTimeoutException> { page.keyboard.type("unapproved", timeoutMs = 100) }
+            }
+            page.setActionPolicy(ActionPolicy())
+            page.getByLabel("Name").fill("Still usable")
+            assertEquals("Still usable", page.getByLabel("Name").inputValue())
+            coroutineScope {
+                val wait = async(start = CoroutineStart.UNDISPATCHED) { runCatching { page.waitForEvent("console", 60_000) } }
+                page.close()
+                val failure = withTimeout(1_000) { wait.await() }.exceptionOrNull()
+                assertTrue(failure is KmpwrightException && failure.message.orEmpty().contains("closed"))
+            }
         } finally { page.close() }
     }
 

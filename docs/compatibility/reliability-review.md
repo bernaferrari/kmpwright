@@ -230,3 +230,52 @@ too, rather than accepting a timeout as an ambiguity failure. All 12 Android
 consistency tests and four hosted iOS repair tests passed after this test-only
 adjustment. Short-deadline enforcement remains covered separately by delayed
 bridge and multi-stage regressions.
+
+### Shared waits and Compose refinement — 2026-10-15
+
+- `PageLoadStates` owns document-readiness races and continuous network quiet.
+  Load events subscribe before ready-state probes, so a stalled native callback
+  cannot hide an observed load. The entire wait has one deadline and page lifetime.
+  Network-idle events wait for 500 ms of continuous quiet, using a monotonic clock;
+  failed requests reset that interval too. The observer starts only when needed.
+- `PageInputDevices` applies live policy, lifetime and total action deadlines to
+  all 17 keyboard, mouse and touchscreen operations. Device state stays cached.
+  Policy confirmation counts toward the input budget on every backend.
+- Navigation budgets include policy confirmation, waiting for another navigation,
+  document preparation and status refinement. Cancellation during preparation
+  cannot fall through into a late `loadUrl`. The approval for a navigation is
+  installed only after it acquires ownership of the navigation slot.
+- Closing a page terminates download, file-chooser and dialog waits as well as
+  request/response/load waits, and unregisters the lifecycle callback. The
+  duplicated request stream was removed; actual responses remain distinct from
+  the synthetic failure diagnostics in `events.response`, including status-zero
+  responses delivered by a backend.
+- Compose start-URL loads inherit effect cancellation and use the main dispatcher
+  independently of the composition's frame clock. Replacing the URL cancels the
+  previous wait; replacing/removing the controller closes its page and clears its
+  observable URL, title and history state.
+- Eight consecutive real Chromium contexts exercise route removal, cookie and
+  storage isolation, state restoration and pending-wait cleanup. Hosted WebKit
+  repeats a form workflow across document replacement, recovers after an input
+  policy timeout and closes an active event wait. Android Compose tests cover
+  controller replacement/removal and switching away from a slow initial URL.
+- Navigation documentation now demonstrates application-result assertions and
+  action-scoped response waits. Capability levels describe each backend's own
+  documented contract. The website runtime is pinned to a fresh immutable asset
+  set; generated JavaScript remains outside Git.
+
+The new stalled-bridge, close and immediate-idle regressions failed before the
+repairs. A separate regression reproduced a navigation being issued after its
+preparation timeout, then passed after cancellation propagation was repaired.
+Android also exposed a Compose frame-clock scheduling regression during this
+pass; its isolated three-test loop passed after main-dispatcher ownership was
+made explicit. The slow-load fixture observes the server receiving its request:
+WebView can defer `onPageStarted` until response headers arrive, so `isLoading`
+is not a reliable prerequisite for this cancellation test.
+
+Verification: 951 JVM tests with real Chromium and the React fixture passed with
+zero failures, errors or skips; 80 Android emulator tests, 99 app-hosted iOS tests
+and six desktop/mobile browser contracts passed. All-target Kotlin ABI validation,
+Android builds, Compose lint, the Kotlin/JS runtime build, website production
+build/types/lint and repository metadata checks passed. The public API is unchanged.
+Maven Central `0.0.1` remains immutable; these changes require a later library release.

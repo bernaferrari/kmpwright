@@ -20,6 +20,39 @@ expect(page).toHaveTitle(Regex("Dashboard"))
 
 Every navigation and wait is a `suspend` function. A `timeoutMs` of `null` uses the matching default from [`TimeoutConfig`](/docs/reference/configuration): `navigation` for navigations, `waitForURL`, `waitForLoadState` and `waitForNavigation`; `default` for most other waits. All defaults are 30 000 ms.
 
+## Choose a readiness signal
+
+Wait for the result your workflow needs. Locators already wait for actionable
+elements, and assertions retry until the expected state appears:
+
+```kotlin
+page.goto("https://example.com/orders")
+page.getByRole("button", name = "Refresh").click()
+expect(page.getByRole("status")).toHaveText("Orders updated")
+```
+
+Use an action-scoped wait when the event itself matters. It subscribes before the
+action, so a fast response cannot be missed:
+
+```kotlin
+val response = page.waitForResponse("**/api/orders") {
+    getByRole("button", name = "Refresh").click()
+}
+check(response.ok)
+expect(page.getByRole("status")).toHaveText("Orders updated")
+```
+
+A response can arrive before the UI updates; keep the assertion when later steps
+need the rendered result. `NetworkIdle` measures observed traffic, which may omit
+requests on WebViews or never become idle on a polling application. Prefer a
+specific result over a fixed sleep or an idle wait.
+
+Navigation and input timeouts include policy confirmation and setup. A navigation
+queued behind another navigation still uses its own total budget. Load-state and
+URL waits include WebView evaluation callbacks in that budget. Closing the page
+terminates pending navigation, load-state and event waits with `KmpwrightException`;
+cancelling the caller propagates coroutine cancellation. A timeout fails the operation without closing the page.
+
 ## goto
 
 ```kotlin
@@ -78,9 +111,10 @@ Playwright differences: `page.goto` there throws on network errors, and returns 
 |---|---|
 | JVM (CDP) | The main document's real status, from `Network.responseReceived`. |
 | iOS (WKWebView) | The real status from the navigation response (`NSHTTPURLResponse.statusCode`). |
-| Android (WebView) | `200` for every successful load, including redirects and 2xx/3xx codes. 4xx and 5xx codes are reported exactly, through `onReceivedHttpError`. |
+| Android (WebView) | Native HTTP errors are reported through `onReceivedHttpError`; successful loads use Navigation Timing's `responseStatus` when available, with a `200` fallback. |
 
-On Android, use `ok` or `status >= 400` to detect errors; don't rely on distinguishing 200 from 204.
+On Android, use `ok` to detect errors. WebView versions that omit
+`responseStatus` cannot distinguish successful status codes such as 200 and 204.
 
 ## reload, goBack, goForward
 
