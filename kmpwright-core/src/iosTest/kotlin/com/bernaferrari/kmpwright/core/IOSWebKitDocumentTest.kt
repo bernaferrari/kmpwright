@@ -122,19 +122,21 @@ class IOSWebKitDocumentTest {
     @Test
     fun document_capture_converts_wide_css_layouts_to_native_snapshot_points() = runWebKitTest {
         requireWebKitDocuments()
-        val controller = IOSWebViewController(KmpwrightConfig(viewport = Viewport(320, 480)))
-        try {
-            controller.loadHtmlAsync("<meta name=viewport content='width=1200'><body style='margin:0;width:1200px;height:1400px;background:red'><div style='position:absolute;left:700px;top:100px;width:160px;height:120px;background:lime'></div></body>", baseUrl, 10_000)
-            val web = controller.getWebView()
-            val shot = captureWebViewDocument(web, clip = Rectangle(700.0, 100.0, 160.0, 120.0), pixelsPerCssPixel = 2.0)
-            assertEquals(320, shot.width)
-            assertEquals(240, shot.height)
-            assertEquals(Triple(0, 255, 0), assertNotNull(shot.toRgbaImage()).rgbAt(0.5))
-            val viewportClip = IOSScreenshotController(web).capture(ScreenshotOptions(clip = Rectangle(700.0, 100.0, 160.0, 120.0)))
-            val pointsPerCss = web.bounds.useContents { size.width } / web.captureNumber("window.innerWidth")
-            assertEquals(160 * pointsPerCss * web.snapshotScreenScale(), viewportClip.width.toDouble(), 1.0)
-            assertEquals(Triple(0, 255, 0), assertNotNull(viewportClip.toRgbaImage()).rgbAt(0.5))
-        } finally { controller.dispose() }
+        repeat(5) {
+            val controller = IOSWebViewController(KmpwrightConfig(viewport = Viewport(320, 480)))
+            try {
+                controller.loadHtmlAsync("<meta name=viewport content='width=1200'><body style='margin:0;width:1200px;height:1400px;background:red'><div style='position:absolute;left:700px;top:100px;width:160px;height:120px;background:lime'></div></body>", baseUrl, 10_000)
+                val web = controller.getWebView()
+                val shot = captureWebViewDocument(web, clip = Rectangle(700.0, 100.0, 160.0, 120.0), pixelsPerCssPixel = 2.0)
+                assertEquals(320, shot.width)
+                assertEquals(240, shot.height)
+                assertEquals(Triple(0, 255, 0), assertNotNull(shot.toRgbaImage()).rgbAt(0.5))
+                val viewportClip = IOSScreenshotController(web).capture(ScreenshotOptions(clip = Rectangle(700.0, 100.0, 160.0, 120.0)))
+                val pointsPerCss = web.bounds.useContents { size.width } / web.captureNumber("window.innerWidth")
+                assertEquals(160 * pointsPerCss * web.snapshotScreenScale(), viewportClip.width.toDouble(), 1.0)
+                assertEquals(Triple(0, 255, 0), assertNotNull(viewportClip.toRgbaImage()).rgbAt(0.5))
+            } finally { controller.dispose() }
+        }
     }
 
     @Test

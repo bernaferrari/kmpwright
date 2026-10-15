@@ -184,49 +184,51 @@ internal abstract class BaseLocator(
         var lastState = "missing"
         var lastDetail: JsonObject? = null
         var attempt = 0
-        while (true) {
-            val opts = buildJsonObject {
-                put("visible", checks.visible && !force)
-                put("enabled", checks.enabled && !force)
-                put("editable", checks.editable)
-                put("force", force)
-                put("stable", checks.stable && !force)
-                put("hit", checks.hit && !force)
-                put("scroll", checks.scroll)
-                previousRect?.let { put("prev", it) }
-                position?.let { putJsonObject("position") { put("x", it.x); put("y", it.y) } }
+        withKmpwrightTimeout(timeoutMs, { actionTimeout(actionLabel, timeoutMs, lastState, lastDetail).message.orEmpty() }) {
+            while (true) {
+                val opts = buildJsonObject {
+                    put("visible", checks.visible && !force)
+                    put("enabled", checks.enabled && !force)
+                    put("editable", checks.editable)
+                    put("force", force)
+                    put("stable", checks.stable && !force)
+                    put("hit", checks.hit && !force)
+                    put("scroll", checks.scroll)
+                    previousRect?.let { put("prev", it) }
+                    position?.let { putJsonObject("position") { put("x", it.x); put("y", it.y) } }
+                }
+                val value = runWithRuntime("""
+                    ${resolveJs()}
+                    if (!el) return {state: 'missing'};
+                    var p = H.probe(el, $opts);
+                    if (p.state !== 'ok') return p;
+                    return {state: 'done', result: H.perform(el, ${jsStringLiteral(kind)}, $args, p)};
+                """.trimIndent(), (timeoutMs - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(1))
+                strictViolation(value)
+                val obj = value as? JsonObject
+                    // A bridge that cannot report results (custom controller) is treated as completed.
+                    ?: return@withKmpwrightTimeout value
+                val state = obj["state"]?.jsonPrimitive?.content ?: "done"
+                when (state) {
+                    "done" -> return@withKmpwrightTimeout obj["result"] ?: JsonNull
+                    "fatal" -> throw KmpwrightException("Cannot $actionLabel '$displayName': ${obj["reason"]?.jsonPrimitive?.content}: ${obj["d"]?.jsonPrimitive?.content}")
+                }
+                lastState = state
+                lastDetail = obj
+                if (state == "unstable") previousRect = obj["rect"] else if (state != "intercepted") previousRect = null
+                // Leave room for one final probe inside the budget, so the detailed error is reported
+                // before any caller-level timeout with the same budget fires.
+                val budget = timeoutMs - started.elapsedNow().inWholeMilliseconds - FINAL_PROBE_MARGIN_MS
+                if (budget <= 0) throw actionTimeout(actionLabel, timeoutMs, lastState, lastDetail)
+                val wait = when (state) {
+                    "unstable" -> 34L // two animation frames
+                    else -> RETRY_BACKOFF_MS[minOf(attempt, RETRY_BACKOFF_MS.lastIndex)]
+                }
+                attempt++
+                delay(minOf(wait, budget))
             }
-            val value = runWithRuntime("""
-                ${resolveJs()}
-                if (!el) return {state: 'missing'};
-                var p = H.probe(el, $opts);
-                if (p.state !== 'ok') return p;
-                return {state: 'done', result: H.perform(el, ${jsStringLiteral(kind)}, $args, p)};
-            """.trimIndent())
-            strictViolation(value)
-            val obj = value as? JsonObject
-                // A bridge that cannot report results (custom controller) is treated as completed.
-                ?: return@awaitPageOperation value
-            val state = obj["state"]?.jsonPrimitive?.content ?: "done"
-            when (state) {
-                "done" -> return@awaitPageOperation obj["result"] ?: JsonNull
-                "fatal" -> throw KmpwrightException("Cannot $actionLabel '$displayName': ${obj["reason"]?.jsonPrimitive?.content}: ${obj["d"]?.jsonPrimitive?.content}")
-            }
-            lastState = state
-            lastDetail = obj
-            if (state == "unstable") previousRect = obj["rect"] else if (state != "intercepted") previousRect = null
-            // Leave room for one final probe inside the budget, so the detailed error is reported
-            // before any caller-level timeout with the same budget fires.
-            val budget = timeoutMs - started.elapsedNow().inWholeMilliseconds - FINAL_PROBE_MARGIN_MS
-            if (budget <= 0) throw actionTimeout(actionLabel, timeoutMs, lastState, lastDetail)
-            val wait = when (state) {
-                "unstable" -> 34L // two animation frames
-                else -> RETRY_BACKOFF_MS[minOf(attempt, RETRY_BACKOFF_MS.lastIndex)]
-            }
-            attempt++
-            delay(minOf(wait, budget))
+            @Suppress("UNREACHABLE_CODE") JsonNull
         }
-        @Suppress("UNREACHABLE_CODE") JsonNull
     }
 
     private fun actionTimeout(action: String, timeoutMs: Long, state: String, detail: JsonObject?): KmpwrightTimeoutException {
@@ -276,7 +278,7 @@ internal abstract class BaseLocator(
         force: Boolean,
         timeoutMs: Long?,
         label: String
-    ) {
+    ): Unit = config.inputAction(timeoutMs, label) {
         val timeout = timeoutOf(timeoutMs)
         val button = mouseButtonCode(mouseButton)
         if (delayMs <= 0) {
@@ -284,19 +286,22 @@ internal abstract class BaseLocator(
                 put("button", button)
                 put("clickCount", clickCount)
             }, timeout, force, Checks(), position = position, actionLabel = label)
-            return
+            return@inputAction
         }
         val point = performAction("clickDown", buildJsonObject { put("button", button); put("i", 1) },
             timeout, force, Checks(), position = position, actionLabel = label) as? JsonObject
-        val x = point?.get("x")?.jsonPrimitive?.doubleOrNull ?: return
-        val y = point["y"]?.jsonPrimitive?.doubleOrNull ?: return
+        val x = point?.get("x")?.jsonPrimitive?.doubleOrNull ?: return@inputAction
+        val y = point["y"]?.jsonPrimitive?.doubleOrNull ?: return@inputAction
         for (i in 1..clickCount) {
             if (i > 1) {
                 delay(delayMs)
                 performOnElement("clickDown", buildJsonObject { put("button", button); put("i", i) }, x, y, label)
             }
-            delay(delayMs)
-            performOnElement("clickUp", buildJsonObject { put("button", button); put("i", i) }, x, y, label)
+            Unit.useThenClose({ delay(delayMs) }) {
+                withKmpwrightTimeout(1_000, { "Timed out releasing the pointer" }) {
+                    performOnElement("clickUp", buildJsonObject { put("button", button); put("i", i) }, x, y, label)
+                }
+            }
         }
     }
 
@@ -327,9 +332,9 @@ internal abstract class BaseLocator(
 
     override suspend fun clear(force: Boolean, timeoutMs: Long?) = fill("", force, timeoutMs)
 
-    override suspend fun pressSequentially(text: String, delayMs: Long, timeoutMs: Long?) {
+    override suspend fun pressSequentially(text: String, delayMs: Long, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator keyboard input") {
         checkPolicy(ActionType.Type)
-        if (text.isEmpty()) return
+        if (text.isEmpty()) return@inputAction
         val timeout = timeoutOf(timeoutMs)
         val units = text.toUnicodeTextUnits()
         val batches = if (delayMs > 0) units.map { listOf(it) } else listOf(units)
@@ -348,18 +353,21 @@ internal abstract class BaseLocator(
         }
     }
 
-    override suspend fun press(key: String, delayMs: Long, timeoutMs: Long?) {
+    override suspend fun press(key: String, delayMs: Long, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator keyboard input") {
         checkPolicy(ActionType.Press)
         val args = pressArgsJson(key)
         val checks = Checks(visible = false, enabled = false, stable = false, hit = false, scroll = false)
         if (delayMs <= 0) {
             performAction("press", args, timeoutOf(timeoutMs), force = false, checks, actionLabel = "press $key on")
-            return
+            return@inputAction
         }
         // Playwright: delayMs is the time between keydown and keyup.
         performAction("pressDown", args, timeoutOf(timeoutMs), force = false, checks, actionLabel = "press $key on")
-        delay(delayMs)
-        performOnElement("pressUp", args, 0.0, 0.0, "press $key on")
+        Unit.useThenClose({ delay(delayMs) }) {
+            withKmpwrightTimeout(1_000, { "Timed out releasing $key" }) {
+                performOnElement("pressUp", args, 0.0, 0.0, "press $key on")
+            }
+        }
     }
 
     override suspend fun hover(force: Boolean, timeoutMs: Long?) {

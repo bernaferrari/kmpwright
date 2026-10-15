@@ -793,8 +793,15 @@ internal class CdpWebViewController(
 
     private suspend fun readCookies(url: String? = null): List<Cookie> {
         if (disposed.get()) throw KmpwrightException("Page is closed")
-        val response = cdpSend(CdpMethods.NETWORK_GET_COOKIES,
-            if (url != null) mapOf("urls" to listOf(url)) else emptyMap())
+        val response = if (url != null) {
+            cdpSend("Network.getCookies", mapOf("urls" to listOf(url)))
+        } else {
+            val target = cdpSend(CdpMethods.TARGET_GET_TARGET_INFO)
+            target.error?.let { throw KmpwrightException("Could not resolve cookie context: ${it.message}") }
+            val contextId = target.result?.get("targetInfo")?.jsonObject?.get("browserContextId")?.jsonPrimitive?.contentOrNull
+            val params = if (contextId != null) mapOf("browserContextId" to contextId) else emptyMap()
+            connection.send(CdpMethods.STORAGE_GET_Cookies, params)
+        }
         response.error?.let { throw KmpwrightException("Cookie read failed: ${it.message}") }
         val cookies = response.result?.get("cookies")?.jsonArray ?: throw KmpwrightException("Cookie read returned no cookie data")
         return cookies.map { parseCdpCookie(it.jsonObject) }
@@ -808,33 +815,12 @@ internal class CdpWebViewController(
 
     override fun getCookie(name: String, domain: String, callback: (Cookie?) -> Unit) {
         if (disposed.get()) { callback(null); return }
-        scope.launch {
-            try {
-                val result = cdpSend(CdpMethods.NETWORK_GET_COOKIES)
-                val cookies = result.result?.get("cookies")?.jsonArray.orEmpty()
-                val found = cookies.firstOrNull { c ->
-                    val cName = c.jsonObject["name"]?.jsonPrimitive?.content
-                    val cDomain = c.jsonObject["domain"]?.jsonPrimitive?.content
-                    cName == name && cDomain != null && cookieDomainMatches(cDomain, domain)
-                }
-                callback(found?.let { parseCdpCookie(it.jsonObject) })
-            } catch (_: Exception) {
-                callback(null)
-            }
-        }
+        scope.launch { callback(try { getCookieAsync(name, domain) } catch (_: Exception) { null }) }
     }
 
     override fun getAllCookies(callback: (List<Cookie>) -> Unit) {
         if (disposed.get()) { callback(emptyList()); return }
-        scope.launch {
-            try {
-                val result = cdpSend(CdpMethods.NETWORK_GET_COOKIES)
-                val cookies = result.result?.get("cookies")?.jsonArray.orEmpty()
-                callback(cookies.map { parseCdpCookie(it.jsonObject) })
-            } catch (_: Exception) {
-                callback(emptyList())
-            }
-        }
+        scope.launch { callback(try { getAllCookiesAsync() } catch (_: Exception) { emptyList() }) }
     }
 
     override fun deleteCookie(name: String, domain: String) {

@@ -94,8 +94,8 @@ kotlin {
 
     // Browser backend: drives a same-origin <iframe>. Powers the live demo on the docs site.
     js {
-        // commonTest relies on runBlocking, which JavaScript cannot provide; the live docs demo
-        // (kmpwright-web-demo) exercises this backend in a real browser instead.
+        // commonTest uses JVM/native runBlocking fixtures. The browser backend is executed
+        // by website/tests/browser.spec.ts against the compiled Kotlin runtime in CI.
         browser { testTask { enabled = false } }
     }
 

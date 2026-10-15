@@ -197,7 +197,7 @@ These are the exact `notes` strings each backend returns.
 
 ## The browser backend (live demo)
 
-The interactive demo on this site's home page runs KMPwright compiled to JavaScript (`BackendKind.Browser`). It drives a same-origin `<iframe>` with the same `Page` and `runCommand()` code, so snapshots, refs, locators, actions, assertions, evaluation and console capture behave as on the other backends. Browsers keep page JavaScript out of other origins, so it can only open `setContent` documents and pages of the hosting site. Input is synthesized as DOM events, and routing, network history, screenshots, PDF and downloads are unavailable. It exists to power the demo: build apps on Android, iOS or the JVM.
+The interactive demo on this site's home page runs KMPwright compiled to JavaScript (`BackendKind.Browser`). It drives a same-origin `<iframe>` with the same `Page` and `runCommand()` code, so snapshots, refs, locators, actions, assertions, evaluation and console capture behave as on the other backends. Browsers keep page JavaScript out of other origins, so it can only open `setContent` documents and pages of the hosting site. Input is synthesized as DOM events, and routing, network history, screenshots, PDF and downloads are unavailable. `LoadState.NetworkIdle` also throws `KmpwrightUnsupportedException`: page JavaScript cannot observe all browser traffic, so wait for a locator, assertion or explicit page result instead. It exists to power the demo: build apps on Android, iOS or the JVM.
 
 ## What "Unsupported" looks like at runtime
 

@@ -76,7 +76,7 @@ internal class CdpMouse(
         }
     }
 
-    override suspend fun click(x: Double, y: Double, button: MouseButton, clickCount: Int, delayMs: Long, timeoutMs: Long?) {
+    override suspend fun click(x: Double, y: Double, button: MouseButton, clickCount: Int, delayMs: Long, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "mouse click") {
         move(x, y, timeoutMs = timeoutMs)
         // Like Playwright, a click with clickCount=N dispatches N press/release
         // pairs with increasing clickCount so the page observes N `click`

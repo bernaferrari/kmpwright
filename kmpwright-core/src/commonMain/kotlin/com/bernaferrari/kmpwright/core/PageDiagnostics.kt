@@ -108,8 +108,14 @@ internal fun buildPageDiagnosticsScript(post: String, nonce: String, wrapConsole
   var stringify = JSON.stringify, slice = Array.prototype.slice, ErrorCtor = Error, StringCtor = String;
   function clip(s) { s = StringCtor(s); return s.length > MAX ? s.slice(0, MAX) : s; }
   // The nonce is concatenated, never stored on an object, so page-defined setters or toJSON hooks cannot read it.
-  var busy = false;
+  var busy = false, active = true, undo = [];
+  function cleanup() { active = false; undo.reverse().forEach(function(fn) { try { fn(); } catch (e) {} }); undo = []; }
+  function patch(object, name, replacement) {
+    var original = object[name]; object[name] = replacement;
+    undo.push(function() { if (object[name] === replacement) object[name] = original; });
+  }
   function send(payload) {
+    if (!active) return;
     try {
       var body = stringify(payload);
       post('{"nonce":"' + nonce + '",' + body.substring(1));
@@ -173,16 +179,18 @@ internal fun buildPageDiagnosticsScript(post: String, nonce: String, wrapConsole
     send(payload);
   }
   try { if (window === window.top) send({ kind: 'document' }); } catch (e) {}
-  addEventListener('error', function(event) {
+  function onError(event) {
     if (typeof ErrorEvent === 'undefined' || !(event instanceof ErrorEvent)) return;
     reportError(event.error, event.message, event.filename, event.lineno, event.colno);
-  });
-  addEventListener('unhandledrejection', function(event) {
+  }
+  function onRejection(event) {
     reportError(event.reason, '', '', 0, 0);
-  });
-  if (!${if (wrapConsole) "true" else "false"}) return;
+  }
+  addEventListener('error', onError); addEventListener('unhandledrejection', onRejection);
+  undo.push(function() { removeEventListener('error', onError); removeEventListener('unhandledrejection', onRejection); });
+  if (!${if (wrapConsole) "true" else "false"}) return cleanup;
   var c = window.console;
-  if (!c) return;
+  if (!c) return cleanup;
   function report(type, args, stack) {
     // Formatting may run page code (getters, toString) that logs again; do not recurse.
     if (busy) return;
@@ -203,14 +211,14 @@ internal fun buildPageDiagnosticsScript(post: String, nonce: String, wrapConsole
     var original = c[name];
     if (typeof original !== 'function') return;
     var type = methods[name];
-    c[name] = function() {
+    patch(c, name, function() {
       try { report(type, slice.call(arguments), new ErrorCtor().stack); } catch (e) {}
       return original.apply(this, arguments);
-    };
+    });
   });
   var originalAssert = c.assert;
   if (typeof originalAssert === 'function') {
-    c.assert = function(condition) {
+    patch(c, 'assert', function(condition) {
       if (!condition) {
         try {
           var args = slice.call(arguments, 1);
@@ -218,7 +226,8 @@ internal fun buildPageDiagnosticsScript(post: String, nonce: String, wrapConsole
         } catch (e) {}
       }
       return originalAssert.apply(this, arguments);
-    };
+    });
   }
+  return cleanup;
 })();
 """.trimIndent()

@@ -54,7 +54,13 @@ internal suspend fun captureWebViewDocument(
     val originalX = webView.captureNumber("window.scrollX")
     val originalY = webView.captureNumber("window.scrollY")
     try {
-        webView.captureEvaluate("window.scrollTo({left:${plan.rect.x},top:${plan.rect.y},behavior:'instant'});0")
+        val visibleHeight = webView.captureNumber("window.visualViewport ? window.visualViewport.height : window.innerHeight")
+        // Keep already visible clips in place. Moving them needlessly can race WebKit's scroll compositor.
+        if (plan.rect.x < originalX || plan.rect.y < originalY ||
+            plan.rect.x + plan.rect.width > originalX + cssWidth ||
+            plan.rect.y + plan.rect.height > originalY + visibleHeight) {
+            webView.captureEvaluate("window.scrollTo({left:${plan.rect.x},top:${plan.rect.y},behavior:'instant'});0")
+        }
         webView.layoutIfNeeded()
         delay(32)
         val actualX = webView.captureNumber("window.scrollX")
@@ -62,7 +68,8 @@ internal suspend fun captureWebViewDocument(
         val rect = CGRectMake((plan.rect.x - actualX) * pointsPerCss, (plan.rect.y - actualY) * pointsPerCss, plan.rect.width * pointsPerCss, plan.rect.height * pointsPerCss)
         val scale = options.pixelsPerCssPixel / (pointsPerCss * webView.snapshotScreenScale())
         val shot = webView.captureSnapshot(rect, scale, options.format, options.quality)
-        check(shot.width == plan.width && kotlin.math.abs(shot.height - plan.height) <= 1) { "The page changed size while taking its screenshot" }
+        // WebKit rounds fractional snapshot bounds outward to device pixels on either axis.
+        check(kotlin.math.abs(shot.width - plan.width) <= 1 && kotlin.math.abs(shot.height - plan.height) <= 1) { "The page changed size while taking its screenshot: expected ${plan.width}x${plan.height}, captured ${shot.width}x${shot.height}" }
         afterFirstTile()
         shot.copy(truncated = plan.truncated)
     } finally {

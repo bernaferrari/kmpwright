@@ -33,7 +33,7 @@ internal class PageWebStorage(
 
     /** Entries without a policy check, for state capture that already checked. */
     suspend fun readEntries(): Map<String, String> {
-        val raw = evalString("(function() { var items = {}; for (var i = 0; i < $area.length; i++) { var k = $area.key(i); items[k] = $area.getItem(k); } return JSON.stringify(items); })()")
+        val raw = evalString("(function() { var items = Object.create(null); for (var i = 0; i < $area.length; i++) { var k = $area.key(i); items[k] = $area.getItem(k); } return JSON.stringify(items); })()")
             ?: return emptyMap()
         return try {
             kotlinx.serialization.json.Json.decodeFromString<Map<String, String>>(raw)
@@ -42,9 +42,4 @@ internal class PageWebStorage(
         }
     }
 
-    /** Replaces every entry without a policy check (state restore). */
-    suspend fun replaceAll(entries: Map<String, String>) {
-        evalString("$area.clear();")
-        for ((key, value) in entries) evalString("$area.setItem(${jsStringLiteral(key)}, ${jsStringLiteral(value)});")
-    }
 }

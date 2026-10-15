@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# KLib target merging must run where every supported target can be compiled.
+# Linux infers unavailable Apple targets from the baseline and can misclassify JS-only declarations.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  ./gradlew :kmpwright-core:checkKotlinAbi
+fi
+
 ./gradlew \
-  :kmpwright-core:checkKotlinAbi \
   :kmpwright-core:assembleAndroidMain \
   :kmpwright-compose:lint \
   :kmpwright-example-shared:assembleAndroidMain \

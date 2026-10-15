@@ -867,9 +867,9 @@ internal abstract class BasePage protected constructor(
     override suspend fun waitForRequest(timeoutMs: Long?, predicate: (Request) -> Boolean): Request =
         awaitRequest("accepted by the predicate", timeoutMs, predicate)
 
-    private suspend fun awaitRequest(description: String, timeoutMs: Long?, matches: (Request) -> Boolean): Request {
+    private suspend fun awaitRequest(description: String, timeoutMs: Long?, matches: (Request) -> Boolean): Request = awaitPageOperation(closeSignal) {
         val timeout = config.defaultTimeout(timeoutMs)
-        return withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for a request $description" }) {
+        withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for a request $description" }) {
             requestFlow.first(matches)
         }
     }
@@ -883,9 +883,9 @@ internal abstract class BasePage protected constructor(
     override suspend fun waitForResponse(timeoutMs: Long?, predicate: (Response) -> Boolean): Response =
         awaitResponse("accepted by the predicate", timeoutMs, predicate)
 
-    private suspend fun awaitResponse(description: String, timeoutMs: Long?, matches: (Response) -> Boolean): Response {
+    private suspend fun awaitResponse(description: String, timeoutMs: Long?, matches: (Response) -> Boolean): Response = awaitPageOperation(closeSignal) {
         val timeout = config.defaultTimeout(timeoutMs)
-        return withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for a response $description" }) {
+        withKmpwrightTimeout(timeout, { "Timeout ${timeout}ms exceeded waiting for a response $description" }) {
             responseFlow.first(matches)
         }
     }
@@ -1620,8 +1620,27 @@ internal abstract class BasePage protected constructor(
             }
         }
 
-        localStorageArea.replaceAll(localStorage)
-        sessionStorageArea.replaceAll(sessionStorage)
+        // Bind the mutation to the document's real origin, not the requested URL or cached URL.
+        // Checking inside the same JavaScript turn also closes navigation races between writes.
+        val expectedOrigin = canonicalHttpOrigin(restoreUrl)
+        val guard = if (expectedOrigin != null) {
+            "location.origin === ${jsStringLiteral(expectedOrigin)}"
+        } else {
+            "location.protocol === 'file:' && location.href.split('#')[0] === ${jsStringLiteral(restoreUrl.substringBefore('#'))}"
+        }
+        val result = evalString("""
+            (function() {
+                if (!($guard)) throw new Error('Saved state origin does not match the current document');
+                var localJson = ${Json.encodeToString(Json.encodeToString(localStorage))};
+                var sessionJson = ${Json.encodeToString(Json.encodeToString(sessionStorage))};
+                var local = JSON.parse(localJson), session = JSON.parse(sessionJson);
+                localStorage.clear(); sessionStorage.clear();
+                Object.keys(local).forEach(function(key) { localStorage.setItem(key, local[key]); });
+                Object.keys(session).forEach(function(key) { sessionStorage.setItem(key, session[key]); });
+                return true;
+            })()
+        """.trimIndent())
+        if (result != "true") throw KmpwrightException("Saved state could not be restored into its original document")
     }
 
     override suspend fun autosaveStorageState(path: String, password: String?, intervalMs: Long): StorageStateAutosave {

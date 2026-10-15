@@ -11,6 +11,9 @@ import com.bernaferrari.kmpwright.core.Browser
 import com.bernaferrari.kmpwright.core.IOSPlatformContext
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import platform.Foundation.NSThread
+import platform.Foundation.NSOperationQueue
 import platform.UIKit.UIViewController
 import platform.WebKit.WKWebView
 
@@ -27,8 +30,22 @@ class NativeStudio(
     private val onOpenRecipe: (id: String, title: String) -> Unit,
 ) {
     private val platformContext = IOSPlatformContext(WKWebView())
-    private val state = StudioState(Browser(platformContext), MainScope()) { releaseWebViewKeyboard(platformContext) }
+    private val scope = MainScope()
+    private var closed = false
+    private val state = StudioState(Browser(platformContext), scope) { releaseWebViewKeyboard(platformContext) }
         .also { it.loadDemo() }
+
+    fun close() {
+        if (!NSThread.isMainThread) {
+            NSOperationQueue.mainQueue.addOperationWithBlock { close() }
+            return
+        }
+        if (closed) return
+        closed = true
+        scope.cancel()
+        state.dispose()
+        disposePlatformContext(platformContext)
+    }
 
     /** The screen currently on top; only it shows the shared web view. */
     private var activeScreen by mutableStateOf("Agent")

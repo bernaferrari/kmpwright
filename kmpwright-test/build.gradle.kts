@@ -69,6 +69,8 @@ dependencies {
         add("debugImplementation", libs.androidx.junit)
         add("debugImplementation", libs.androidx.espresso.core)
     }
+    // Sample-state contracts run inside the target app so its resource provider shares the app classpath.
+    debugImplementation(project(":kmpwright-example-shared"))
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

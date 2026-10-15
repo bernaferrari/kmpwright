@@ -119,6 +119,59 @@ class CdpConsistencyBrowserTest {
         } finally { context.close(); other.close() }
     }
 
+    @Test fun `saved storage never follows a cross origin redirect and empty state clears`() = withChrome { browser, origin ->
+        val page = browser.newPage()
+        page.goto(origin)
+        page.localStorage.set("own", "preserve")
+        val state = StorageState("$origin/redirect-cross", emptyList(), mapOf("token" to "private"), mapOf("session" to "private"))
+        assertFailsWith<KmpwrightException> { page.setStorageState(state) }
+        assertNull(page.localStorage.get("token"))
+        assertNull(page.sessionStorage.get("session"))
+        page.goto(origin)
+        assertEquals("preserve", page.localStorage.get("own"))
+        page.setStorageState(StorageState(origin, emptyList(), mapOf("__proto__" to "literal", "quoted'key" to "value;\nline"), emptyMap()))
+        assertEquals("literal", page.localStorage.get("__proto__"))
+        val captured = page.storageState()
+        assertEquals("literal", captured.localStorage["__proto__"])
+        page.localStorage.clear()
+        page.setStorageState(captured)
+        assertEquals("literal", page.localStorage.get("__proto__"))
+        assertEquals("value;\nline", page.localStorage.get("quoted'key"))
+        page.setStorageState(StorageState("$origin/redirect-same", emptyList(), emptyMap(), emptyMap()))
+        assertTrue(page.localStorage.entries().isEmpty())
+        assertTrue(page.sessionStorage.entries().isEmpty())
+        page.close()
+    }
+
+    @Test fun `state round trip keeps multi origin cookies and contexts stay isolated`() = withChrome { browser, origin ->
+        val context = browser.newContext()
+        val other = browser.newContext()
+        try {
+            val page = context.newPage()
+            page.goto(origin)
+            page.addCookies(listOf(Cookie("first", "saved", "127.0.0.1"), Cookie("offpath", "saved", "127.0.0.1", path = "/private")))
+            page.goto(origin.replace("127.0.0.1", "localhost"))
+            page.addCookies(listOf(Cookie("second", "saved", "localhost")))
+            val state = page.storageState()
+            assertEquals(setOf("first", "offpath", "second"), state.cookies.map { it.name }.toSet())
+            page.clearCookies()
+            page.setStorageState(state)
+            assertEquals(state.cookies.map { it.name }.toSet(), page.cookies().map { it.name }.toSet())
+            val independent = other.newPage()
+            independent.goto(origin)
+            assertTrue(independent.cookies().isEmpty())
+        } finally { context.close(); other.close() }
+    }
+
+    @Test fun `batched ref boxes agree with locator boxes`() = withChrome { browser, _ ->
+        val page = browser.newPage()
+        page.setContent("<button>One</button><button>Two</button>")
+        val refs = page.snapshot(interactive = true).refs.keys.toList()
+        val boxes = page.refBoundingBoxes(refs)
+        refs.forEach { assertEquals(page.locator(it).boundingBox(), boxes[it]) }
+        page.close()
+    }
+
     // ------------------------------------------------------------- real Chromium
 
     private fun withChrome(config: KmpwrightConfig = KmpwrightConfig(), block: suspend (Browser, String) -> Unit): Unit = runBlocking {
@@ -126,6 +179,13 @@ class CdpConsistencyBrowserTest {
         assumeTrue("Set KMPWRIGHT_TEST_CHROME for real browser contracts", !executable.isNullOrBlank())
         val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/") { exchange ->
+            if (exchange.requestURI.path.startsWith("/redirect-")) {
+                val host = if (exchange.requestURI.path == "/redirect-cross") "localhost" else "127.0.0.1"
+                exchange.responseHeaders.add("Location", "http://$host:${server.address.port}/arrived")
+                exchange.sendResponseHeaders(302, -1)
+                exchange.close()
+                return@createContext
+            }
             val body = when (exchange.requestURI.path) {
                 "/data.json" -> """{"hello":"world"}"""
                 else -> "<title>Fixture</title><p id=p>Hello</p>"

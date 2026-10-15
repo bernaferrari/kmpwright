@@ -69,6 +69,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -253,7 +256,7 @@ private fun RecipeCard(recipe: Recipe, shape: androidx.graphics.shapes.RoundedPo
     }
 }
 
-private enum class StepState { Pending, Running, Done, Failed }
+private enum class StepState { Pending, Running, Done, Failed, Cancelled }
 
 private class StepRun(val label: String) {
     var state by mutableStateOf(StepState.Pending)
@@ -277,35 +280,52 @@ private fun RecipeDetail(state: StudioState, recipe: Recipe, onBack: (() -> Unit
         state.clearRefs()
         onRunStarted()
         scope.launch {
+            var cancelled = false
             try {
                 state.withPage { page ->
-                    for ((index, step) in recipe.steps.withIndex()) {
-                        val run = runs[index]
-                        run.state = StepState.Running
-                        state.activity = Activity("${recipe.title} · ${step.label}")
-                        try {
-                            val output = step.run(page)
-                            run.output = output?.text
-                            run.image = output?.image?.let { runCatching { it.bytes.decodeToImageBitmap() }.getOrNull() }
-                            run.state = StepState.Done
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (error: Throwable) {
-                            run.output = error.message ?: error.toString()
-                            run.state = StepState.Failed
-                            break
+                    try {
+                        for ((index, step) in recipe.steps.withIndex()) {
+                            val run = runs[index]
+                            run.state = StepState.Running
+                            state.activity = Activity("${recipe.title} · ${step.label}")
+                            try {
+                                val output = step.run(page)
+                                run.output = output?.text
+                                run.image = output?.image?.let { runCatching { it.bytes.decodeToImageBitmap() }.getOrNull() }
+                                run.state = StepState.Done
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Throwable) {
+                                run.output = error.message ?: error.toString()
+                                run.state = StepState.Failed
+                                break
+                            }
+                        }
+                    } finally {
+                        withContext(NonCancellable) {
+                            check(withTimeoutOrNull(5_000) { recipe.cleanup(page); true } == true) {
+                                "Recipe cleanup timed out"
+                            }
                         }
                     }
                 }
+            } catch (error: CancellationException) {
+                cancelled = true
+                runs.filter { it.state == StepState.Running }.forEach { it.state = StepState.Cancelled; it.output = "Cancelled" }
+                throw error
+            } catch (error: Throwable) {
+                runs.lastOrNull()?.let { it.state = StepState.Failed; it.output = error.message ?: error.toString() }
             } finally {
                 running = false
                 val failed = runs.any { it.state == StepState.Failed }
-                val outcome = Activity(if (failed) "${recipe.title} failed — open the sheet for details" else "${recipe.title} finished", done = !failed)
-                state.activity = outcome
+                val completed = !cancelled && runs.isNotEmpty() && runs.all { it.state == StepState.Done }
+                state.showActivity(Activity(when {
+                    completed -> "${recipe.title} finished"
+                    failed -> "${recipe.title} failed — open the sheet for details"
+                    else -> "${recipe.title} cancelled"
+                }, done = completed))
                 state.releasePageKeyboard()
                 state.refreshRefs()
-                delay(4_000)
-                if (state.activity == outcome) state.activity = null
             }
         }
     }
@@ -377,6 +397,7 @@ private fun StepRow(number: Int, step: StepRun, isLast: Boolean) {
                             when (step.state) {
                                 StepState.Done -> Icon(Icons.Default.Check, contentDescription = "Done", modifier = Modifier.size(16.dp))
                                 StepState.Failed -> Icon(Icons.Default.Close, contentDescription = "Failed", modifier = Modifier.size(16.dp))
+                                StepState.Cancelled -> Icon(Icons.Default.Close, contentDescription = "Cancelled", modifier = Modifier.size(16.dp))
                                 else -> Text("$number", style = MaterialTheme.typography.labelMedium)
                             }
                         }

@@ -272,8 +272,8 @@ internal class AndroidKeyboard(
 
     /**
      * Playwright `keyboard.press`: modifiers of a combination go down in order, then the key,
-     * [delayMs], key up and modifiers up in reverse. Named keys (Enter, Tab, Backspace,
-     * arrows...) are native [KeyEvent]s; characters and shortcuts with Control/Meta/Alt (`"Control+A"`,
+     * [delayMs], key up and modifiers up in reverse. Named keys (Enter, Tab, arrows...) are native [KeyEvent]s;
+     * editing keys (Backspace, Delete), characters and shortcuts with Control/Meta/Alt (`"Control+A"`,
      * `"ControlOrMeta+A"` = Control on Android) use the page runtime's synthetic key sequence, which
      * inserts the character or applies the shortcut's editing default (select-all).
      */
@@ -281,7 +281,7 @@ internal class AndroidKeyboard(
         val (mainKey, modifiers) = parseKeyCombination(key)
         val held = pressedKeys.filter { it.isModifierKey() }.toSet()
         val shortcut = (modifiers + held).any { it == KeyboardModifiers.CONTROL || it == KeyboardModifiers.META || it == KeyboardModifiers.ALT }
-        if (shortcut || mainKey.toUnicodeTextUnits().size == 1) {
+        if (shortcut || mainKey.toUnicodeTextUnits().size == 1 || mainKey in setOf("Backspace", "Delete")) {
             // Injected KeyEvents neither run editing shortcuts (Ctrl+A) nor reliably insert characters into
             // an editor focused from script (the IME connection may still point at another editor): use the
             // same synthetic sequence as Locator.press, which applies the default action of the key.

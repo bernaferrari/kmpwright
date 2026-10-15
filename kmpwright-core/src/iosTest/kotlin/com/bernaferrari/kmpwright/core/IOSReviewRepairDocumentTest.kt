@@ -10,6 +10,28 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlin.test.*
 
 class IOSReviewRepairDocumentTest {
+    @Test fun storage_restores_literal_keys_and_clears_empty_maps_in_a_real_document() = runWebKitTest {
+        requireWebKitDocuments()
+        val controller = IOSWebViewController()
+        val page = IOSPage(controller)
+        try {
+            controller.loadHtml("<p id='ready'>State</p>", "https://fixture.invalid/state")
+            page.waitForFunction("document.getElementById('ready') !== null")
+            page.localStorage.set("__proto__", "literal")
+            page.sessionStorage.set("tab", "one")
+            val saved = page.storageState()
+            assertEquals("https://fixture.invalid/state", saved.url)
+            page.localStorage.clear()
+            page.sessionStorage.clear()
+            page.setStorageState(saved)
+            assertEquals("literal", page.localStorage.get("__proto__"))
+            assertEquals("one", page.sessionStorage.get("tab"))
+            page.setStorageState(saved.copy(localStorage = emptyMap(), sessionStorage = emptyMap()))
+            assertTrue(page.localStorage.entries().isEmpty())
+            assertTrue(page.sessionStorage.entries().isEmpty())
+        } finally { page.close() }
+    }
+
     @Test fun wheel_obeys_preventDefault() = runWebKitTest {
         requireWebKitDocuments()
         val page = IOSPage(IOSWebViewController(KmpwrightConfig(viewport = Viewport(320, 480))))

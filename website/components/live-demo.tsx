@@ -48,7 +48,7 @@ type Ref = Awaited<ReturnType<Demo["refs"]>>[number];
 const PLAYGROUND = "/demo/playground.html";
 
 /** Next steps for the playground, filled in with the refs of the latest snapshot. */
-function suggestions(refs: Ref[], ran: Set<string>): string[] {
+function suggestions(refs: Ref[]): string[] {
   const find = (role: string, name?: RegExp) =>
     refs.find((r) => r.role === role && (!name || name.test(r.name)));
   const name = find("textbox", /name/i) ?? find("textbox");
@@ -64,8 +64,8 @@ function suggestions(refs: Ref[], ran: Set<string>): string[] {
     plus && `click ${plus.ref}`,
     "console",
     "get title",
-  ].filter((command): command is string => !!command && !ran.has(command));
-  return [...flow, "help"].slice(0, 4);
+  ].filter((command): command is string => !!command);
+  return [...flow, "help"];
 }
 
 /**
@@ -90,7 +90,6 @@ export function LiveDemo() {
   const [draft, setDraft] = useState("");
   const [refs, setRefs] = useState<Ref[]>([]);
   const [showRefs, setShowRefs] = useState(true);
-  const [ran, setRan] = useState<Set<string>>(() => new Set());
   const [host, setHost] = useState("");
   const showRefsRef = useRef(showRefs);
   showRefsRef.current = showRefs;
@@ -100,7 +99,7 @@ export function LiveDemo() {
 
   const refreshRefs = useCallback(async () => {
     const current = demo.current;
-    if (!current || !showRefsRef.current) return;
+    if (!current) return;
     try {
       setRefs(Array.from(await current.refs()));
     } catch {
@@ -119,11 +118,12 @@ export function LiveDemo() {
       }
       running.current = true;
       const id = nextId.current++;
-      setEntries((list) => [
-        ...list,
-        { id, command: line, state: "running", output: "", ms: 0 },
-      ]);
-      setRan((set) => new Set(set).add(line));
+      setEntries((list) =>
+        [
+          ...list,
+          { id, command: line, state: "running" as const, output: "", ms: 0 },
+        ].slice(-100),
+      );
       setBusy(true);
       try {
         const result = await current.run(line);
@@ -133,7 +133,7 @@ export function LiveDemo() {
               ? {
                   ...entry,
                   state: result.ok ? "ok" : "error",
-                  output: result.output,
+                  output: result.output.slice(0, 100_000),
                   ms: result.durationMs,
                 }
               : entry,
@@ -248,6 +248,7 @@ export function LiveDemo() {
   function submit() {
     if (busy || status !== "ready" || !draft.trim()) return;
     history.current.push(draft.trim());
+    if (history.current.length > 100) history.current.shift();
     historyIndex.current = -1;
     void run(draft);
     setDraft("");
@@ -288,7 +289,6 @@ export function LiveDemo() {
   async function reset() {
     setEntries([]);
     setRefs([]);
-    setRan(new Set());
     await run(`open ${window.location.host}${PLAYGROUND}`);
     await run("snapshot -i");
   }
@@ -298,10 +298,9 @@ export function LiveDemo() {
     setShowRefs(next);
     showRefsRef.current = next;
     if (next) await refreshRefs();
-    else setRefs([]);
   }
 
-  const chips = suggestions(refs, ran);
+  const chips = suggestions(refs);
 
   return (
     <div className="live-demo overflow-hidden rounded-2xl border bg-card">
@@ -339,7 +338,7 @@ export function LiveDemo() {
           variant="ghost"
           onClick={reset}
           disabled={busy || status !== "ready"}
-          className="h-9 gap-2 px-3"
+          className="h-11 gap-2 px-3"
         >
           <RotateCcw aria-hidden />
           Reset
@@ -359,7 +358,7 @@ export function LiveDemo() {
               onClick={toggleRefs}
               aria-pressed={showRefs}
               className={cn(
-                "inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+                "inline-flex h-11 shrink-0 items-center gap-1 rounded-md px-2 font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring",
                 showRefs
                   ? "bg-primary/10 text-primary"
                   : "hover:bg-muted hover:text-foreground",
@@ -440,7 +439,7 @@ export function LiveDemo() {
                   type="button"
                   disabled={busy || status !== "ready"}
                   onClick={() => void run(chip)}
-                  className="h-7 shrink-0 rounded-md border bg-background px-2 font-mono text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"
+                  className="h-11 shrink-0 rounded-md border bg-background px-2 font-mono text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"
                 >
                   {chip}
                 </button>
@@ -465,14 +464,14 @@ export function LiveDemo() {
                 autoComplete="off"
                 autoCapitalize="off"
                 spellCheck={false}
-                className="h-10 min-w-0 flex-1 bg-transparent font-mono text-base sm:text-[13px] outline-none placeholder:font-sans placeholder:text-muted-foreground/70"
+                className="h-11 min-w-0 flex-1 bg-transparent font-mono text-base sm:text-[13px] outline-none placeholder:font-sans placeholder:text-muted-foreground/70"
               />
               <button
                 type="button"
                 onClick={submit}
                 disabled={busy || status !== "ready" || !draft.trim()}
                 aria-label="Run command"
-                className="-mr-1.5 grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                className="-mr-1.5 grid size-11 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
               >
                 <CornerDownLeft aria-hidden className="size-4" />
               </button>

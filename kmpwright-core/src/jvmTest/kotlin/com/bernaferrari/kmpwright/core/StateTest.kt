@@ -148,6 +148,14 @@ class StateTest {
         }
 
         fun executeJs(script: String): String? {
+            if (script.contains("Saved state origin")) {
+                val local = kotlinx.serialization.json.Json.decodeFromString<String>(Regex("(?m)^\\s*var localJson = (.*);$").find(script)!!.groupValues[1])
+                val session = kotlinx.serialization.json.Json.decodeFromString<String>(Regex("(?m)^\\s*var sessionJson = (.*);$").find(script)!!.groupValues[1])
+                localStorage.clear(); sessionStorage.clear()
+                localStorage.putAll(kotlinx.serialization.json.Json.decodeFromString<Map<String, String>>(local))
+                sessionStorage.putAll(kotlinx.serialization.json.Json.decodeFromString<Map<String, String>>(session))
+                return "true"
+            }
             val setItemRegex = Regex("""(localStorage|sessionStorage)\.setItem\('([^']*)',\s*'([^']*)'\)""")
             val getItemRegex = Regex("""return (localStorage|sessionStorage)\.getItem\('([^']*)'\)""")
             val removeItemRegex = Regex("""(localStorage|sessionStorage)\.removeItem\('([^']*)'\)""")

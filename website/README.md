@@ -23,7 +23,13 @@ building so metadata uses the correct origin; it uses Vercel's production domain
 pnpm types:check
 pnpm lint
 pnpm build
+pnpm exec playwright install chromium
+pnpm test:e2e
 ```
+
+The browser suite exercises the published Kotlin runtime and live demo at desktop
+and mobile sizes, including failed-form recovery, ref controls and iframe cleanup.
+CI retains traces and reports when a contract fails.
 
 `pnpm start` serves the production build. These commands build locally; they do
 not deploy the site or publish the library's Maven artifacts.

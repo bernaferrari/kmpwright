@@ -16,6 +16,14 @@ Contributor setup and verification commands. For library usage, see the [README]
 # Run the complete suite in an app host, including actual WKWebView documents.
 ./scripts/run-ios-webkit-tests.sh
 
+# Website and compiled Kotlin browser contracts (desktop and mobile).
+cd website
+pnpm install --frozen-lockfile
+pnpm build
+pnpm exec playwright install chromium
+pnpm test:e2e
+cd ..
+
 # Documentation and upstream comparison metadata.
 ./scripts/verify-documentation.sh
 ./scripts/verify-agent-browser-compatibility.sh

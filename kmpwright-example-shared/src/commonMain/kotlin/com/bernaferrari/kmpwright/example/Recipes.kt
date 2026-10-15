@@ -38,6 +38,7 @@ class Recipe(
     /** The code shown on screen. Keep it identical to what [steps] execute. */
     val code: String,
     val steps: List<RecipeStep>,
+    val cleanup: suspend (Page) -> Unit = {},
 )
 
 private fun step(label: String, run: suspend (Page) -> Any?) = RecipeStep(label) { page ->
@@ -187,6 +188,7 @@ internal val recipes: List<Recipe> = listOf(
             page.setContent(quotePage)
             expect(page.locator("#quote")).toContainText("Talk is cheap")
         """.trimIndent(),
+        cleanup = { it.unroute("**/quote") },
         steps = listOf(
             step("Route **/quote to a fake response") { page ->
                 page.unroute("**/quote")
@@ -200,12 +202,8 @@ internal val recipes: List<Recipe> = listOf(
             },
             step("Load a page that fetches it") { it.load(DemoSite.quote) },
             step("Expect the mocked quote") { page ->
-                try {
-                    expect(page.locator("#quote")).toContainText("Talk is cheap", 5_000)
-                    page.locator("#quote").innerText()
-                } finally {
-                    page.unroute("**/quote")
-                }
+                expect(page.locator("#quote")).toContainText("Talk is cheap", 5_000)
+                page.locator("#quote").innerText()
             },
         ),
     ),

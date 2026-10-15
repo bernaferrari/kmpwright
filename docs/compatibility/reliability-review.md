@@ -176,3 +176,40 @@ verified.
 The final local run passed all 950 JVM tests with zero failures, errors or skips,
 and Kotlin ABI validation passed. Documentation/upstream metadata checks and the
 final website type, lint and production build also passed.
+## App review repairs — 2026-10-15
+
+Baseline for this pass: `5b3107a`. This pass repairs the later app review;
+the counts above belong to their recorded revisions.
+
+- Storage restoration checks the actual document origin in the same JavaScript
+  turn as its writes, so redirects cannot receive another origin's saved data.
+  State enumeration and restoration preserve literal `__proto__` keys; empty
+  maps clear both storage areas. Chromium redirect and hosted WKWebView tests
+  execute these operations in real documents.
+- Actions bound bridge work and input delays to the caller's deadline. Pointer
+  and keyboard releases survive cancellation; request/response waiters end on
+  page closure. Android editing keys use the same renderer selection as shortcuts.
+- Cookie reads explicitly identify the CDP browser context. The original
+  truncation claim was incorrect: the old constant already called
+  `Network.getAllCookies`. Multi-origin/off-path cookie round trips and independent
+  context isolation now have real Chromium coverage.
+- The browser backend rejects unobservable network-idle waits and restores its
+  owned dialog, history, focus, scrolling and diagnostic hooks on iframe disposal.
+- Native recipes clean up routes on every exit and report cancellation accurately.
+  Ref overlays follow direct document/layout changes and measure refs in batches;
+  console entries, text and decoded screenshot history have retention limits.
+  The iOS native shell explicitly closes its shared session.
+- The live demo keeps retryable suggestions when refs are hidden and gives its
+  controls 44-pixel touch targets. Desktop/mobile browser contracts run in CI.
+- iOS document tests initialize a visible app host without caching startup failure.
+  Captures tolerate WebKit's one-pixel rounding and avoid scrolling visible clips.
+  Full ABI validation runs on macOS, where all supported targets are available;
+  Linux continues through its actual browser tests.
+
+Verification: 939 JVM tests (with Chromium and the React fixture), 78 Android
+emulator tests, 98 app-hosted iOS tests (including
+executing WKWebView documents), 62 bare iOS tests and six desktop/mobile browser
+contracts passed. The SwiftUI example build, complete Kotlin ABI check, website
+build/types/lint and documentation/upstream metadata checks passed. Maven Central
+`0.0.1` remains the previously published immutable artifact; these source repairs
+require a subsequent library release.

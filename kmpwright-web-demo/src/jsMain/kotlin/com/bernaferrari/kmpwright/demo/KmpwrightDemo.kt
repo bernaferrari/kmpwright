@@ -8,6 +8,11 @@ import com.bernaferrari.kmpwright.core.KmpwrightConfig
 import com.bernaferrari.kmpwright.core.Page
 import com.bernaferrari.kmpwright.core.WebPlatformContext
 import com.bernaferrari.kmpwright.core.runCommand
+import com.bernaferrari.kmpwright.core.refBoundingBoxes
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
@@ -70,13 +75,13 @@ public class KmpwrightDemo(frame: HTMLIFrameElement) {
     public fun refs(): Promise<Array<RefBox>> = scope.promise {
         lock.withLock {
             val snapshot = page.snapshot(interactive = true)
-            val scrollX = page.evaluate("window.scrollX").value.toDoubleOrNull() ?: 0.0
-            val scrollY = page.evaluate("window.scrollY").value.toDoubleOrNull() ?: 0.0
-            snapshot.refs.values
-                .sortedBy { it.ref.removePrefix("@").removePrefix("e").toIntOrNull() ?: Int.MAX_VALUE }
-                .mapNotNull { entry ->
-                    val box = runCatching { page.locator(entry.ref).boundingBox() }.getOrNull()
-                        ?.takeIf { it.width > 0 && it.height > 0 } ?: return@mapNotNull null
+            val scroll = Json.parseToJsonElement(page.evaluate("JSON.stringify({x:scrollX,y:scrollY})").value).jsonObject
+            val scrollX = scroll["x"]?.jsonPrimitive?.doubleOrNull ?: 0.0
+            val scrollY = scroll["y"]?.jsonPrimitive?.doubleOrNull ?: 0.0
+            val refs = snapshot.refs.values.sortedBy { it.ref.removePrefix("@e").toIntOrNull() ?: Int.MAX_VALUE }.take(80)
+            val boxes = page.refBoundingBoxes(refs.map { it.ref })
+            refs.mapNotNull { entry ->
+                    val box = boxes[entry.ref]?.takeIf { it.width > 0 && it.height > 0 } ?: return@mapNotNull null
                     RefBox(entry.ref, entry.role, entry.name, box.x + scrollX, box.y + scrollY, box.width, box.height)
                 }
                 .toTypedArray()

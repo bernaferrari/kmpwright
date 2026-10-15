@@ -18,6 +18,9 @@ import platform.Foundation.NSURL
 import platform.Foundation.dateWithTimeIntervalSinceNow
 import platform.Foundation.runUntilDate
 import platform.Foundation.timeIntervalSinceNow
+import platform.UIKit.UIApplication
+import platform.UIKit.UIWindow
+import platform.UIKit.UIViewController
 import platform.WebKit.WKWebView
 import platform.WebKit.WKWebViewConfiguration
 import kotlin.test.assertTrue
@@ -55,29 +58,46 @@ internal fun pumpMainRunLoop(seconds: Double) {
  * which that task excludes; `scripts/run-ios-webkit-tests.sh` runs them by
  * hosting the test binary in an app.
  */
-internal val webKitDocumentsAvailable: Boolean by lazy {
-    val view = WKWebView(CGRectMake(0.0, 0.0, 10.0, 10.0), WKWebViewConfiguration())
-    var finished = false
-    view.loadHTMLString("<p>probe</p>", baseURL = NSURL.URLWithString("https://probe.invalid/"))
-    // A cold WebContent process may reject evaluation before the first document exists.
-    // Retry after that callback instead of permanently caching a startup race as "no app host".
-    var evaluating = false
-    val deadline = NSDate.dateWithTimeIntervalSinceNow(10.0)
-    while (!finished && deadline.timeIntervalSinceNow > 0) {
-        if (!evaluating) {
-            evaluating = true
-            view.evaluateJavaScript("1") { result, _ ->
-                finished = result != null
-                evaluating = false
-            }
+private var readyWebKitHost = false
+private var webKitHostWindow: UIWindow? = null
+private var webKitStartupError: String? = null
+
+internal val webKitDocumentsAvailable: Boolean
+    get() {
+        if (readyWebKitHost) return true
+        // Initialize UIKit and attach the startup probe to a visible host. Merely packaging
+        // a command-line runner in .app does not create a window or initialize application state.
+        UIApplication.sharedApplication
+        val window = webKitHostWindow ?: UIWindow(CGRectMake(0.0, 0.0, 320.0, 480.0)).also {
+            it.rootViewController = UIViewController()
+            it.makeKeyAndVisible()
+            webKitHostWindow = it
         }
-        pumpMainRunLoop(0.02)
+        val view = WKWebView(CGRectMake(0.0, 0.0, 320.0, 240.0), WKWebViewConfiguration())
+        window.rootViewController!!.view.addSubview(view)
+        var finished = false
+        view.loadHTMLString("<p id='probe'>ready</p>", baseURL = NSURL.URLWithString("https://probe.invalid/"))
+        var evaluating = false
+        val deadline = NSDate.dateWithTimeIntervalSinceNow(20.0)
+        while (!finished && deadline.timeIntervalSinceNow > 0) {
+            if (!evaluating) {
+                evaluating = true
+                view.evaluateJavaScript("document.getElementById('probe')?.textContent") { result, error ->
+                    finished = result == "ready"
+                    webKitStartupError = error?.localizedDescription
+                    evaluating = false
+                }
+            }
+            pumpMainRunLoop(0.02)
+        }
+        view.stopLoading()
+        view.removeFromSuperview()
+        readyWebKitHost = finished // A transient startup failure must not poison the entire suite.
+        return finished
     }
-    finished
-}
 
 /** Fails (never silently passes) when WKWebView cannot execute documents. */
 internal fun requireWebKitDocuments() {
     assertTrue(webKitDocumentsAvailable,
-        "WKWebView documents need an app host (no WebContent process); run scripts/run-ios-webkit-tests.sh")
+        "WKWebView document startup failed in app host: ${webKitStartupError ?: "no document loaded"}; run scripts/run-ios-webkit-tests.sh")
 }

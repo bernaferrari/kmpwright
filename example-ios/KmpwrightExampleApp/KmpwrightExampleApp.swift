@@ -45,6 +45,8 @@ final class StudioNavigation {
         )
     }
 
+    deinit { studio.close() }
+
     /// A tab root. Compose draws its own header, so the system bar stays hidden;
     /// the title is still set because iOS 26 uses it to label the tab.
     func tabRoot(_ tab: Tab) -> some View {

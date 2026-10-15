@@ -238,6 +238,7 @@ class IOSBackendContractTest {
                 script.contains("return !el.disabled") -> "true"
                 script.contains("return !!el.checked") -> "false"
                 script.contains("return el.getAttribute") -> "fixture-attribute"
+                script.contains("Saved state origin") -> { localStorage["token"] = "one"; sessionStorage["tab"] = "one"; "true" }
                 script.contains("localStorage.setItem") -> { localStorage["token"] = "one"; "true" }
                 script.contains("sessionStorage.setItem") -> { sessionStorage["tab"] = "one"; "true" }
                 script.contains("localStorage.getItem") -> "\"${localStorage["token"] ?: ""}\""

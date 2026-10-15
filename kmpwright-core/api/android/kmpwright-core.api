@@ -2601,6 +2601,10 @@ public final class com/bernaferrari/kmpwright/core/Rectangle {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class com/bernaferrari/kmpwright/core/RefBoundsKt {
+	public static final fun refBoundingBoxes (Lcom/bernaferrari/kmpwright/core/Page;Ljava/util/List;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
 public final class com/bernaferrari/kmpwright/core/RefEntry {
 	public static final field Companion Lcom/bernaferrari/kmpwright/core/RefEntry$Companion;
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V

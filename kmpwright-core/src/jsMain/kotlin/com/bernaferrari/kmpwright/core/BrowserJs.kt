@@ -34,6 +34,7 @@ internal class IframeWebViewController(
     private val nonce = secureRandomBytes(12).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
     private val hostKey = "__kmpwright_$nonce"
     private var disposed = false
+    private val documentCleanups = mutableListOf<() -> Unit>()
     private var navigationCallback: ((NavigationResult) -> Unit)? = null
     private var navigationGuard: ((String) -> Boolean)? = null
     private var lifecycleListener: ((PageLifecycleEvent) -> Unit)? = null
@@ -128,31 +129,38 @@ internal class IframeWebViewController(
     private fun installIntoCurrentDocument() {
         val win = frameWindow() ?: return
         val doc = frameDocumentOrNull() ?: return
+        clearDocumentHooks()
         doc[hostKey] = true
         val host = "window.parent[${jsStringLiteral(hostKey)}]"
         val bootstrap = """
             (function(){
               var host = $host;
               if (!host) return;
-              window.addEventListener('pagehide', function() { try { host.unload(); } catch (e) {} }, true);
-              window.alert = function(message) { host.dialog('alert', String(message === undefined ? '' : message), null); };
-              window.confirm = function(message) { return host.dialog('confirm', String(message === undefined ? '' : message), null) === true; };
-              window.prompt = function(message, value) {
+              var undo = [], active = true, timer = null;
+              function listen(name, fn) { window.addEventListener(name, fn, true); undo.push(function() { window.removeEventListener(name, fn, true); }); }
+              function patch(object, name, replacement) {
+                var original = object[name]; object[name] = replacement;
+                undo.push(function() { if (object[name] === replacement) object[name] = original; });
+              }
+              listen('pagehide', function() { try { host.unload(); } catch (e) {} });
+              patch(window, 'alert', function(message) { host.dialog('alert', String(message === undefined ? '' : message), null); });
+              patch(window, 'confirm', function(message) { return host.dialog('confirm', String(message === undefined ? '' : message), null) === true; });
+              patch(window, 'prompt', function(message, value) {
                 var answer = host.dialog('prompt', String(message === undefined ? '' : message), value === undefined ? '' : String(value));
                 return typeof answer === 'string' ? answer : null;
-              };
+              });
               var queued = false;
               function ping() {
-                if (queued) return; queued = true;
-                setTimeout(function() { queued = false; try { host.state(String(document.title || '')); } catch (e) {} }, 0);
+                if (!active || queued) return; queued = true;
+                timer = setTimeout(function() { queued = false; if (!active) return; try { host.state(String(document.title || '')); } catch (e) {} }, 0);
               }
               ['pushState', 'replaceState'].forEach(function(name) {
                 var original = history[name];
-                history[name] = function() { var result = original.apply(this, arguments); ping(); return result; };
+                patch(history, name, function() { var result = original.apply(this, arguments); ping(); return result; });
               });
-              window.addEventListener('hashchange', ping, true);
-              window.addEventListener('popstate', ping, true);
-              try { new MutationObserver(ping).observe(document, {subtree: true, childList: true, characterData: true}); } catch (e) {}
+              listen('hashchange', ping);
+              listen('popstate', ping);
+              var observer; try { observer = new MutationObserver(ping); observer.observe(document, {subtree: true, childList: true, characterData: true}); } catch (e) {}
               // Scrolling an element into view (actions do) also scrolls every ancestor of the frame in the
               // hosting page. Keep it inside the frame: restore the host's scroll positions afterwards.
               var frameElement = window.frameElement;
@@ -168,7 +176,7 @@ internal class IframeWebViewController(
               function containScroll(proto, name) {
                 var original = proto && proto[name];
                 if (typeof original !== 'function') return;
-                proto[name] = function() {
+                patch(proto, name, function() {
                   var saved = hostScrollers();
                   try { return original.apply(this, arguments); }
                   finally {
@@ -177,26 +185,42 @@ internal class IframeWebViewController(
                       if (node.scrollLeft !== entry[1] || node.scrollTop !== entry[2]) node.scrollTo({left: entry[1], top: entry[2], behavior: 'instant'});
                     });
                   }
-                };
+                });
               }
               containScroll(Element.prototype, 'scrollIntoView');
               containScroll(Element.prototype, 'scrollIntoViewIfNeeded');
               containScroll(HTMLElement.prototype, 'focus');
               containScroll(SVGElement.prototype, 'focus');
+              return function() {
+                active = false; if (timer !== null) clearTimeout(timer);
+                if (observer) observer.disconnect();
+                undo.reverse().forEach(function(cleanup) { try { cleanup(); } catch (e) {} });
+                delete document[${jsStringLiteral(hostKey)}];
+              };
             })();
         """.trimIndent()
-        runInFrame(win, bootstrap)
-        runInFrame(win, buildPageDiagnosticsScript("(function(h){ return h && function(s){ h.diagnostic(s); }; })($host)", nonce, wrapConsole = true))
+        retainCleanup(runInFrame(win, bootstrap))
+        retainCleanup(runInFrame(win, buildPageDiagnosticsScript("(function(h){ return h && function(s){ h.diagnostic(s); }; })($host)", nonce, wrapConsole = true)))
         initScripts.values.forEach { runInFrame(win, it) }
         val url = getUrl()
         if (url != null) lifecycleListener?.invoke(PageLifecycleEvent.Committed(url))
     }
 
-    private fun runInFrame(win: dynamic, script: String) {
-        try {
+    private fun retainCleanup(cleanup: dynamic) {
+        if (jsTypeOf(cleanup) == "function") documentCleanups.add { cleanup() }
+    }
+
+    private fun clearDocumentHooks() {
+        documentCleanups.asReversed().forEach { try { it() } catch (_: dynamic) {} }
+        documentCleanups.clear()
+    }
+
+    private fun runInFrame(win: dynamic, script: String): dynamic {
+        return try {
             win.eval(script)
         } catch (error: dynamic) {
             kotlin.js.console.warn("KMPwright browser script failed: ${jsErrorMessage(error)}")
+            null
         }
     }
 
@@ -432,7 +456,7 @@ internal class IframeWebViewController(
 
     override fun addRequestListener(listener: RequestListener) {}
     override fun removeRequestListener(listener: RequestListener) {}
-    override fun getPendingRequestCount(): Int = 0
+    override fun getPendingRequestCount(): Int = throw KmpwrightUnsupportedException("Network-idle waits are unavailable on the browser backend; wait for a specific page result instead")
     override fun resetRequestCount() {}
     override fun setRequestIdleTimeout(timeoutMs: Long) {}
 
@@ -520,6 +544,7 @@ internal class IframeWebViewController(
         if (disposed) return
         disposed = true
         stopWatching()
+        clearDocumentHooks()
         frame.removeEventListener("load", onLoad)
         window.asDynamic()[hostKey] = undefined
         navigationCallback = null
