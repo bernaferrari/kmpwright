@@ -78,15 +78,15 @@ internal class CdpLocator(
         }
     }
 
-    override suspend fun click(button: MouseButton, clickCount: Int, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?) {
-        if (config.inputMode == InputMode.JsOnly) return super.click(button, clickCount, delayMs, position, force, timeoutMs)
+    override suspend fun click(button: MouseButton, clickCount: Int, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator click") {
+        if (config.inputMode == InputMode.JsOnly) return@inputAction super.click(button, clickCount, delayMs, position, force, timeoutMs)
         policyChecker?.invoke(ActionType.Click)
         nativeClick(button, clickCount.coerceAtLeast(1), delayMs, position, force, timeoutMs, "click")
     }
 
     /** Playwright `dblclick`: one press/release pair per click (`click` detail 1, `click` detail 2, `dblclick`). */
-    override suspend fun dblclick(button: MouseButton, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?) {
-        if (config.inputMode == InputMode.JsOnly) return super.dblclick(button, delayMs, position, force, timeoutMs)
+    override suspend fun dblclick(button: MouseButton, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator dblclick") {
+        if (config.inputMode == InputMode.JsOnly) return@inputAction super.dblclick(button, delayMs, position, force, timeoutMs)
         policyChecker?.invoke(ActionType.Click)
         nativeClick(button, 2, delayMs, position, force, timeoutMs, "double-click")
     }
@@ -228,10 +228,11 @@ internal class CdpLocator(
 
     override suspend fun boundingBox(): Rectangle? = super.boundingBox()?.let { bridge.rectangleInRoot(it) }
 
-    override suspend fun screenshot(options: ScreenshotOptions): ScreenshotResult {
-        bridge.prepareFrameScreenshot()
-        return super.screenshot(options)
-    }
+    override suspend fun screenshot(options: ScreenshotOptions): ScreenshotResult =
+        withKmpwrightTimeout(config.defaultTimeout(options.timeoutMs), { "Element screenshot of $displayName timed out" }) {
+            bridge.prepareFrameScreenshot()
+            super.screenshot(options)
+        }
 
     override fun frameLocator(selector: String): FrameLocator =
         frameFactory?.invoke(selector, selectorPartsJs()) ?: super.frameLocator(selector)

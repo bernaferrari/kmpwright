@@ -9,9 +9,78 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.assertFailsWith
 
 class ReviewRepairTest {
+    @Test fun `action deadlines include policy callbacks`(): Unit = runBlocking {
+        val config = KmpwrightConfig(timeouts = TimeoutConfig(action = 75))
+        for (kind in 0..8) {
+            val locator: BaseLocator = if (kind >= 7) CdpLocator(MockWebViewController(), "button", config)
+            else object : BaseLocator(MockWebViewController(), "button", config) {
+                override fun createLocator(newSelector: String, options: FilterOptions?): Locator = error("Unused")
+                override suspend fun evaluateJavaScriptAsync(script: String): String? = error("Policy has not completed")
+            }
+            locator.policyChecker = { delay(60_000) }
+            withTimeout(1_000) {
+                assertFailsWith<KmpwrightTimeoutException>("Operation $kind") {
+                    when (kind) {
+                        0, 7 -> locator.click(timeoutMs = 75)
+                        1, 8 -> locator.dblclick(timeoutMs = 75)
+                        2 -> locator.tap(timeoutMs = 75)
+                        3 -> locator.fill("value", timeoutMs = 75)
+                        4 -> locator.hover(timeoutMs = 75)
+                        5 -> locator.scrollIntoViewIfNeeded(timeoutMs = 75)
+                        else -> locator.focus(timeoutMs = 75)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun `locator waits and reads bound delayed bridge replies`(): Unit = runBlocking {
+        val config = KmpwrightConfig(timeouts = TimeoutConfig(action = 75, waitForSelector = 75))
+        val locator = object : BaseLocator(MockWebViewController(), "button", config) {
+            override fun createLocator(newSelector: String, options: FilterOptions?): Locator = error("Unused")
+            override suspend fun evaluateJavaScriptAsync(script: String): String? {
+                delay(60_000)
+                return """{"__kw":1,"v":true}"""
+            }
+        }
+        withTimeout(1_000) { assertFailsWith<KmpwrightTimeoutException> { locator.waitFor(timeoutMs = 75) } }
+        withTimeout(1_000) { assertFailsWith<KmpwrightTimeoutException> { locator.innerText() } }
+    }
+
+    @Test fun `multi stage locators share one action deadline`(): Unit = runBlocking {
+        val config = KmpwrightConfig(timeouts = TimeoutConfig(action = 100, waitForSelector = 100))
+        val controller = MockWebViewController()
+        fun locator(selector: String): BaseLocator = object : BaseLocator(controller, selector, config) {
+            override fun createLocator(newSelector: String, options: FilterOptions?): Locator = locator(newSelector)
+            override suspend fun evaluateJavaScriptAsync(script: String): String? {
+                delay(60)
+                val value = if (script.contains("var rect = el.getBoundingClientRect()"))
+                    JsonPrimitive("""{"x":0,"y":0,"width":10,"height":10}""").toString() else "true"
+                return """{"__kw":1,"v":$value}"""
+            }
+        }
+        for (kind in 0..6) {
+            val source = locator("button")
+            withTimeout(1_000) {
+                assertFailsWith<KmpwrightTimeoutException>("Operation $kind") {
+                    when (kind) {
+                        0 -> source.blur(timeoutMs = 100)
+                        1 -> source.dispatchEvent("click", timeoutMs = 100)
+                        2 -> source.evaluate("el => el.id", timeoutMs = 100)
+                        3 -> source.setChecked(true, timeoutMs = 100)
+                        4 -> source.setInputFiles(emptyList(), timeoutMs = 100)
+                        5 -> source.dragTo(locator(".target"), timeoutMs = 100)
+                        else -> source.screenshot(timeoutMs = 100)
+                    }
+                }
+            }
+        }
+    }
+
     @Test fun `restore refusal preserves existing cookies for every policy stage`() = runBlocking {
         for (denied in listOf(ActionType.DeleteCookie, ActionType.SetCookie, ActionType.Navigate, ActionType.Storage)) {
             val controller = MockWebViewController()

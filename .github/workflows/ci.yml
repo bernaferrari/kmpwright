@@ -82,7 +82,9 @@ jobs:
       - name: Verify complete platform ABI on macOS
         run: ./gradlew :kmpwright-core:checkKotlinAbi
       - name: Build iOS
-        run: ./gradlew :kmpwright-core:linkReleaseFrameworkIosSim :kmpwright-example-shared:linkReleaseFrameworkIosSim
+        # The sample is a compile check. Release optimization is verified for the library
+        # by the XCFramework/Swift consumer step, without optimizing the whole Compose UI.
+        run: ./gradlew :kmpwright-core:linkReleaseFrameworkIosSim :kmpwright-example-shared:linkDebugFrameworkIosSim
       - name: Run iOS simulator backend contracts
         run: ./gradlew :kmpwright-core:iosSimTest --no-daemon
       - name: Run iOS tests in an app host (WKWebView document contracts)

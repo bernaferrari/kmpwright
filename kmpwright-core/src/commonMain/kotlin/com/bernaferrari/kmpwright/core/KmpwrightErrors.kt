@@ -51,7 +51,7 @@ internal fun KmpwrightConfig.navigationTimeout(requested: Long?): Long = request
 internal fun KmpwrightConfig.defaultTimeout(requested: Long?): Long = requested ?: timeouts.default
 
 /**
- * Runs a native input-device action ([Touch], [Mouse], [Keyboard]) within its per-call timeout;
+ * Runs an input-device ([Touch], [Mouse], [Keyboard]) or locator action within its per-call timeout;
  * a null request uses [TimeoutConfig.action].
  */
 internal suspend fun <T> KmpwrightConfig.inputAction(requested: Long?, action: String, block: suspend CoroutineScope.() -> T): T {

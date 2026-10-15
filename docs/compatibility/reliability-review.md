@@ -206,10 +206,18 @@ the counts above belong to their recorded revisions.
   Full ABI validation runs on macOS, where all supported targets are available;
   Linux continues through its actual browser tests.
 
-Verification: 939 JVM tests (with Chromium and the React fixture), 78 Android
+Verification: 942 JVM tests (with Chromium and the React fixture), 78 Android
 emulator tests, 98 app-hosted iOS tests (including
 executing WKWebView documents), 62 bare iOS tests and six desktop/mobile browser
 contracts passed. The SwiftUI example build, complete Kotlin ABI check, website
 build/types/lint and documentation/upstream metadata checks passed. Maven Central
 `0.0.1` remains the previously published immutable artifact; these source repairs
 require a subsequent library release.
+
+A follow-up deadline regression reproduced successful multi-step actions after
+expiry and waits that outlived their budget while a bridge reply was pending.
+All locator action entry points now include policy callbacks, runtime setup,
+waits, reads and screenshot preparation in their operation deadline. The focused
+regressions failed before this repair; the complete 942-test JVM suite then passed.
+CI compile-checks the private sample's debug framework; release framework and
+artifact-only Swift consumer checks remain enabled for the library.

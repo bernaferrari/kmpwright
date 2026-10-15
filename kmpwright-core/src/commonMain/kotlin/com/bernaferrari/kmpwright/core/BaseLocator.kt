@@ -85,7 +85,12 @@ internal abstract class BaseLocator(
         }
 
     /** Runs [body] with the page runtime bound to `H`, installing the runtime on demand. */
-    internal suspend fun runWithRuntime(body: String, timeoutMs: Long = config.timeouts.default): JsonElement {
+    internal suspend fun runWithRuntime(body: String, timeoutMs: Long = config.timeouts.default): JsonElement =
+        withKmpwrightTimeout(timeoutMs, { "Timed out evaluating a script for '$displayName' after ${timeoutMs}ms" }) {
+            runWithInstalledRuntime(body, timeoutMs)
+        }
+
+    private suspend fun runWithInstalledRuntime(body: String, timeoutMs: Long): JsonElement {
         repeat(3) {
             when (val outcome = PageHelpers.decode(evalRaw(PageHelpers.envelope(body), timeoutMs))) {
                 is PageHelpers.Outcome.Value -> return outcome.value
@@ -256,12 +261,12 @@ internal abstract class BaseLocator(
 
     // ---------------------------------------------------------------- actions
 
-    override suspend fun click(button: MouseButton, clickCount: Int, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?) {
+    override suspend fun click(button: MouseButton, clickCount: Int, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator click") {
         checkPolicy(ActionType.Click)
         syntheticClick(button, clickCount.coerceAtLeast(1), delayMs, position, force, timeoutMs, "click")
     }
 
-    override suspend fun dblclick(button: MouseButton, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?) {
+    override suspend fun dblclick(button: MouseButton, delayMs: Long, position: Position?, force: Boolean, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator dblclick") {
         checkPolicy(ActionType.Click)
         syntheticClick(button, 2, delayMs, position, force, timeoutMs, "double-click")
     }
@@ -319,12 +324,12 @@ internal abstract class BaseLocator(
             obj["v"] ?: JsonNull
         }
 
-    override suspend fun tap(force: Boolean, modifiers: Int, timeoutMs: Long?) {
+    override suspend fun tap(force: Boolean, modifiers: Int, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator tap") {
         checkPolicy(ActionType.Click)
         performAction("tap", JsonObject(emptyMap()), timeoutOf(timeoutMs), force, Checks(), actionLabel = "tap")
     }
 
-    override suspend fun fill(value: String, force: Boolean, timeoutMs: Long?) {
+    override suspend fun fill(value: String, force: Boolean, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator fill") {
         checkPolicy(ActionType.Fill)
         performAction("fill", buildJsonObject { put("value", value) }, timeoutOf(timeoutMs), force,
             Checks(editable = true, stable = false, hit = false), actionLabel = "fill")
@@ -370,12 +375,12 @@ internal abstract class BaseLocator(
         }
     }
 
-    override suspend fun hover(force: Boolean, timeoutMs: Long?) {
+    override suspend fun hover(force: Boolean, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator hover") {
         checkPolicy(ActionType.Hover)
         performAction("hover", JsonObject(emptyMap()), timeoutOf(timeoutMs), force, Checks(enabled = false), actionLabel = "hover")
     }
 
-    override suspend fun scrollIntoViewIfNeeded(block: ScrollPosition, inline: ScrollPosition, timeoutMs: Long?) {
+    override suspend fun scrollIntoViewIfNeeded(block: ScrollPosition, inline: ScrollPosition, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator scrollIntoViewIfNeeded") {
         checkPolicy(ActionType.Scroll)
         fun position(value: ScrollPosition) = when (value) {
             ScrollPosition.Start -> "start"; ScrollPosition.Center -> "center"; ScrollPosition.End -> "end"; ScrollPosition.Nearest -> "nearest"
@@ -386,19 +391,19 @@ internal abstract class BaseLocator(
             actionLabel = "scroll into view")
     }
 
-    override suspend fun focus(timeoutMs: Long?) {
+    override suspend fun focus(timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator focus") {
         checkPolicy(ActionType.Focus)
         performAction("focus", JsonObject(emptyMap()), timeoutOf(timeoutMs), force = false,
             Checks(visible = false, enabled = false, stable = false, hit = false, scroll = false), actionLabel = "focus")
     }
 
-    override suspend fun blur(timeoutMs: Long?) {
+    override suspend fun blur(timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator blur") {
         checkPolicy(ActionType.Focus)
         waitFor(SelectorState.Attached, timeoutOf(timeoutMs))
         evalOnElement("if (typeof el.blur === 'function') el.blur(); return true;", requireElement = true)
     }
 
-    override suspend fun dispatchEvent(type: String, timeoutMs: Long?) {
+    override suspend fun dispatchEvent(type: String, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator dispatchEvent") {
         checkPolicy(ActionType.Click)
         waitFor(SelectorState.Attached, timeoutOf(timeoutMs))
         evalOnElement("""
@@ -416,7 +421,7 @@ internal abstract class BaseLocator(
         """.trimIndent(), requireElement = true)
     }
 
-    override suspend fun evaluate(expression: String, timeoutMs: Long?): JsResult {
+    override suspend fun evaluate(expression: String, timeoutMs: Long?): JsResult = config.inputAction(timeoutMs, "locator evaluate") {
         checkPolicy(ActionType.Evaluate)
         if (!config.allowEval) throw KmpwrightException("JavaScript evaluation is disabled by KmpwrightConfig.allowEval")
         waitFor(SelectorState.Attached, timeoutOf(timeoutMs))
@@ -428,25 +433,25 @@ internal abstract class BaseLocator(
             else if (t === 'function' || t === 'symbol') s = String(v);
             else { try { s = JSON.stringify(v); } catch (e) { s = String(v); } if (s === undefined) s = String(v); }
             return JSON.stringify({t: t, v: s});
-        """.trimIndent(), requireElement = true) ?: return JsResult("null", "undefined")
+        """.trimIndent(), requireElement = true) ?: return@inputAction JsResult("null", "undefined")
         val envelope = runCatching { Json.parseToJsonElement(raw) as? JsonObject }.getOrNull()
         val type = envelope?.get("t")?.jsonPrimitive?.content
         val value = envelope?.get("v")?.jsonPrimitive?.content
-        return if (type == null || value == null) JsResult(raw, "unknown") else JsResult(value, type)
+        if (type == null || value == null) JsResult(raw, "unknown") else JsResult(value, type)
     }
 
     override suspend fun check(force: Boolean, timeoutMs: Long?) = setChecked(true, force, timeoutMs)
 
     override suspend fun uncheck(force: Boolean, timeoutMs: Long?) = setChecked(false, force, timeoutMs)
 
-    override suspend fun setChecked(checked: Boolean, force: Boolean, timeoutMs: Long?) {
+    override suspend fun setChecked(checked: Boolean, force: Boolean, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator setChecked") {
         checkPolicy(ActionType.Click)
         val timeout = timeoutOf(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
         // Like every other action, wait for the element to be attached before inspecting it.
         waitFor(SelectorState.Attached, timeout)
         val current = checkedState() ?: throw KmpwrightException("Element $displayName is not a checkbox or radio button")
-        if (current == checked) return
+        if (current == checked) return@inputAction
         if (!checked && evalOnElement("return el.tagName === 'INPUT' && String(el.type).toLowerCase() === 'radio';", true) == "true") {
             throw KmpwrightException("Cannot uncheck radio button $displayName; check another option in its group instead")
         }
@@ -466,7 +471,7 @@ internal abstract class BaseLocator(
 
     override suspend fun selectOption(value: String, force: Boolean, timeoutMs: Long?) = selectOption(listOf(value), force, timeoutMs)
 
-    override suspend fun selectOption(values: List<String>, force: Boolean, timeoutMs: Long?) {
+    override suspend fun selectOption(values: List<String>, force: Boolean, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator selectOption") {
         checkPolicy(ActionType.Select)
         val timeout = timeoutOf(timeoutMs)
         val started = TimeSource.Monotonic.markNow()
@@ -475,7 +480,7 @@ internal abstract class BaseLocator(
                 put("values", JsonArray(values.map { JsonPrimitive(it) }))
             }, (timeout - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(FINAL_PROBE_MARGIN_MS + 1), force,
                 Checks(stable = false, hit = false), actionLabel = "select an option in")
-            val missing = (result as? JsonObject)?.get("missing")?.jsonPrimitive?.content ?: return
+            val missing = (result as? JsonObject)?.get("missing")?.jsonPrimitive?.content ?: return@inputAction
             val budget = timeout - started.elapsedNow().inWholeMilliseconds - FINAL_PROBE_MARGIN_MS
             if (budget <= 0) {
                 throw KmpwrightTimeoutException("Element $displayName has no option matching \"$missing\" after ${timeout}ms. " +
@@ -485,7 +490,7 @@ internal abstract class BaseLocator(
         }
     }
 
-    override suspend fun setInputFiles(files: List<String>, force: Boolean, timeoutMs: Long?) {
+    override suspend fun setInputFiles(files: List<String>, force: Boolean, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator setInputFiles") {
         if (files.isNotEmpty()) throw KmpwrightException("setInputFiles is not supported in mobile WebView")
         checkPolicy(ActionType.Fill)
         awaitFileInput(files.size, force, timeoutMs)
@@ -509,7 +514,7 @@ internal abstract class BaseLocator(
         evalOnElement("el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return true;", requireElement = true)
     }
 
-    override suspend fun dragTo(target: Locator, sourcePosition: Position?, targetPosition: Position?, timeoutMs: Long?) {
+    override suspend fun dragTo(target: Locator, sourcePosition: Position?, targetPosition: Position?, timeoutMs: Long?): Unit = config.inputAction(timeoutMs, "locator dragTo") {
         checkPolicy(ActionType.Drag)
         val targetBase = target as? BaseLocator
             ?: throw KmpwrightException("dragTo target must be a locator created by the same page (got ${target::class.simpleName})")
@@ -580,27 +585,29 @@ internal abstract class BaseLocator(
      * attached; throws [KmpwrightTimeoutException] when it never is.
      */
     private suspend fun evalWhenAttached(body: String, label: String, timeoutMs: Long = timeoutOf(null)): String? = awaitPageOperation(lifetime) {
-        val started = TimeSource.Monotonic.markNow()
-        var attempt = 0
-        while (true) {
-            val value = runWithRuntime("""
-                ${resolveJs()}
-                if (!el) return {missing: 1};
-                return {v: (function(el) { $body
-                })(el)};
-            """.trimIndent())
-            strictViolation(value)
-            val obj = value as? JsonObject
-                // Custom bridges without envelope support return the body's value directly.
-                ?: return@awaitPageOperation PageHelpers.valueAsString(value)
-            if (!obj.containsKey("missing")) return@awaitPageOperation PageHelpers.valueAsString(obj["v"] ?: JsonNull)
-            val elapsed = started.elapsedNow().inWholeMilliseconds
-            if (elapsed >= timeoutMs) {
-                throw KmpwrightTimeoutException("Timeout ${timeoutMs}ms exceeded waiting for '$displayName' to be attached (reading $label)")
+        withKmpwrightTimeout(timeoutMs, { "Timeout ${timeoutMs}ms exceeded waiting for '$displayName' to be attached (reading $label)" }) {
+            val started = TimeSource.Monotonic.markNow()
+            var attempt = 0
+            while (true) {
+                val value = runWithRuntime("""
+                    ${resolveJs()}
+                    if (!el) return {missing: 1};
+                    return {v: (function(el) { $body
+                    })(el)};
+                """.trimIndent())
+                strictViolation(value)
+                val obj = value as? JsonObject
+                    // Custom bridges without envelope support return the body's value directly.
+                    ?: return@withKmpwrightTimeout PageHelpers.valueAsString(value)
+                if (!obj.containsKey("missing")) return@withKmpwrightTimeout PageHelpers.valueAsString(obj["v"] ?: JsonNull)
+                val elapsed = started.elapsedNow().inWholeMilliseconds
+                if (elapsed >= timeoutMs) {
+                    throw KmpwrightTimeoutException("Timeout ${timeoutMs}ms exceeded waiting for '$displayName' to be attached (reading $label)")
+                }
+                delay(minOf(WAIT_BACKOFF_MS[minOf(attempt++, WAIT_BACKOFF_MS.lastIndex)], (timeoutMs - elapsed).coerceAtLeast(1)))
             }
-            delay(minOf(WAIT_BACKOFF_MS[minOf(attempt++, WAIT_BACKOFF_MS.lastIndex)], (timeoutMs - elapsed).coerceAtLeast(1)))
+            @Suppress("UNREACHABLE_CODE") null
         }
-        @Suppress("UNREACHABLE_CODE") null
     }
 
     override suspend fun count(): Int = awaitPageOperation(lifetime) {
@@ -671,12 +678,12 @@ internal abstract class BaseLocator(
 
     /** Captures the element's bounding box with the page capture path ([ScreenshotOptions.clip] is replaced). */
     protected open suspend fun screenshot(options: ScreenshotOptions): ScreenshotResult {
-        checkPolicy(ActionType.Screenshot)
-        scrollIntoViewIfNeeded()
-        val box = boundingBox() ?: throw KmpwrightException("No element found for screenshot: $displayName")
         val timeout = config.defaultTimeout(options.timeoutMs)
         return awaitPageOperation(lifetime) {
             withKmpwrightTimeout(timeout, { "Element screenshot of $displayName timed out after ${timeout}ms" }) {
+                checkPolicy(ActionType.Screenshot)
+                scrollIntoViewIfNeeded(timeoutMs = timeout)
+                val box = boundingBox() ?: throw KmpwrightException("No element found for screenshot: $displayName")
                 // Same capture path as page screenshots: format, quality and omitBackground behave identically.
                 controller.captureScreenshot(options.copy(fullPage = false, clip = box, captureBeyondViewport = true))
             }
@@ -708,28 +715,30 @@ internal abstract class BaseLocator(
 
     private suspend fun awaitWaitFor(state: SelectorState, timeoutMs: Long) = awaitPageOperation(lifetime) {
         if (timeoutMs <= 0) throw KmpwrightException("Wait timeout must be positive")
-        val condition = when (state) {
-            SelectorState.Attached -> "return list.length > 0;"
-            SelectorState.Detached -> "return list.length === 0;"
-            SelectorState.Visible -> "return list.length > 0 && H.isVisible(list[0]);"
-            SelectorState.Hidden -> "return list.length === 0 || !H.isVisible(list[0]);"
-        }
-        // A ref that is gone already satisfies hidden/detached; for other states it fails fast.
-        val resolve = if (state == SelectorState.Detached || state == SelectorState.Hidden) {
-            "var list; try { list = H.resolveAll(${selectorPartsJs()}); } catch (e) { if (/^(Unknown ref|Ref @)/.test(String(e && e.message))) list = []; else throw e; }"
-        } else {
-            "var list = H.resolveAll(${selectorPartsJs()});"
-        }
-        val started = TimeSource.Monotonic.markNow()
-        var attempt = 0
-        while (true) {
-            val value = runWithRuntime("/*kmpwright:waitFor*/ $resolve $condition")
-            if (PageHelpers.valueAsString(value) == "true") return@awaitPageOperation
-            val elapsed = started.elapsedNow().inWholeMilliseconds
-            if (elapsed >= timeoutMs) {
-                throw KmpwrightTimeoutException("Timeout ${timeoutMs}ms exceeded waiting for '$displayName' to be ${state.name.lowercase()}")
+        withKmpwrightTimeout(timeoutMs, { "Timeout ${timeoutMs}ms exceeded waiting for '$displayName' to be ${state.name.lowercase()}" }) {
+            val condition = when (state) {
+                SelectorState.Attached -> "return list.length > 0;"
+                SelectorState.Detached -> "return list.length === 0;"
+                SelectorState.Visible -> "return list.length > 0 && H.isVisible(list[0]);"
+                SelectorState.Hidden -> "return list.length === 0 || !H.isVisible(list[0]);"
             }
-            delay(minOf(WAIT_BACKOFF_MS[minOf(attempt++, WAIT_BACKOFF_MS.lastIndex)], (timeoutMs - elapsed).coerceAtLeast(1)))
+            // A ref that is gone already satisfies hidden/detached; for other states it fails fast.
+            val resolve = if (state == SelectorState.Detached || state == SelectorState.Hidden) {
+                "var list; try { list = H.resolveAll(${selectorPartsJs()}); } catch (e) { if (/^(Unknown ref|Ref @)/.test(String(e && e.message))) list = []; else throw e; }"
+            } else {
+                "var list = H.resolveAll(${selectorPartsJs()});"
+            }
+            val started = TimeSource.Monotonic.markNow()
+            var attempt = 0
+            while (true) {
+                val value = runWithRuntime("/*kmpwright:waitFor*/ $resolve $condition")
+                if (PageHelpers.valueAsString(value) == "true") return@withKmpwrightTimeout
+                val elapsed = started.elapsedNow().inWholeMilliseconds
+                if (elapsed >= timeoutMs) {
+                    throw KmpwrightTimeoutException("Timeout ${timeoutMs}ms exceeded waiting for '$displayName' to be ${state.name.lowercase()}")
+                }
+                delay(minOf(WAIT_BACKOFF_MS[minOf(attempt++, WAIT_BACKOFF_MS.lastIndex)], (timeoutMs - elapsed).coerceAtLeast(1)))
+            }
         }
     }
 
