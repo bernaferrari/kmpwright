@@ -1,6 +1,6 @@
 # Releasing Kmpwright
 
-Version `0.0.1` is published on Maven Central. This guide covers release
+Version `0.0.2` is published on Maven Central. This guide covers release
 operations and verification for Kotlin and Swift consumers. The standalone
 Swift/Xcode XCFramework release asset is not published yet.
 
@@ -16,8 +16,8 @@ Swift/Xcode XCFramework release asset is not published yet.
 - CocoaPods: not supported for the first release
 
 The published Maven coordinates are
-`io.github.bernaferrari:kmpwright-core:0.0.1` and
-`io.github.bernaferrari:kmpwright-compose:0.0.1`. Confirm the generated module
+`io.github.bernaferrari:kmpwright-core:0.0.2` and
+`io.github.bernaferrari:kmpwright-compose:0.0.2`. Confirm the generated module
 metadata and POMs before announcing a release.
 
 ## Operator checklist
@@ -30,8 +30,8 @@ metadata and POMs before announcing a release.
    after validating the tag:
 
    ```sh
-   ./scripts/validate-release-tag.sh v0.0.1
-   export RELEASE_VERSION=0.0.1
+   ./scripts/validate-release-tag.sh v0.0.2
+   export RELEASE_VERSION=0.0.2
    ./scripts/verify-publication.sh
    ./scripts/verify-ios-xcframework.sh
    ```
@@ -61,7 +61,7 @@ metadata and POMs before announcing a release.
    the release bundle, check that signatures verify with the expected public
    key, and inspect the POM/license/source attachments. Reject a staging set
    with missing signatures, unexpected coordinates, or a version other than
-   `0.0.1`.
+   `0.0.2`.
 6. Upload only after local verification passes. The tag workflow runs
    `scripts/publish-central-idempotent.sh`, which checks Maven Central first,
    publishes each artifact only when its POM is absent, and waits for the POM

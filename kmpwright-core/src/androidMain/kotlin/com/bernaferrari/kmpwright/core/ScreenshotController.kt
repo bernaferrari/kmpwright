@@ -216,18 +216,27 @@ internal class AndroidScreenshotController(
         }
     }
 
-    private fun Bitmap.encode(): ByteArray {
-        val outputStream = java.io.ByteArrayOutputStream()
+    /**
+     * Compression runs off the main thread: encoding a full-page PNG takes long enough to freeze the host app's UI.
+     * Drawing stays on Main; the bitmap is only read here, and callers recycle it after this returns
+     * ([withContext] waits for the block even when the caller is cancelled).
+     */
+    private suspend fun Bitmap.encode(): ByteArray {
+        val formatName = outputFormat.name
         val (format, quality) = when (outputFormat) {
             ScreenshotFormat.Png -> Bitmap.CompressFormat.PNG to 100
             ScreenshotFormat.Jpeg -> Bitmap.CompressFormat.JPEG to outputQuality
             ScreenshotFormat.Webp -> (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY
                 else @Suppress("DEPRECATION") Bitmap.CompressFormat.WEBP) to outputQuality
         }
-        if (!compress(format, quality, outputStream)) {
-            throw KmpwrightException("Android screenshot ${outputFormat.name} encoding failed")
+        val bitmap = this
+        return withContext(Dispatchers.Default) {
+            val outputStream = java.io.ByteArrayOutputStream()
+            if (!bitmap.compress(format, quality, outputStream)) {
+                throw KmpwrightException("Android screenshot $formatName encoding failed")
+            }
+            outputStream.toByteArray()
         }
-        return outputStream.toByteArray()
     }
 
     /** Device pixels. Main thread only; [captureFullPage] refines this with renderer measurements. */
@@ -529,7 +538,7 @@ internal class AndroidScreenshotController(
         awaitRendered()
     }
     internal fun allocateDocumentBitmap(width: Int, height: Int): Bitmap = createBitmap(width, height, "document screenshot")
-    internal fun encodeDocumentBitmap(bitmap: Bitmap): ByteArray = bitmap.encode()
+    internal suspend fun encodeDocumentBitmap(bitmap: Bitmap): ByteArray = bitmap.encode()
     internal suspend fun captureDocumentTile(x: Int, y: Int): Bitmap {
         if (webView.isAttachedToWindow) return captureVisibleViewportBitmap(1.0, "document screenshot tile", x to y)
         val bitmap = createBitmap(webView.width, webView.height, "document screenshot tile")

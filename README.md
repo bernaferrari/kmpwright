@@ -11,14 +11,14 @@ Kotlin API, or give an AI agent the same browser through compact commands.
 [Website](https://kmpwright.vercel.app) · [Documentation](https://kmpwright.vercel.app/docs) · [Examples](kmpwright-example-shared)
 
 > [!NOTE]
-> **0.0.1 alpha.** Available on Maven Central. APIs and platform coverage may change.
+> **0.0.2 alpha.** Available on Maven Central. APIs and platform coverage may change.
 
 ## Installation
 
 Add to `commonMain.dependencies` in your module’s `build.gradle.kts`:
 
 ```kotlin
-implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
+implementation("io.github.bernaferrari:kmpwright-core:0.0.2")
 ```
 
 One dependency covers Android, iOS and JVM. Gradle selects the platform variant.
@@ -33,7 +33,7 @@ repositories { mavenCentral() }
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
+            implementation("io.github.bernaferrari:kmpwright-core:0.0.2")
         }
     }
 }
@@ -42,7 +42,7 @@ kotlin {
 For the Android Compose wrapper, add this to `androidMain.dependencies`:
 
 ```kotlin
-implementation("io.github.bernaferrari:kmpwright-compose:0.0.1")
+implementation("io.github.bernaferrari:kmpwright-compose:0.0.2")
 ```
 
 </details>

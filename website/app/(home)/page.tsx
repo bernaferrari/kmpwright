@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 const dependency =
-  'implementation("io.github.bernaferrari:kmpwright-core:0.0.1")';
+  'implementation("io.github.bernaferrari:kmpwright-core:0.0.2")';
 
 const automationCode = `with(page) {
     getByPlaceholder("Search").fill("kotlin")

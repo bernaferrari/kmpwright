@@ -25,7 +25,7 @@ kotlin {
 }
 ```
 
-Planned coordinates: `io.github.bernaferrari:kmpwright-core:0.0.1` and `io.github.bernaferrari:kmpwright-compose:0.0.1`.
+Planned coordinates: `io.github.bernaferrari:kmpwright-core:0.0.2` and `io.github.bernaferrari:kmpwright-compose:0.0.2`.
 
 ## Get a Page
 

@@ -4,7 +4,7 @@ description: Add kmpwright-core (and optionally kmpwright-compose) to a Kotlin M
 ---
 
 <Callout type="warn">
-Version `0.0.1` is available on Maven Central. This is an alpha release; APIs and platform coverage may change.
+Version `0.0.2` is available on Maven Central. This is an alpha release; APIs and platform coverage may change.
 </Callout>
 
 ## Add the library
@@ -12,15 +12,15 @@ Version `0.0.1` is available on Maven Central. This is an alpha release; APIs an
 Add one dependency to `commonMain.dependencies` in your module's `build.gradle.kts`:
 
 ```kotlin
-implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
+implementation("io.github.bernaferrari:kmpwright-core:0.0.2")
 ```
 
 Gradle selects the matching platform variant. Your project must include `mavenCentral()` in its repositories. For a complete Gradle example, see [Kotlin Multiplatform](#kotlin-multiplatform) below.
 
 | Artifact | Coordinates | Targets |
 | --- | --- | --- |
-| Core | `io.github.bernaferrari:kmpwright-core:0.0.1` | Android, iOS (arm64 device and simulator), JVM, JS |
-| Compose wrapper (optional) | `io.github.bernaferrari:kmpwright-compose:0.0.1` | Android only |
+| Core | `io.github.bernaferrari:kmpwright-core:0.0.2` | Android, iOS (arm64 device and simulator), JVM, JS |
+| Compose wrapper (optional) | `io.github.bernaferrari:kmpwright-compose:0.0.2` | Android only |
 
 The Kotlin/JS artifact supports the website demo's browser bridge. See the [capability matrix](/docs/platforms/capabilities) for backend differences.
 
@@ -48,11 +48,11 @@ repositories { mavenCentral() }
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
+            implementation("io.github.bernaferrari:kmpwright-core:0.0.2")
         }
         androidMain.dependencies {
             // Optional: Compose WebView wrapper (Android only).
-            implementation("io.github.bernaferrari:kmpwright-compose:0.0.1")
+            implementation("io.github.bernaferrari:kmpwright-compose:0.0.2")
         }
     }
 }
@@ -65,8 +65,8 @@ Your shared code then works with `Browser`, `Page` and `Locator`. Each platform 
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
-    implementation("io.github.bernaferrari:kmpwright-compose:0.0.1") // optional
+    implementation("io.github.bernaferrari:kmpwright-core:0.0.2")
+    implementation("io.github.bernaferrari:kmpwright-compose:0.0.2") // optional
 }
 ```
 
@@ -112,7 +112,7 @@ See [`docs/releasing.md`](https://github.com/bernaferrari/kmpwright/blob/main/do
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.github.bernaferrari:kmpwright-core:0.0.1")
+    implementation("io.github.bernaferrari:kmpwright-core:0.0.2")
 }
 ```
 
