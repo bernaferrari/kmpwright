@@ -16,14 +16,15 @@ source "$ENV_FILE"
 
 # Guard against reintroducing a step-level expression that overwrites the
 # GITHUB_ENV value with an empty Actions expression.
-if rg -n 'RELEASE_VERSION: \$\{\{ env\.RELEASE_VERSION \}\}' \
+# POSIX grep: release runners (macOS) do not ship ripgrep.
+if grep -nE 'RELEASE_VERSION: \$\{\{ env\.RELEASE_VERSION \}\}' \
   "$ROOT_DIR/.github/workflows/release.yml"; then
   echo "release workflow must inherit RELEASE_VERSION from GITHUB_ENV" >&2
   exit 1
 fi
 
-rg -q 'kmpwrightVersion.*providers\.gradleProperty\("kmpwrightVersion"\)' \
+grep -qE 'kmpwrightVersion.*providers\.gradleProperty\("kmpwrightVersion"\)' \
   "$ROOT_DIR/tests/consumers/kmp/build.gradle.kts"
-rg -q -- '-PkmpwrightVersion="\$VERSION"' \
+grep -qE -- '-PkmpwrightVersion="\$VERSION"' \
   "$ROOT_DIR/scripts/verify-publication.sh"
 echo "Release version propagation contract verified for future version 9.8.7"
