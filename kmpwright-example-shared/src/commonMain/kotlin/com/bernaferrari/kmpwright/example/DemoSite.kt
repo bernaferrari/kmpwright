@@ -7,19 +7,20 @@ package com.bernaferrari.kmpwright.example
 internal object DemoSite {
 
     private val baseStyle = """
-        :root { color-scheme: light dark; --accent:#5b4fc4; --accent-2:#00696b; --bg:#fcf8ff; --card:#ffffff;
+        :root { color-scheme: light dark; --accent:#6b3fe6; --accent-2:#9a1aa8; --bg:#fcf8ff; --card:#ffffff;
                 --text:#1c1b22; --muted:#605d68; --line:#e5e0ef; --ok:#0b7a43; }
         @media (prefers-color-scheme: dark) {
-          :root { --accent:#c8bfff; --accent-2:#80d4d5; --bg:#14131a; --card:#211f26; --text:#e5e1eb;
+          :root { --accent:#cdbdff; --accent-2:#f5adff; --bg:#14131a; --card:#211f26; --text:#e5e1eb;
                   --muted:#c9c4d0; --line:#36343c; --ok:#7ddba2; }
         }
         * { box-sizing: border-box; }
         body { margin:0; font: 16px/1.5 system-ui, -apple-system, Roboto, sans-serif; background:var(--bg); color:var(--text); }
-        main { max-width: 640px; margin: 0 auto; padding: 20px 18px 48px; }
+        /* 14px inset + 18px corners = the browser pane's 32dp corners, so they stay concentric. */
+        main { max-width: 640px; margin: 0 auto; padding: 14px 14px 48px; }
         h1 { font-size: 30px; line-height: 1.15; margin: 8px 0 6px; letter-spacing: -0.02em; }
         h2 { font-size: 18px; margin: 0 0 12px; }
         p.lead { color: var(--muted); margin: 0 0 20px; }
-        .card { background: var(--card); border: 1px solid var(--line); border-radius: 24px; padding: 18px; margin: 14px 0; }
+        .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px; margin: 14px 0; }
         label { display:block; font-weight: 600; font-size: 14px; margin: 12px 0 6px; }
         input[type=text], input[type=email], input[type=search], select {
           width:100%; font: inherit; padding: 12px 14px; border-radius: 14px; border: 1.5px solid var(--line);
@@ -37,8 +38,8 @@ internal object DemoSite {
         #signup-status { margin-top: 14px; font-weight: 600; color: var(--ok); min-height: 1.5em; }
         ul.results { list-style: none; padding: 0; margin: 12px 0 0; }
         ul.results li { padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); margin-bottom: 8px; }
-        .hero { border-radius: 28px; padding: 26px 22px; color: white; margin-bottom: 18px;
-                background: linear-gradient(135deg, #5b4fc4 0%, #8a4fa9 55%, #00696b 100%); }
+        .hero { border-radius: 18px; padding: 26px 22px; color: white; margin-bottom: 14px;
+                background: radial-gradient(120% 140% at 100% 0%, rgba(200, 120, 255, .45), transparent 60%), #4a22c4; }
         .hero p { opacity: .9; margin: 6px 0 0; }
     """.trimIndent()
 

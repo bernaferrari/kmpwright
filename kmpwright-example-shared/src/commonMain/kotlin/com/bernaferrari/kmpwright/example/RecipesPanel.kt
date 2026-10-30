@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -77,12 +76,6 @@ import kotlinx.coroutines.launch
 
 @Composable
 internal fun RecipesPanel(state: StudioState, onRunStarted: () -> Unit, modifier: Modifier = Modifier) {
-    val native = LocalNativeNavigation.current
-    if (native != null) {
-        // The native navigation stack pushes RecipeDetailPanel as its own screen.
-        RecipeGrid(onOpen = native.openRecipe, modifier = modifier)
-        return
-    }
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
     val open = recipes.firstOrNull { it.id == openId }
     AnimatedContent(
@@ -98,12 +91,6 @@ internal fun RecipesPanel(state: StudioState, onRunStarted: () -> Unit, modifier
         if (recipe == null) RecipeGrid(onOpen = { openId = it.id }, modifier = Modifier.fillMaxSize())
         else RecipeDetail(state, recipe, onBack = { openId = null }, onRunStarted = onRunStarted)
     }
-}
-
-/** A recipe as a standalone screen, for native navigation stacks. */
-@Composable
-internal fun RecipeDetailPanel(state: StudioState, recipe: Recipe, modifier: Modifier = Modifier) {
-    Box(modifier) { RecipeDetail(state, recipe, onBack = null, onRunStarted = {}) }
 }
 
 /** Recipes that show the agent side of KMPwright; the rest teach the Playwright-style API. */
@@ -132,7 +119,7 @@ private fun RecipeGrid(onOpen: (Recipe) -> Unit, modifier: Modifier = Modifier) 
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 168.dp),
         modifier = modifier,
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
+        contentPadding = panelPadding(bottom = 32.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -330,7 +317,7 @@ private fun RecipeDetail(state: StudioState, recipe: Recipe, onBack: (() -> Unit
         }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(panelPadding(bottom = 24.dp))) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (onBack != null) {
                 IconButton(onClick = onBack, shapes = IconButtonDefaults.shapes()) {

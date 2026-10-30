@@ -1,0 +1,9 @@
+{
+  "android": {"res": "example-android/src/main/res"},
+  "files": [
+    {"path": "docs/brand/icon.svg", "shape": "square"},
+    {"path": "docs/brand/icon.png", "size": 512, "shape": "square"},
+    {"path": "website/app/icon.svg", "shape": "rounded"},
+    {"path": "website/app/apple-icon.png", "size": 180, "shape": "square", "opaque": true}
+  ]
+}

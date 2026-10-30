@@ -1,35 +1,33 @@
-# KMPwright
+<h1 align="center">
+  <a href="https://kmpwright.vercel.app"><img src="docs/assets/readme/header.jpg" width="100%" alt="KMPwright: one Kotlin workflow, the same finished sign-up form on an iPad and an iPhone"></a>
+</h1>
+
+<p align="center"><b>Browser automation for Kotlin Multiplatform.</b><br>
+Write a workflow once and run it in Android WebView, iOS WKWebView or JVM Chromium.</p>
 
 <p align="center">
-  <img src="docs/assets/kmpwright-opengraph-v3.jpg" alt="KMPwright — browser automation for Kotlin Multiplatform" width="800" />
+  <a href="https://central.sonatype.com/artifact/io.github.bernaferrari/kmpwright-core"><img src="https://img.shields.io/maven-central/v/io.github.bernaferrari/kmpwright-core?color=7b5cff&label=Maven%20Central" alt="Maven Central"></a>
+  <img src="https://img.shields.io/badge/platforms-Android%20·%20iOS%20·%20JVM-e255c8" alt="Android, iOS and JVM">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-ff8a5c" alt="MIT license"></a>
 </p>
 
-**Browser automation for Kotlin Multiplatform.** Write a workflow once and run it
-inside Android WebView, iOS WKWebView or JVM Chromium. Use a Playwright-inspired
-Kotlin API, or give an AI agent the same browser through compact commands.
+<p align="center">
+  <a href="https://kmpwright.vercel.app"><b>Website</b></a> ·
+  <a href="https://kmpwright.vercel.app/docs"><b>Documentation</b></a> ·
+  <a href="kmpwright-example-shared"><b>Examples</b></a>
+</p>
 
-[Website](https://kmpwright.vercel.app) · [Documentation](https://kmpwright.vercel.app/docs) · [Examples](kmpwright-example-shared)
+A Playwright-inspired Kotlin API for locators, assertions, networking and
+screenshots, plus compact commands an AI agent can drive the same browser with.
 
 > [!NOTE]
 > **0.0.2 alpha.** Available on Maven Central. APIs and platform coverage may change.
 
-## Installation
+## Install
 
-Add to `commonMain.dependencies` in your module’s `build.gradle.kts`:
-
-```kotlin
-implementation("io.github.bernaferrari:kmpwright-core:0.0.2")
-```
-
-One dependency covers Android, iOS and JVM. Gradle selects the platform variant.
-Requires `mavenCentral()` in your project's repositories.
-
-<details>
-<summary>Full Gradle setup and optional Compose integration</summary>
+One dependency in `commonMain` covers Android, iOS and JVM. Gradle picks the platform variant.
 
 ```kotlin
-repositories { mavenCentral() }
-
 kotlin {
     sourceSets {
         commonMain.dependencies {
@@ -39,18 +37,12 @@ kotlin {
 }
 ```
 
-For the Android Compose wrapper, add this to `androidMain.dependencies`:
+Requires `mavenCentral()`. For the Android Compose wrapper, add
+`io.github.bernaferrari:kmpwright-compose:0.0.2` to `androidMain`.
 
-```kotlin
-implementation("io.github.bernaferrari:kmpwright-compose:0.0.2")
-```
+## Write it once
 
-</details>
-
-## DSL in action
-
-Fill a form, click its button and verify the rendered result. This demo uses a
-self-contained page, so it runs without a server or an account.
+Fill a form, click its button and check the result:
 
 ```kotlin
 import com.bernaferrari.kmpwright.core.*
@@ -63,14 +55,11 @@ suspend fun demo(page: Page) = with(page) {
 }
 ```
 
-**Result:** the page displays **Hello, Ada!** and the assertion passes.
-Locators wait for actionable elements; assertions wait for the expected result.
-The same workflow runs on Android, iOS and JVM.
+The page shows **Hello, Ada!** and the assertion passes. Locators wait until an
+element can be used; assertions wait for the expected result. No server or account needed.
 
 <details>
-<summary>HTML for the runnable demo</summary>
-
-Define this alongside `demo()` in your shared Kotlin code:
+<summary><code>demoHtml</code>, the self-contained page</summary>
 
 ```kotlin
 val demoHtml = """
@@ -89,43 +78,75 @@ val demoHtml = """
 
 </details>
 
-Connect your platform's browser, then pass its `Page` to the shared workflow.
-Run suspending APIs in a coroutine, on the main thread for mobile WebViews.
+## Run it anywhere
 
-<details>
-<summary>Android, iOS and JVM examples</summary>
+Connect your platform's browser and pass its `Page` to the shared workflow. Call
+suspending APIs from a coroutine, on the main thread for mobile WebViews.
 
-**Android** — attach to your app’s WebView:
+<table>
+<tr>
+<th>Android · WebView</th>
+<th>iOS · WKWebView</th>
+<th>JVM · Chromium</th>
+</tr>
+<tr>
+<td>
 
 ```kotlin
-Browser(AndroidPlatformContext(activity, webView)).use { browser ->
-    demo(browser.page())
+Browser(
+  AndroidPlatformContext(
+    activity, webView,
+  ),
+).use { browser ->
+  demo(browser.page())
 }
 ```
 
-**iOS** — attach to your app’s WKWebView from `iosMain`:
+</td>
+<td>
 
 ```kotlin
-Browser(IOSPlatformContext(webView = webView)).use { browser ->
-    demo(browser.page())
+Browser(
+  IOSPlatformContext(
+    webView = webView,
+  ),
+).use { browser ->
+  demo(browser.page())
 }
 ```
 
-**JVM** — launch an installed Chrome or Chromium:
+</td>
+<td>
 
 ```kotlin
-launchBrowser(executablePath).use { launched ->
-    demo(launched.browser.newPage())
+launchBrowser(
+  executablePath,
+).use { launched ->
+  demo(
+    launched.browser.newPage(),
+  )
 }
 ```
 
-See the platform guides for [Android](website/content/docs/platforms/android.mdx),
-[iOS and Swift](website/content/docs/platforms/ios.mdx), and
-[JVM and cloud browsers](website/content/docs/platforms/jvm.mdx).
+</td>
+</tr>
+<tr>
+<td>Android 8+ · <a href="website/content/docs/platforms/android.mdx">guide</a></td>
+<td>iOS 15+, arm64 device and simulator · <a href="website/content/docs/platforms/ios.mdx">guide</a></td>
+<td>JDK 17+, installed Chrome or a cloud browser · <a href="website/content/docs/platforms/jvm.mdx">guide</a></td>
+</tr>
+</table>
 
-</details>
+Features follow each backend's abilities. Check `page.capabilities()` before an
+optional feature; the [capability matrix](website/content/docs/platforms/capabilities.mdx)
+lists what is partial or missing.
 
-## AI agents
+## Hand it to an agent
+
+<img align="right" src="docs/assets/readme/agent.png" width="240" alt="The example app's Agent tab on iPhone: numbered refs over each element of the page, and the snapshot -i command ready to run">
+
+Expose `runCommand()` as a tool in your LLM SDK. The model reads a snapshot and
+acts on element refs, using the [agent-browser command subset](website/content/docs/agents/commands.mdx).
 
 ```kotlin
 page.runCommand("snapshot -i")
@@ -136,40 +157,26 @@ page.runCommand("fill @e1 ada@example.com")
 page.runCommand("click @e2")
 ```
 
-Expose `runCommand()` as a tool to your LLM SDK. The model reads snapshots and
-acts on element references, using the documented
-[agent-browser command subset](website/content/docs/agents/commands.mdx).
+The [example app](kmpwright-example-shared) puts a playground, recipes and an
+inspector on Android, iPhone and iPad.
 
-## Features
+<br clear="right">
 
-| Workflow | Guide |
-| --- | --- |
-| Find elements, enter text and assert results | [Locators](website/content/docs/guides/locators.mdx) |
-| Intercept requests and inspect network history | [Networking](website/content/docs/guides/network.mdx) |
-| Capture pages and compare images | [Screenshots](website/content/docs/guides/screenshots.mdx) |
-| Save cookies and browser storage | [Session state](website/content/docs/guides/storage.mdx) |
-| Record a Chromium workflow | [Recording](website/content/docs/guides/recording.mdx) |
+## What else it does
 
-## Platform support
+- **Find and assert.** Roles, labels and text, with waiting built in. [Locators](website/content/docs/guides/locators.mdx)
+- **Watch the network.** Intercept requests and read the history. [Networking](website/content/docs/guides/network.mdx)
+- **Capture pages.** Screenshots and image comparison. [Screenshots](website/content/docs/guides/screenshots.mdx)
+- **Keep a session.** Save and restore cookies and storage. [Session state](website/content/docs/guides/storage.mdx)
+- **Record a run.** Video, traces and CPU profiles on Chromium. [Recording](website/content/docs/guides/recording.mdx)
 
-| Platform | Browser | Minimum |
-| --- | --- | --- |
-| Android | WebView | Android 8 |
-| iOS | WKWebView | iOS 15 · arm64 device and simulator |
-| JVM | Chromium through CDP | JDK 17 |
-
-Features follow each backend’s abilities. Inspect `page.capabilities()` before
-using an optional feature; the [capability matrix](website/content/docs/platforms/capabilities.mdx)
-explains partial and unsupported behavior.
-
-## Contributing and attribution
+## Credits
 
 KMPwright adapts browser behavior from [agent-browser](https://github.com/vercel-labs/agent-browser)
-into Kotlin APIs. It is independent of Playwright. The
+into Kotlin APIs and is independent of Playwright. The
 [upstream comparison](docs/compatibility/upstream-review.md) records the pinned
-revision and coverage; upstream source is not included in this repository.
+revision and coverage; no upstream source is included here.
 
-For contributions, see [development and tests](docs/development.md). For artifact
-verification, see the [release guide](docs/releasing.md).
+Part of [Kotlin Reforge](https://kotlin-reforge.vercel.app).
 
-[MIT](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+<sub>Contributing? See [development and tests](docs/development.md) and the [release guide](docs/releasing.md). [MIT](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)</sub>

@@ -26,8 +26,10 @@ kotlinxCollectionsImmutable = "0.5.2"
 mavenPublish = "0.37.0"
 ktor = "3.6.0"
 ksoup = "0.2.6"
+materialKolor = "6.0.0"
 
 [libraries]
+material-kolor = { module = "com.materialkolor:material-kolor-material3", version.ref = "materialKolor" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
 ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }

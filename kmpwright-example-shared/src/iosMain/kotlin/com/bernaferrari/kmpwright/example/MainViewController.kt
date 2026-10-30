@@ -21,13 +21,12 @@ import platform.WebKit.WKWebView
 fun createViewController(): UIViewController = ComposeUIViewController { KmpwrightExampleApp() }
 
 /**
- * iOS 26+: SwiftUI owns a Liquid Glass `TabView` and `NavigationStack`s, and
- * each screen below is a Compose controller sharing one browser session.
+ * iOS 26+: SwiftUI owns a Liquid Glass `TabView`, and each tab is a Compose controller
+ * sharing one browser session. Recipes open inside their panel, so the page never moves.
  */
 @OptIn(ExperimentalForeignApi::class)
 class NativeStudio(
     private val onSelectTab: (String) -> Unit,
-    private val onOpenRecipe: (id: String, title: String) -> Unit,
 ) {
     private val platformContext = IOSPlatformContext(WKWebView())
     private val scope = MainScope()
@@ -50,12 +49,9 @@ class NativeStudio(
     /** The screen currently on top; only it shows the shared web view. */
     private var activeScreen by mutableStateOf("Agent")
 
-    private val navigation = NativeNavigation(
-        selectDestination = { onSelectTab(it.name) },
-        openRecipe = { onOpenRecipe(it.id, it.title) },
-    )
+    private val navigation = NativeNavigation(selectDestination = { onSelectTab(it.name) })
 
-    /** Call when a tab or pushed screen appears, using the same key passed to the factory. */
+    /** Call when a tab appears, using the same key passed to the factory. */
     fun screenDidAppear(key: String) {
         activeScreen = key
     }
@@ -64,12 +60,6 @@ class NativeStudio(
     fun tabViewController(tab: String): UIViewController {
         val destination = Destination.valueOf(tab)
         return screen(tab) { DestinationPanel(destination, state, it) }
-    }
-
-    /** Pushed controller for one recipe. */
-    fun recipeViewController(id: String): UIViewController {
-        val recipe = recipes.first { it.id == id }
-        return screen("recipe:$id") { RecipeDetailPanel(state, recipe, it) }
     }
 
     private fun screen(key: String, panel: @androidx.compose.runtime.Composable (Modifier) -> Unit): UIViewController =

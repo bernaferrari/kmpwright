@@ -1,6 +1,5 @@
 package com.bernaferrari.kmpwright.example
 
-import androidx.compose.material3.ColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -49,9 +48,6 @@ internal actual fun WebViewHost(platformContext: PlatformContext, modifier: Modi
         },
     )
 }
-
-@Composable
-internal actual fun dynamicColorScheme(dark: Boolean): ColorScheme? = null
 
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun readNativeScroll(platformContext: PlatformContext): NativeScroll? {

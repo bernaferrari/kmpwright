@@ -2,6 +2,7 @@ package com.bernaferrari.kmpwright.example
 
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -129,6 +130,9 @@ class StudioState(
     var activity by mutableStateOf<Activity?>(null)
 
     var showRefs by mutableStateOf(true)
+
+    /** The page's share of the height in the split layout; one value, so every tab keeps it. */
+    var pageSplit by mutableFloatStateOf(0.55f)
 
     var refs by mutableStateOf<List<RefBadge>>(emptyList())
         private set

@@ -1,13 +1,9 @@
 package com.bernaferrari.kmpwright.example
 
 import android.annotation.SuppressLint
-import android.os.Build
 import android.view.ViewGroup
 import android.webkit.WebSettings
 import android.webkit.WebView
-import androidx.compose.material3.ColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -51,13 +47,6 @@ internal actual fun WebViewHost(platformContext: PlatformContext, modifier: Modi
         },
         onRelease = { (it.parent as? ViewGroup)?.removeView(it) },
     )
-}
-
-@Composable
-internal actual fun dynamicColorScheme(dark: Boolean): ColorScheme? {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
-    val context = LocalContext.current
-    return if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
 }
 
 internal actual fun readNativeScroll(platformContext: PlatformContext): NativeScroll? {

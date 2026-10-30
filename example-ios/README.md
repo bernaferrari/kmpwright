@@ -25,12 +25,13 @@ phase relinks the framework on each build. For an optimized framework, run
 
 - `NativeStudio` (Kotlin, `iosMain`) owns one browser session: a single
   `WKWebView`, `Browser` and page shared by every tab.
-- `tabViewController(tab:)` and `recipeViewController(id:)` return Compose
-  controllers for each tab root and pushed recipe.
+- `tabViewController(tab:)` returns a Compose controller for each tab root.
+  Recipes open inside the Recipes panel, so no screen is pushed and the page
+  never moves.
 - Each screen reports `screenDidAppear(key:)`; the visible screen adopts the
   shared `WKWebView`, so the page you are driving follows you between tabs.
-- Compose sends navigation back to Swift through the `onSelectTab` and
-  `onOpenRecipe` callbacks. See the
+- Compose sends tab changes back to Swift through the `onSelectTab` callback.
+  See the
   [Liquid Glass guide](https://kotlinlang.org/docs/multiplatform/ios-liquid-glass.html)
   for the pattern.
 

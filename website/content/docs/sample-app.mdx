@@ -107,7 +107,7 @@ The same `WebView` instance moves between layouts when the window size changes; 
 | 26 and later | Native SwiftUI `TabView` and `NavigationStack`, so the system draws the Liquid Glass tab bar and navigation bar. Compose renders each screen. |
 | 15 to 25 | Compose draws everything, navigation included. |
 
-On iOS 26, a Kotlin `NativeStudio` object owns the single `WKWebView`, `Browser` and page shared by every tab. Swift asks it for a Compose view controller per tab (`tabViewController(tab:)`) and per pushed recipe (`recipeViewController(id:)`); each screen reports `screenDidAppear(key:)` and the visible screen adopts the shared `WKWebView`, so the page you are driving follows you between tabs. Compose sends navigation back to Swift through `onSelectTab` and `onOpenRecipe` callbacks.
+On iOS 26, a Kotlin `NativeStudio` object owns the single `WKWebView`, `Browser` and page shared by every tab. Swift asks it for a Compose view controller per tab (`tabViewController(tab:)`); recipes open inside the Recipes panel, so no screen is pushed and the page stays put. Each screen reports `screenDidAppear(key:)` and the visible screen adopts the shared `WKWebView`, so the page you are driving follows you between tabs. Compose sends tab changes back to Swift through the `onSelectTab` callback.
 
 ## How the sample wires KMPwright
 

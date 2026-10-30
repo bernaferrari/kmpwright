@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108">
+  <!-- A pointer mid-click, in Kotlin violet to magenta to coral: Kotlin code driving a browser. -->
+  <defs>
+    <linearGradient id="kotlin" x1="45.5" y1="36" x2="67.5" y2="80" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7F52FF"/><stop offset=".55" stop-color="#C811E2"/><stop offset="1" stop-color="#FF7A45"/></linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="1.8"/></filter>
+  </defs>
+  <g stroke="#7F52FF" stroke-width="2.5" stroke-linecap="round"><path d="M40.3 30.8 L36.9 27.4"/><path d="M45.5 29.6 L45.5 25"/><path d="M39.1 36 L34.5 36"/></g>
+  <polygon points="45.50,36.00 45.50,74.25 54.73,65.70 61.25,80.55 68.00,77.63 61.70,63.00 73.85,63.00" transform="translate(0 2.2)" fill="#3A1C8C" stroke="#3A1C8C" stroke-width="4" stroke-linejoin="round" opacity=".22" filter="url(#soft)"/>
+  <polygon points="45.50,36.00 45.50,74.25 54.73,65.70 61.25,80.55 68.00,77.63 61.70,63.00 73.85,63.00" fill="url(#kotlin)" stroke="url(#kotlin)" stroke-width="4.2" stroke-linejoin="round"/>
+</svg>

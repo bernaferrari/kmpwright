@@ -45,6 +45,7 @@ kotlin {
                 implementation(libs.compose.ui.graphics)
                 implementation(libs.compose.material3)
                 implementation(libs.compose.material.icons.extended)
+                implementation(libs.material.kolor)
                 implementation(libs.compose.resources)
                 implementation(project(":kmpwright-core"))
                 implementation(libs.kotlinx.coroutines.core)

@@ -14,14 +14,6 @@ struct ComposeScreen: UIViewControllerRepresentable {
 
 // MARK: - iOS 26+: native Liquid Glass navigation
 
-/// A recipe pushed onto the Recipes stack. Identity is per push, not per recipe.
-@available(iOS 26.0, *)
-struct RecipeRoute: Hashable, Identifiable {
-    let id = UUID()
-    let recipeId: String
-    let title: String
-}
-
 /// Navigation state shared between SwiftUI and the Kotlin studio session.
 @available(iOS 26.0, *)
 @Observable
@@ -29,7 +21,6 @@ final class StudioNavigation {
     enum Tab: String, Hashable { case agent = "Agent", recipes = "Recipes", inspect = "Inspect" }
 
     var selectedTab: Tab = .agent
-    var recipePath: [RecipeRoute] = []
 
     /// One browser session for every tab; Compose screens are created from it.
     @ObservationIgnored private(set) var studio: NativeStudio!
@@ -38,9 +29,6 @@ final class StudioNavigation {
         studio = NativeStudio(
             onSelectTab: { [weak self] tab in
                 self?.selectedTab = Tab(rawValue: tab) ?? .agent
-            },
-            onOpenRecipe: { [weak self] id, title in
-                self?.recipePath.append(RecipeRoute(recipeId: id, title: title))
             }
         )
     }
@@ -68,16 +56,8 @@ struct LiquidGlassStudio: View {
                 NavigationStack { navigation.tabRoot(.agent) }
             }
             Tab("Recipes", systemImage: "book.pages", value: StudioNavigation.Tab.recipes) {
-                NavigationStack(path: $navigation.recipePath) {
-                    navigation.tabRoot(.recipes)
-                        .navigationDestination(for: RecipeRoute.self) { route in
-                            ComposeScreen { navigation.studio.recipeViewController(id: route.recipeId) }
-                                .ignoresSafeArea()
-                                .navigationTitle(route.title)
-                                .toolbarTitleDisplayMode(.inline)
-                                .onAppear { navigation.studio.screenDidAppear(key: "recipe:\(route.recipeId)") }
-                        }
-                }
+                // Recipes open inside the Compose panel, so no screen is pushed and the page stays put.
+                NavigationStack { navigation.tabRoot(.recipes) }
             }
             Tab("Inspect", systemImage: "magnifyingglass", value: StudioNavigation.Tab.inspect) {
                 NavigationStack { navigation.tabRoot(.inspect) }

@@ -2,16 +2,22 @@ package com.bernaferrari.kmpwright.example
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -27,12 +33,14 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ManageSearch
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.automirrored.filled.ManageSearch
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,6 +60,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -61,8 +70,15 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.bernaferrari.kmpwright.core.Browser
 import com.bernaferrari.kmpwright.core.PlatformContext
@@ -80,7 +96,6 @@ enum class Destination(val label: String, val icon: ImageVector) {
  */
 class NativeNavigation(
     val selectDestination: (Destination) -> Unit,
-    val openRecipe: (Recipe) -> Unit,
 )
 
 internal val LocalNativeNavigation = staticCompositionLocalOf<NativeNavigation?> { null }
@@ -90,6 +105,21 @@ internal val LocalWebViewActive = compositionLocalOf { true }
 
 /** Lets panels ask the phone layout's sheet to open (e.g. when the composer gets focus). */
 internal val LocalExpandPanel = staticCompositionLocalOf<() -> Unit> { {} }
+
+/** Set where a panel runs edge to edge (iOS, under the tab bar): its top gap and the bars' bottom inset. */
+internal val LocalPanelInsets = staticCompositionLocalOf<PaddingValues?> { null }
+
+/** A panel's scroll padding. Edge to edge, the top gap scrolls with the content and the bottom clears the bars. */
+@Composable
+internal fun panelPadding(bottom: Dp): PaddingValues {
+    val insets = LocalPanelInsets.current
+    return PaddingValues(
+        start = 16.dp,
+        end = 16.dp,
+        top = insets?.calculateTopPadding() ?: 0.dp,
+        bottom = insets?.calculateBottomPadding() ?: bottom,
+    )
+}
 
 /** The shared KMPwright sample: a browser you can drive like an agent. */
 @Composable
@@ -322,32 +352,74 @@ internal fun NativeHostedStudio(
     onRefLongPress: () -> Unit,
     panel: @Composable (Modifier) -> Unit,
 ) {
-    BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer)) {
-        val longPress = refLongPress(state, onRefLongPress)
-        if (maxWidth >= 840.dp) {
-            Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(vertical = 8.dp)) {
-                Surface(
-                    modifier = Modifier.width(420.dp).fillMaxHeight().padding(horizontal = 8.dp),
-                    shape = MaterialTheme.shapes.extraLarge,
-                    color = MaterialTheme.colorScheme.surface,
-                ) { Column(Modifier.padding(top = 16.dp)) { ActivityBanner(state, Modifier.padding(horizontal = 16.dp)); panel(Modifier.weight(1f)) } }
-                BrowserPane(state, platformContext, longPress, Modifier.weight(1f).fillMaxHeight())
-            }
-        } else {
-            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-                BrowserPane(state, platformContext, longPress, Modifier.fillMaxWidth().weight(0.55f))
-                Surface(
-                    modifier = Modifier.fillMaxWidth().weight(0.45f).padding(top = 8.dp),
-                    shape = MaterialTheme.shapes.extraLarge,
-                    color = MaterialTheme.colorScheme.surface,
+    // A Surface rather than a background, so icons outside other surfaces get the theme's content colour.
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainer) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val longPress = refLongPress(state, onRefLongPress)
+            if (maxWidth >= 840.dp) {
+                Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(vertical = 8.dp)) {
+                    Surface(
+                        modifier = Modifier.width(420.dp).fillMaxHeight().padding(horizontal = 8.dp),
+                        shape = MaterialTheme.shapes.extraLarge,
+                        color = MaterialTheme.colorScheme.surface,
+                    ) { Column(Modifier.padding(top = 16.dp)) { ActivityBanner(state, Modifier.padding(horizontal = 16.dp)); panel(Modifier.weight(1f)) } }
+                    BrowserPane(state, platformContext, longPress, Modifier.weight(1f).fillMaxHeight())
+                }
+            } else {
+                // Edge to edge: the panel runs under the tab bar and scrolls its content clear of it.
+                val bottomInset = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom).asPaddingValues().calculateBottomPadding()
+                var height by remember { mutableIntStateOf(1) }
+                Column(
+                    Modifier.fillMaxSize()
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                        .onSizeChanged { height = it.height.coerceAtLeast(1) }
                 ) {
-                    Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.Top) {
-                        ActivityBanner(state, Modifier.padding(horizontal = 16.dp))
-                        panel(Modifier.weight(1f))
+                    BrowserPane(state, platformContext, longPress, Modifier.fillMaxWidth().weight(state.pageSplit))
+                    SplitGrabber(onDrag = { delta -> state.pageSplit = (state.pageSplit + delta / height).coerceIn(0.2f, 0.8f) })
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().weight(1f - state.pageSplit),
+                        shape = MaterialTheme.shapes.extraLarge.copy(bottomStart = CornerSize(0.dp), bottomEnd = CornerSize(0.dp)),
+                        color = MaterialTheme.colorScheme.surface,
+                    ) {
+                        CompositionLocalProvider(LocalPanelInsets provides PaddingValues(top = 16.dp, bottom = bottomInset)) {
+                            Column(verticalArrangement = Arrangement.Top) {
+                                ActivityBanner(state, Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp))
+                                panel(Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/** A split-screen divider: drag the pill to give the page or the panel more room. It perks up while held. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun SplitGrabber(onDrag: (Float) -> Unit) {
+    val haptics = LocalHapticFeedback.current
+    var held by remember { mutableStateOf(false) }
+    val spatial = MaterialTheme.motionScheme.fastSpatialSpec<Dp>()
+    val width by animateDpAsState(if (held) 56.dp else 36.dp, spatial)
+    val thickness by animateDpAsState(if (held) 6.dp else 4.dp, spatial)
+    val color by animateColorAsState(
+        if (held) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        MaterialTheme.motionScheme.fastEffectsSpec(),
+    )
+    Box(
+        Modifier.fillMaxWidth().height(20.dp)
+            .draggable(
+                rememberDraggableState(onDrag),
+                Orientation.Vertical,
+                startDragImmediately = true,
+                onDragStarted = { held = true; haptics.performHapticFeedback(HapticFeedbackType.SegmentTick) },
+                onDragStopped = { held = false },
+            )
+            .semantics { contentDescription = "Resize page and panel" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(width = width, height = thickness).clip(CircleShape).background(color))
     }
 }
 
