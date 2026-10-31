@@ -1,5 +1,5 @@
 <h1 align="center">
-  <a href="https://kmpwright.vercel.app"><img src="docs/assets/readme/header.jpg" width="100%" alt="KMPwright: one Kotlin workflow, the same finished sign-up form on an iPad and an iPhone"></a>
+  <a href="https://kmpwright.vercel.app"><img src="docs/assets/readme/header.jpg" width="100%" alt="KMPwright: one Kotlin workflow, the same finished sign-up form on an Android phone, an iPad and an iPhone"></a>
 </h1>
 
 <p align="center"><b>Browser automation for Kotlin Multiplatform.</b><br>

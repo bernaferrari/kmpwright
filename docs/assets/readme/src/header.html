@@ -9,52 +9,43 @@
   body {
     font-family: "Geist", system-ui, sans-serif; color: #1b1530; position: relative;
     background:
-      radial-gradient(1100px 800px at 75% 45%, rgba(127, 82, 255, 0.20), transparent 70%),
-      radial-gradient(800px 600px at 0% 0%, rgba(200, 17, 226, 0.07), transparent 70%),
+      radial-gradient(1400px 700px at 50% 100%, rgba(127, 82, 255, 0.22), transparent 70%),
+      radial-gradient(900px 500px at 50% 0%, rgba(200, 17, 226, 0.06), transparent 70%),
       #fbf9ff;
   }
 
-  .copy { position: absolute; left: 130px; top: 0; bottom: 0; width: 800px; display: flex; flex-direction: column; justify-content: center; }
-  .brand { display: flex; align-items: center; gap: 28px; }
-  .brand img { width: 124px; height: 124px; border-radius: 30px; box-shadow: 0 12px 32px rgba(80, 40, 160, 0.20), 0 0 0 1.5px rgba(127, 82, 255, 0.12); }
-  .word { font-size: 118px; line-height: 1; letter-spacing: -0.045em; }
+  .top { position: absolute; top: 74px; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; }
+  .brand { display: flex; align-items: center; gap: 26px; }
+  .brand img { width: 108px; height: 108px; border-radius: 26px; box-shadow: 0 10px 28px rgba(80, 40, 160, 0.18), 0 0 0 1.5px rgba(127, 82, 255, 0.12); }
+  .word { font-size: 104px; line-height: 1; letter-spacing: -0.045em; }
   .word b { font-weight: 700; }
   .word span { font-weight: 380; }
-  .tag { margin-top: 52px; font-size: 48px; line-height: 1.18; font-weight: 600; letter-spacing: -0.03em; }
-  .tag span { color: #6b6382; font-weight: 450; }
-  .chips { margin-top: 48px; display: flex; gap: 14px; }
-  .chip {
-    display: flex; align-items: center; gap: 12px; padding: 14px 26px; border-radius: 999px;
-    background: rgba(255,255,255,0.75); border: 1.5px solid rgba(60, 30, 120, 0.10);
-    font-size: 28px; font-weight: 500; color: #3b3352;
-  }
-  .chip i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .tag { margin-top: 30px; font-size: 44px; font-weight: 450; letter-spacing: -0.02em; color: #6b6382; }
+  .tag b { font-weight: 600; color: #1b1530; }
 
-  /* Frames are sized from each screen's real ratio: iPad Pro 11" 2420 x 1668, iPhone 18 Pro 1206 x 2622. */
+  /* Frames follow each screen's real ratio: Galaxy S25 1080 x 2340, iPad Pro 11" 2420 x 1668, iPhone 18 Pro 1206 x 2622. */
   .device {
     position: absolute; background: linear-gradient(160deg, #ffffff, #ece8f4);
-    box-shadow: 0 0 0 1.5px rgba(60, 30, 120, 0.12), 0 40px 100px rgba(60, 30, 120, 0.18), 0 8px 24px rgba(60, 30, 120, 0.08);
+    box-shadow: 0 0 0 1.5px rgba(60, 30, 120, 0.12), 0 40px 100px rgba(60, 30, 120, 0.20), 0 8px 24px rgba(60, 30, 120, 0.08);
   }
-  .device img { display: block; width: 100%; height: 100%; box-shadow: 0 0 0 1px rgba(60, 30, 120, 0.10); }
-  .ipad { left: 1060px; top: 165px; padding: 12px; border-radius: 48px; }
-  .ipad img { width: 1250px; height: 862px; border-radius: 36px; }
-  .iphone { left: 930px; top: 330px; padding: 9px; border-radius: 69px; box-shadow: 0 0 0 1.5px rgba(60, 30, 120, 0.12), 0 40px 90px rgba(60, 30, 120, 0.28), 0 8px 24px rgba(60, 30, 120, 0.10); }
-  .iphone img { width: 404px; height: 878px; border-radius: 60px; }
+  .device img { display: block; box-shadow: 0 0 0 1px rgba(60, 30, 120, 0.10); }
+  .android { left: 190px; top: 380px; padding: 9px; border-radius: 50px; }
+  .android img { width: 430px; height: 932px; border-radius: 41px; }
+  .ipad { left: 680px; top: 360px; padding: 12px; border-radius: 46px; }
+  .ipad img { width: 1040px; height: 717px; border-radius: 34px; }
+  .iphone { left: 1770px; top: 380px; padding: 9px; border-radius: 70px; }
+  .iphone img { width: 430px; height: 935px; border-radius: 61px; }
 </style>
 <body>
-  <div class="copy">
+  <div class="top">
     <div class="brand">
       <img src="../../../brand/icon.png" alt="">
       <div class="word"><b>KMP</b><span>wright</span></div>
     </div>
-    <div class="tag">One Kotlin workflow.<br><span>The same result on every platform.</span></div>
-    <div class="chips">
-      <div class="chip"><i style="background:#7F52FF"></i>Android</div>
-      <div class="chip"><i style="background:#C811E2"></i>iOS</div>
-      <div class="chip"><i style="background:#FF7A45"></i>JVM</div>
-    </div>
+    <div class="tag">One Kotlin workflow. <b>The same result on Android, iOS and the JVM.</b></div>
   </div>
 
+  <div class="device android"><img src="android.png" alt=""></div>
   <div class="device ipad"><img src="ipad.png" alt=""></div>
   <div class="device iphone"><img src="ios.png" alt=""></div>
 </body>
