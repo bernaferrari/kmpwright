@@ -11,6 +11,8 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
@@ -41,7 +43,6 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
-import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -73,6 +74,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
@@ -264,7 +267,7 @@ private fun PhoneStudio(
             sheetPeekHeight = peek,
             sheetContainerColor = MaterialTheme.colorScheme.surface,
             sheetShadowElevation = 12.dp,
-            sheetDragHandle = { BottomSheetDefaults.DragHandle(height = 4.dp) },
+            sheetDragHandle = { Grabber() },
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
             sheetContent = {
                 Column(Modifier.fillMaxHeight(0.92f).windowInsetsPadding(WindowInsets.navigationBars)) {
@@ -287,7 +290,8 @@ private fun PhoneStudio(
                 state,
                 platformContext,
                 refLongPress(state) { onDestination(Destination.Agent); expand() },
-                Modifier
+                sideInset = 0.dp,
+                modifier = Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
                     // Keep the whole page visible above the collapsed sheet.
@@ -374,16 +378,16 @@ internal fun NativeHostedStudio(
                         .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
                         .onSizeChanged { height = it.height.coerceAtLeast(1) }
                 ) {
-                    BrowserPane(state, platformContext, longPress, Modifier.fillMaxWidth().weight(state.pageSplit))
-                    SplitGrabber(onDrag = { delta -> state.pageSplit = (state.pageSplit + delta / height).coerceIn(0.2f, 0.8f) })
+                    BrowserPane(state, platformContext, longPress, Modifier.fillMaxWidth().weight(state.pageSplit), sideInset = 0.dp)
                     Surface(
-                        modifier = Modifier.fillMaxWidth().weight(1f - state.pageSplit),
+                        modifier = Modifier.fillMaxWidth().weight(1f - state.pageSplit).padding(top = 8.dp),
                         shape = MaterialTheme.shapes.extraLarge.copy(bottomStart = CornerSize(0.dp), bottomEnd = CornerSize(0.dp)),
                         color = MaterialTheme.colorScheme.surface,
                     ) {
-                        CompositionLocalProvider(LocalPanelInsets provides PaddingValues(top = 16.dp, bottom = bottomInset)) {
+                        CompositionLocalProvider(LocalPanelInsets provides PaddingValues(top = 0.dp, bottom = bottomInset)) {
                             Column(verticalArrangement = Arrangement.Top) {
-                                ActivityBanner(state, Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp))
+                                Grabber(onDrag = { delta -> state.pageSplit = (state.pageSplit + delta / height).coerceIn(0.2f, 0.8f) })
+                                ActivityBanner(state, Modifier.padding(horizontal = 16.dp))
                                 panel(Modifier.weight(1f))
                             }
                         }
@@ -394,10 +398,14 @@ internal fun NativeHostedStudio(
     }
 }
 
-/** A split-screen divider: drag the pill to give the page or the panel more room. It perks up while held. */
+/**
+ * The panel's handle, the same on Android (the sheet's drag handle) and iOS (the split divider).
+ * The pill widens and turns primary while pressed. [onDrag] is set where the grabber itself
+ * resizes something; the Android sheet handles its own drag.
+ */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun SplitGrabber(onDrag: (Float) -> Unit) {
+internal fun Grabber(modifier: Modifier = Modifier, onDrag: ((Float) -> Unit)? = null) {
     val haptics = LocalHapticFeedback.current
     var held by remember { mutableStateOf(false) }
     val spatial = MaterialTheme.motionScheme.fastSpatialSpec<Dp>()
@@ -408,13 +416,22 @@ private fun SplitGrabber(onDrag: (Float) -> Unit) {
         MaterialTheme.motionScheme.fastEffectsSpec(),
     )
     Box(
-        Modifier.fillMaxWidth().height(20.dp)
-            .draggable(
-                rememberDraggableState(onDrag),
-                Orientation.Vertical,
-                startDragImmediately = true,
-                onDragStarted = { held = true; haptics.performHapticFeedback(HapticFeedbackType.SegmentTick) },
-                onDragStopped = { held = false },
+        modifier.fillMaxWidth().height(GRABBER_HEIGHT)
+            // Watch presses on the initial pass without consuming them, so a parent sheet still drags.
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    held = true
+                    haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                    } while (event.changes.any { it.pressed })
+                    held = false
+                }
+            }
+            .then(
+                if (onDrag == null) Modifier
+                else Modifier.draggable(rememberDraggableState(onDrag), Orientation.Vertical, startDragImmediately = true)
             )
             .semantics { contentDescription = "Resize page and panel" },
         contentAlignment = Alignment.Center,
@@ -422,6 +439,8 @@ private fun SplitGrabber(onDrag: (Float) -> Unit) {
         Box(Modifier.size(width = width, height = thickness).clip(CircleShape).background(color))
     }
 }
+
+private val GRABBER_HEIGHT = 32.dp
 
 /** Switcher (≈48dp) + composer and suggestions (≈118dp) + handle and spacing. */
 private val PEEK_HEIGHT = 220.dp

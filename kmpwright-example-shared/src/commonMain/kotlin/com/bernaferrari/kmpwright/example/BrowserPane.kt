@@ -68,6 +68,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bernaferrari.kmpwright.core.PlatformContext
@@ -80,13 +81,15 @@ internal fun BrowserPane(
     platformContext: PlatformContext,
     onRefLongPress: (RefBadge) -> Unit,
     modifier: Modifier = Modifier,
+    /** 0 on phones, where the page spans the width like the panel below it. */
+    sideInset: Dp = 8.dp,
 ) {
     Column(modifier) {
         AddressBar(state, Modifier.padding(start = 4.dp, end = 8.dp, top = 4.dp, bottom = 8.dp))
         Box(
             Modifier
                 .fillMaxSize()
-                .padding(horizontal = 8.dp)
+                .padding(horizontal = sideInset)
                 .clip(MaterialTheme.shapes.extraLarge)
                 .background(MaterialTheme.colorScheme.surfaceContainerLowest)
         ) {
