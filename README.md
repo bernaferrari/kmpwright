@@ -40,6 +40,11 @@ kotlin {
 Requires `mavenCentral()`. For the Android Compose wrapper, add
 `io.github.bernaferrari:kmpwright-compose:0.0.2` to `androidMain`.
 
+The next release, 0.0.3, is built with stable Kotlin 2.4.21. Its Android and iOS WebView
+backends support a bounded `Page.screenshotDocument(maxPixels = …)`.
+Android screenshots draw the WebView only, so app overlays are excluded. Video and other
+hardware-only layers may be absent.
+
 ## Write it once
 
 Fill a form, click its button and check the result:

@@ -1,6 +1,8 @@
 package com.bernaferrari.kmpwright.core
 
 internal interface ScreenshotController {
+    val supportsDocumentLimits: Boolean get() = false
+
     /** Backends override this when they support encoding/background options. */
     suspend fun capture(options: ScreenshotOptions): ScreenshotResult {
         require(options.scale.isFinite() && options.scale > 0) { "Screenshot scale must be positive" }

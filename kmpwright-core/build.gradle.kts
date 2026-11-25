@@ -187,6 +187,7 @@ kotlin {
         val commonTest = getByName("commonTest") {
             dependencies {
                 implementation(kotlin("test"))
+                implementation(libs.kotlinx.coroutines.test)
                 api(libs.kotlinx.coroutines.core)
             }
         }
@@ -201,7 +202,6 @@ kotlin {
         val jvmTest = getByName("jvmTest") {
             dependencies {
                 implementation(libs.junit)
-                implementation(libs.kotlinx.coroutines.test)
                 // AgentBrowserCompatibilityTest resolves manifest API refs by their Kotlin member names.
                 implementation(kotlin("reflect"))
             }

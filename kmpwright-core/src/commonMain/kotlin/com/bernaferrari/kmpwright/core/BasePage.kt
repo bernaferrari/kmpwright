@@ -661,25 +661,22 @@ internal abstract class BasePage protected constructor(
         annotate: Boolean,
         timeoutMs: Long?
     ): ScreenshotResult {
-        val options = ScreenshotOptions(fullPage, clip, omitBackground, quality, format, scale, annotate, timeoutMs)
-        checkPolicy(ActionType.Screenshot, currentPageUrl())
-        if (options.annotate) return annotatedScreenshot(options)
-        return captureScreenshot(options)
+        return screenshotWithOptions(ScreenshotOptions(fullPage, clip, omitBackground, quality, format, scale, annotate, timeoutMs))
     }
 
-    private suspend fun captureScreenshot(options: ScreenshotOptions): ScreenshotResult {
+    internal suspend fun screenshotWithOptions(options: ScreenshotOptions, boundedDocument: Boolean = false): ScreenshotResult {
+        checkPolicy(ActionType.Screenshot, currentPageUrl())
         val screenshotController = createScreenshotController()
-        val timeout = config.defaultTimeout(options.timeoutMs)
-        return try {
-            awaitPageOperation(closeSignal) {
-                withKmpwrightTimeout(timeout, { "Screenshot timed out after ${timeout}ms" }) { screenshotController.capture(options) }
-            }
-        } catch (e: KmpwrightException) {
-            throw e
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            throw KmpwrightException("Screenshot failed: ${e.message}", e)
+        if (boundedDocument && !screenshotController.supportsDocumentLimits) {
+            throw KmpwrightUnsupportedException("Bounded document screenshots require an Android or iOS WebView")
+        }
+        val capture: suspend (ScreenshotOptions) -> ScreenshotResult = {
+            capturePageScreenshot(screenshotController, closeSignal, config.defaultTimeout(it.timeoutMs), it)
+        }
+        return if (options.annotate) {
+            captureAnnotatedScreenshot(options, { snapshot() }, ::runWithRuntime, { evalString(it) }, capture)
+        } else {
+            capture(options)
         }
     }
 
@@ -1334,63 +1331,6 @@ internal abstract class BasePage protected constructor(
     }
 
     /** `screenshot(annotate = true)`: labels every snapshot ref on the image (agent-browser `screenshot --annotate`). */
-    private suspend fun annotatedScreenshot(options: ScreenshotOptions): ScreenshotResult {
-        val snapshot = snapshot()
-        val entries = snapshot.refs.values.toList()
-        val refs = kotlinx.serialization.json.buildJsonArray { entries.forEach { add(JsonPrimitive(it.ref)) } }
-        val boxes = runWithRuntime("""
-            var refs = $refs, labels = [];
-            for (var i = 0; i < refs.length; i++) {
-                var el = H.refElement(refs[i]);
-                if (!el) continue;
-                var r = el.getBoundingClientRect();
-                if (!(r.width > 0 && r.height > 0)) continue;
-                // Elements inside same-origin iframes: shift by each frame's content box.
-                var dx = 0, dy = 0, frame = el.ownerDocument && el.ownerDocument.defaultView && el.ownerDocument.defaultView.frameElement;
-                while (frame) {
-                    var fr = frame.getBoundingClientRect();
-                    dx += fr.left + frame.clientLeft; dy += fr.top + frame.clientTop;
-                    frame = frame.ownerDocument && frame.ownerDocument.defaultView && frame.ownerDocument.defaultView.frameElement;
-                }
-                r = {left: r.left + dx, top: r.top + dy, width: r.width, height: r.height};
-                var lbl = document.createElement('div');
-                // Label [N] stands for ref @eN, like agent-browser.
-                lbl.textContent = refs[i].slice(2);
-                lbl.setAttribute('data-ww-anno', 'true');
-                lbl.style.cssText = 'position:absolute;top:' + (r.top + window.scrollY) + 'px;left:' + (r.left + window.scrollX) + 'px;background:rgba(255,0,0,0.8);color:white;padding:2px 4px;font-size:12px;font-weight:bold;z-index:2147483647;pointer-events:none;border-radius:2px;';
-                (document.body || document.documentElement).appendChild(lbl);
-                labels.push({i: i, x: r.left, y: r.top, w: r.width, h: r.height});
-            }
-            return JSON.stringify(labels);
-        """.trimIndent())
-        val bboxes = try {
-            Json.decodeFromString<List<Map<String, Double>>>(PageHelpers.valueAsString(boxes) ?: "[]")
-        } catch (e: Exception) {
-            throw KmpwrightException("Could not decode annotation boxes", e)
-        }
-
-        val screenshotResult = try {
-            captureScreenshot(options.copy(annotate = false))
-        } finally {
-            withContext(NonCancellable) {
-                runCatching { evalString("(function() { document.querySelectorAll('[data-ww-anno]').forEach(function(el) { el.remove(); }); })()") }
-            }
-        }
-
-        val annotations = bboxes.mapNotNull { bbox ->
-            val idx = bbox["i"]?.toInt() ?: return@mapNotNull null
-            val entry = entries.getOrNull(idx) ?: return@mapNotNull null
-            idx to Annotation(
-                ref = entry.ref,
-                role = entry.role,
-                name = entry.name,
-                box = Rectangle(bbox["x"] ?: 0.0, bbox["y"] ?: 0.0, bbox["w"] ?: 0.0, bbox["h"] ?: 0.0)
-            )
-        }.sortedBy { it.first }.map { it.second }
-
-        return screenshotResult.copy(annotations = annotations)
-    }
-
     // Frame locator
     override fun frameLocator(selector: String): FrameLocator {
         return BaseFrameLocator(controller, selector, config).also {

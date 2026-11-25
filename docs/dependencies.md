@@ -50,6 +50,13 @@ Central, so the obsolete JetBrains Space development repository is removed.
 
 ## Toolchain compatibility
 
+Maven publications use Kotlin 2.4.21 and AGP 9.4.1. The Kotlin pin is the oldest
+supported stable compiler for the current release line. Kotlin/Native consumers
+need a compiler that can read the published KLIB metadata. When changing the
+Kotlin baseline, update the independent consumer fixtures and verify the staged
+Maven artifacts on Android and iOS before publishing.
+
+
 JDK 17 and Android SDK 37 remain the project baselines. They are supported by
 [AGP 9.4](https://developer.android.com/build/releases/agp-9-4-0-release-notes).
 iOS targets are arm64 device and arm64 simulator; Intel simulator support was

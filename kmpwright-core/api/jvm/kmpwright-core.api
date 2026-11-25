@@ -739,6 +739,11 @@ public final class com/bernaferrari/kmpwright/core/DimensionMismatch$Companion {
 	public final fun serializer ()Lkotlinx/serialization/KSerializer;
 }
 
+public final class com/bernaferrari/kmpwright/core/DocumentScreenshotKt {
+	public static final fun screenshotDocument (Lcom/bernaferrari/kmpwright/core/Page;JZZLcom/bernaferrari/kmpwright/core/ScreenshotFormat;IDLjava/lang/Long;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun screenshotDocument$default (Lcom/bernaferrari/kmpwright/core/Page;JZZLcom/bernaferrari/kmpwright/core/ScreenshotFormat;IDLjava/lang/Long;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
 public final class com/bernaferrari/kmpwright/core/Download {
 	public final fun getSuggestedFilename ()Ljava/lang/String;
 	public final fun getUrl ()Ljava/lang/String;
@@ -957,6 +962,7 @@ public final class com/bernaferrari/kmpwright/core/KmpwrightAssertionError : jav
 }
 
 public final class com/bernaferrari/kmpwright/core/KmpwrightConfig {
+	public static final field Companion Lcom/bernaferrari/kmpwright/core/KmpwrightConfig$Companion;
 	public fun <init> ()V
 	public fun <init> (Ljava/util/Set;Lcom/bernaferrari/kmpwright/core/InstallMode;Lcom/bernaferrari/kmpwright/core/InputMode;Lcom/bernaferrari/kmpwright/core/TimeoutConfig;Lcom/bernaferrari/kmpwright/core/DebugConfig;ZZZZZLcom/bernaferrari/kmpwright/core/Viewport;Ljava/lang/String;Lcom/bernaferrari/kmpwright/core/IosSchemeInterceptionConfig;Lcom/bernaferrari/kmpwright/core/CdpConfig;)V
 	public synthetic fun <init> (Ljava/util/Set;Lcom/bernaferrari/kmpwright/core/InstallMode;Lcom/bernaferrari/kmpwright/core/InputMode;Lcom/bernaferrari/kmpwright/core/TimeoutConfig;Lcom/bernaferrari/kmpwright/core/DebugConfig;ZZZZZLcom/bernaferrari/kmpwright/core/Viewport;Ljava/lang/String;Lcom/bernaferrari/kmpwright/core/IosSchemeInterceptionConfig;Lcom/bernaferrari/kmpwright/core/CdpConfig;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -993,6 +999,10 @@ public final class com/bernaferrari/kmpwright/core/KmpwrightConfig {
 	public final fun getViewport ()Lcom/bernaferrari/kmpwright/core/Viewport;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/bernaferrari/kmpwright/core/KmpwrightConfig$Companion {
+	public final fun untrustedPage ()Lcom/bernaferrari/kmpwright/core/KmpwrightConfig;
 }
 
 public class com/bernaferrari/kmpwright/core/KmpwrightException : java/lang/Exception {

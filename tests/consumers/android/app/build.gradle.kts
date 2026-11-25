@@ -2,7 +2,7 @@ plugins {
     id("com.android.application")
 }
 
-val kmpwrightVersion = providers.gradleProperty("kmpwrightVersion").orElse("0.0.1")
+val kmpwrightVersion = providers.gradleProperty("kmpwrightVersion")
 
 android {
     namespace = "io.github.bernaferrari.kmpwright.smoke"

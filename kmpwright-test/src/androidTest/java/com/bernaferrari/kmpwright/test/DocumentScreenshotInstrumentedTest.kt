@@ -114,9 +114,38 @@ class DocumentScreenshotInstrumentedTest {
         delay(200)
         assertGreenFooter(page.screenshot())
         (view.parent as android.view.ViewGroup).removeView(view)
-        // PixelCopy cannot read a detached view; this exercises the software fallback.
+        // Detached capture must use the same WebView pixels as attached capture.
         assertGreenFooter(page.screenshot())
     }
+    @Test fun appOverlaysNeverAppearInScreenshots() = runBlocking(Dispatchers.Main) {
+        page.setContent("<meta name=viewport content='width=device-width'><body style='margin:0;background:lime'></body>")
+        val parent = view.parent as android.widget.FrameLayout
+        val overlay = android.view.View(view.context).apply { setBackgroundColor(Color.MAGENTA) }
+        parent.addView(overlay, android.widget.FrameLayout.LayoutParams(-1, -1))
+        try {
+            assertGreenFooter(page.screenshot())
+        } finally {
+            parent.removeView(overlay)
+        }
+    }
+
+    @Test fun singleRowDoesNotRunAdditionalTileCallback() = runBlocking(Dispatchers.Main) {
+        page.setContent("<meta name=viewport content='width=device-width'><body style='margin:0;background:lime'></body>")
+        val shot = captureWebViewDocument(view, Rectangle(0.0, 0.0, 100.0, 100.0)) {
+            error("A single tile needs no callback")
+        }
+        assertGreenFooter(shot)
+    }
+
+    @Test fun pageFullPageScreenshotUsesTheDocumentBudget() = runBlocking(Dispatchers.Main) {
+        page.setContent("<meta name=viewport content='width=device-width'><body style='margin:0'><div style='height:5000px;background:lime'></div></body>")
+        val budget = view.width.toLong() * 600
+        val shot = page.screenshotDocument(budget, truncateFullPage = true, viewportWidthOnly = true)
+        assertTrue(shot.truncated)
+        assertTrue(shot.width.toLong() * shot.height <= budget)
+        assertGreenFooter(shot)
+    }
+
     @Test fun boundedDocumentCaptureReportsItsTruncation() = runBlocking(Dispatchers.Main) {
         page.setContent("<meta name=viewport content='width=device-width,initial-scale=1'><body style='margin:0'><div style='height:18000px;background:blue'></div></body>")
         val shot = captureWebViewDocument(view, pixelsPerCssPixel = 2.0, maxPixels = 7_000_000, maxHeight = 10_000, truncateFullPage = true, viewportWidthOnly = true)

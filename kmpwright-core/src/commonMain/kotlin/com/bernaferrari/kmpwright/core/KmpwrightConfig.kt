@@ -28,7 +28,20 @@ public data class KmpwrightConfig(
     val userAgent: String? = null,
     val iosSchemeInterception: IosSchemeInterceptionConfig? = null,
     val cdp: CdpConfig? = null
-)
+) {
+    public companion object {
+        /**
+         * For automation of pages you do not control. Disables user evaluation, content extraction,
+         * trace export and debug mode. The page can still run its own scripts inside the browser.
+         */
+        public fun untrustedPage(): KmpwrightConfig = KmpwrightConfig(
+            productionMode = true,
+            allowEval = false,
+            allowDomExtraction = false,
+            enableTraceExport = false
+        )
+    }
+}
 
 /**
  * CDP (Chrome DevTools Protocol) connection configuration.
@@ -134,7 +147,9 @@ public enum class InputMode {
  * [Page.onDialog] handler that does not answer in time dismisses the dialog, and a [Page.route]
  * handler that does not decide in time aborts the request with `timedout`. Playwright has no such
  * bound; KMPwright keeps one because a stuck handler would otherwise freeze the page (and, on
- * Android, a WebView network thread).
+ * Android, a WebView network thread). Each pending Android route holds a Chromium request
+ * thread, so keep handlers short, avoid waiting on other page requests from a handler, and choose
+ * a tighter [handler] timeout when intercepting many subresources.
  */
 public data class TimeoutConfig @Throws(IllegalArgumentException::class) public constructor(
     val default: Long = 30_000,

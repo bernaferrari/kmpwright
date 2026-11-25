@@ -1,5 +1,8 @@
 package com.bernaferrari.kmpwright.core
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -7,6 +10,35 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DocumentScreenshotTest {
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun scrollRestorationIsBoundedAndKeepsTheCaptureFailure() = runTest {
+        val failure = KmpwrightException("capture failed")
+        val thrown = assertFailsWith<KmpwrightException> {
+            try {
+                throw failure
+            } finally {
+                restoreScreenshotState { awaitCancellation() }
+            }
+        }
+        assertEquals(failure, thrown)
+        assertEquals(2_000L, testScheduler.currentTime)
+        restoreScreenshotState { throw IllegalStateException("renderer closed") }
+    }
+
+    @Test fun untrustedPagePresetDisablesSensitiveBrowserAPIs() {
+        val config = KmpwrightConfig.untrustedPage()
+        assertTrue(config.productionMode)
+        assertFalse(config.allowEval)
+        assertFalse(config.allowDomExtraction)
+        assertFalse(config.enableTraceExport)
+    }
+
+    @Test fun roundingToThePixelBudgetDoesNotReportTruncation() {
+        val plan = planDocumentCapture(DocumentScreenshotOptions(maxPixels = 10_000), 100.0, 100.49)
+        assertEquals(100, plan.height)
+        assertFalse(plan.truncated)
+    }
+
     @Test fun wideCssLayoutsConvertToNativePoints() {
         val rect = cssRectangleToNative(Rectangle(700.0, 100.0, 160.0, 120.0), 1200.0, 390.0)
         assertEquals(227.5, rect.x, 0.0001)

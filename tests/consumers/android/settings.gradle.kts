@@ -9,7 +9,10 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven { url = uri("../../../build/test-repository") }
+        exclusiveContent {
+            forRepository { maven { url = uri("../../../build/test-repository") } }
+            filter { includeGroup("io.github.bernaferrari") }
+        }
         google()
         mavenCentral()
     }

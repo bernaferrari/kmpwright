@@ -110,7 +110,9 @@ class IOSWebKitDocumentTest {
             web.captureEvaluate("window.scrollTo({top:100,behavior:'instant'});0")
             delay(32)
             assertEquals(100.0, web.captureNumber("window.scrollY"), 1.0)
-            val shot = captureWebViewDocument(web, DocumentScreenshotOptions(Rectangle(0.0, 6000.0, 100.0, 1800.0), 2.0, 7_000_000, 10_000))
+            val shot = captureWebViewDocument(web, Rectangle(0.0, 6000.0, 100.0, 1800.0), 2.0, 7_000_000, 10_000) {
+                error("iOS captures a single image")
+            }
             assertEquals(200, shot.width)
             assertEquals(3600, shot.height)
             assertFalse(shot.truncated)

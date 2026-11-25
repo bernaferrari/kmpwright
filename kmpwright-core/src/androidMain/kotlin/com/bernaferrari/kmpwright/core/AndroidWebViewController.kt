@@ -24,22 +24,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import java.io.IOException
-import java.io.InputStream
-import java.net.HttpURLConnection
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -48,8 +41,6 @@ import kotlin.coroutines.resumeWithException
 import kotlin.math.roundToInt
 
 private const val TAG = "Kmpwright"
-private const val ROUTE_CONTINUE_CONNECT_TIMEOUT_MS = 15_000
-private const val ROUTE_CONTINUE_READ_TIMEOUT_MS = 30_000
 
 /** Observable WebView state, updated on the main thread from WebView client callbacks. */
 public data class AndroidWebViewState(
@@ -99,7 +90,6 @@ internal class AndroidWebViewController(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     /** Route handlers run off the main thread so a busy UI cannot stall network interception. */
-    private val routeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val lock = Any()
     private var navigationCallback: ((NavigationResult) -> Unit)? = null
     @Volatile private var navigationGuard: ((String) -> Boolean)? = null
@@ -116,7 +106,7 @@ internal class AndroidWebViewController(
     /** Main-thread confined. */
     private var requestIdleCheckJob: Job? = null
     private val requestFinishJobs = ConcurrentHashMap<String, Job>()
-    private val routeHandlers = CopyOnWriteArrayList<RouteRegistration>()
+    private val routeInterceptor = AndroidRouteInterceptor(config.timeouts.handler, ::completeRequest, ::failRequest)
     private val observedCookieUrls: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val httpRequestPolicy = MobileHttpRequestPolicy()
     private val initScripts = mutableMapOf<String, androidx.webkit.ScriptHandler>()
@@ -193,13 +183,15 @@ internal class AndroidWebViewController(
         }.getOrNull()
     }
 
-    private class RouteRegistration(val pattern: String, val regex: Regex, val handler: suspend (Route) -> Unit)
-
     private inner class PendingEvaluation(
         private val onResult: (String?) -> Unit,
         private val onFailure: (Throwable) -> Unit
     ) {
         private val done = AtomicBoolean(false)
+        fun cancel() {
+            if (done.compareAndSet(false, true)) pendingEvaluations.remove(this)
+        }
+        fun isPending(): Boolean = !done.get()
         fun complete(value: String?) {
             if (done.compareAndSet(false, true)) { pendingEvaluations.remove(this); onResult(value) }
         }
@@ -555,10 +547,8 @@ internal class AndroidWebViewController(
         val req = Request(url = url, method = request.method, headers = request.requestHeaders.orEmpty().toMap(),
             resourceType = if (request.isForMainFrame) "document" else "other")
         onRequestStartedInternal(req)
-        return abortResponse(req, "blockedbyclient")
+        return routeInterceptor.abortResponse(req, "blockedbyclient")
     }
-
-    // ------------------------------------------------------------- routing
 
     private fun interceptWithRoutes(request: WebResourceRequest): WebResourceResponse? {
         val url = request.url.toString()
@@ -567,159 +557,8 @@ internal class AndroidWebViewController(
         val req = Request(url = url, method = request.method, headers = request.requestHeaders.orEmpty().toMap(),
             resourceType = if (request.isForMainFrame) "document" else "other")
         onRequestStartedInternal(req)
-        return try {
-            when (val routeAction = resolveRouteAction(req)) {
-                is RouteAction.Fulfill -> fulfillResponse(req, routeAction)
-                is RouteAction.Abort -> abortResponse(req, routeAction.errorCode)
-                is RouteAction.Continue -> if (routeAction.hasOverrides()) {
-                    performNetworkRequest(req, routeAction)
-                } else {
-                    passThrough(req, request.isForMainFrame)
-                    null
-                }
-                RouteAction.Fallback -> {
-                    passThrough(req, request.isForMainFrame)
-                    null
-                }
-            }
-        } catch (error: Throwable) {
-            Log.w(TAG, "Route for $url failed; aborting the request", error)
-            abortResponse(req, "failed")
-        }
+        return routeInterceptor.intercept(req) { passThrough(req, request.isForMainFrame) }
     }
-
-    /**
-     * Runs matching handlers newest-first on [routeScope] (Playwright order:
-     * the last registered handler wins and `route.fallback()` falls
-     * back to the next one). The Chromium IO thread waits for a bounded time;
-     * a timed-out or failing handler aborts the request instead of silently
-     * letting it through.
-     */
-    private fun resolveRouteAction(request: Request): RouteAction {
-        val matching = routeHandlers.reversed().filter { it.regex.matches(request.url) }
-        if (matching.isEmpty()) return RouteAction.Fallback
-        val decision = routeScope.async {
-            resolveRoute(request, matching.map { it.handler }).also { action ->
-                if (action is RouteAction.Fulfill) validateFulfillStatus(action.status)
-            }
-        }
-        return try {
-            runBlocking { withTimeout(config.timeouts.handler) { decision.await() } }
-        } catch (_: TimeoutCancellationException) {
-            decision.cancel()
-            Log.w(TAG, "Route handler for ${request.url} did not finish within ${config.timeouts.handler}ms; aborting the request")
-            RouteAction.Abort("timedout")
-        } catch (error: Throwable) {
-            Log.w(TAG, "Route handler for ${request.url} threw; aborting the request", error)
-            RouteAction.Abort("failed")
-        }
-    }
-
-    private fun fulfillResponse(request: Request, action: RouteAction.Fulfill): WebResourceResponse {
-        validateFulfillStatus(action.status)
-        val bodyBytes = action.bytes
-        // No content type (Playwright sends none either): a null MIME type lets Chromium sniff the body.
-        val (mimeType, encoding) = action.contentType?.takeIf { it.isNotBlank() }
-            ?.let(::parseWebResponseContentType) ?: (null to null)
-        val responseHeaders = action.headers
-        val reason = httpReasonPhrase(action.status)
-        // WebView derives Content-Type from mimeType; passing the header too would duplicate it.
-        val webViewHeaders = responseHeaders.filterKeys { !it.equals("content-type", ignoreCase = true) }
-        val response = WebResourceResponse(
-            mimeType, encoding, action.status, reason, webViewHeaders, java.io.ByteArrayInputStream(bodyBytes)
-        )
-        completeRequest(request, Response(url = request.url, status = action.status, statusText = reason, headers = responseHeaders, id = request.id))
-        return response
-    }
-
-    /**
-     * A stream that fails before any byte is produced. WebView probes `available()` before it commits
-     * response headers, so the failure surfaces as a network error (fetch rejects, images/iframes fail)
-     * rather than as a 200 response with a broken body.
-     */
-    private fun abortResponse(request: Request, errorCode: String): WebResourceResponse {
-        failRequest(request, errorCode)
-        return WebResourceResponse("text/plain", "UTF-8", AbortedInputStream(errorCode))
-    }
-
-    private class AbortedInputStream(private val errorCode: String) : InputStream() {
-        override fun available(): Int = throw IOException("Request aborted by Kmpwright: $errorCode")
-        override fun read(): Int = throw IOException("Request aborted by Kmpwright: $errorCode")
-        override fun read(b: ByteArray, off: Int, len: Int): Int = read()
-    }
-
-    private class DisconnectingInputStream(
-        private val source: InputStream,
-        private val connection: HttpURLConnection
-    ) : java.io.FilterInputStream(source) {
-        override fun close() {
-            try { source.close() } finally { connection.disconnect() }
-        }
-    }
-
-    private fun performNetworkRequest(request: Request, action: RouteAction.Continue): WebResourceResponse {
-        val targetUrl = action.url ?: request.url
-        val scheme = Uri.parse(targetUrl).scheme?.lowercase()
-        if (scheme != "http" && scheme != "https") {
-            throw KmpwrightException("Route continue overrides support only http(s) URLs: $targetUrl")
-        }
-        val connection = java.net.URI(targetUrl).toURL().openConnection() as HttpURLConnection
-        try {
-            connection.connectTimeout = ROUTE_CONTINUE_CONNECT_TIMEOUT_MS
-            connection.readTimeout = ROUTE_CONTINUE_READ_TIMEOUT_MS
-            connection.instanceFollowRedirects = true
-            connection.requestMethod = action.method ?: request.method
-            val headers = LinkedHashMap(action.headers ?: request.headers)
-            // A 304 cannot be relayed through WebResourceResponse, and
-            // HttpURLConnection only decodes gzip transparently when it owns
-            // Accept-Encoding.
-            headers.keys.removeAll {
-                it.equals("If-None-Match", true) || it.equals("If-Modified-Since", true) || it.equals("Accept-Encoding", true)
-            }
-            val cookieManager = CookieManager.getInstance()
-            if (headers.keys.none { it.equals("Cookie", ignoreCase = true) }) {
-                cookieManager.getCookie(targetUrl)?.takeIf { it.isNotBlank() }?.let { headers["Cookie"] = it }
-            }
-            headers.forEach { (key, value) -> connection.setRequestProperty(key, value) }
-            action.postData?.let { postData ->
-                connection.doOutput = true
-                connection.outputStream.use { it.write(postData.toByteArray(Charsets.UTF_8)) }
-            }
-            val status = connection.responseCode
-            val responseUrl = connection.url.toString()
-            connection.headerFields.forEach { (key, values) ->
-                if (key != null && key.equals("Set-Cookie", ignoreCase = true)) {
-                    values.forEach { cookieManager.setCookie(responseUrl, it) }
-                }
-            }
-            cookieManager.flush()
-            if (status in 300..399) {
-                throw KmpwrightException("Route continue received an unfollowable redirect ($status) from $responseUrl")
-            }
-            if (status !in 100..599) throw KmpwrightException("Route continue received an invalid HTTP status $status")
-            val statusText = connection.responseMessage?.takeIf { it.isNotBlank() } ?: httpReasonPhrase(status)
-            val responseHeaders = connection.headerFields
-                .filterKeys { it != null && !it.equals("Set-Cookie", ignoreCase = true) }
-                .mapKeys { (key, _) -> key!! }
-                .mapValues { (_, values) -> values.joinToString(", ") }
-            val contentType = connection.contentType ?: responseHeaders.entries
-                .firstOrNull { it.key.equals("Content-Type", ignoreCase = true) }?.value.orEmpty()
-            val (mimeType, encoding) = parseWebResponseContentType(contentType.ifEmpty { "application/octet-stream" })
-            val body = (if (status >= 400) connection.errorStream else connection.inputStream)
-                ?: java.io.ByteArrayInputStream(ByteArray(0))
-            val response = WebResourceResponse(
-                mimeType, encoding, status, statusText, responseHeaders, DisconnectingInputStream(body, connection)
-            )
-            completeRequest(request, Response(url = responseUrl, status = status, statusText = statusText, headers = responseHeaders, id = request.id))
-            return response
-        } catch (error: Throwable) {
-            connection.disconnect()
-            throw error
-        }
-    }
-
-    private fun RouteAction.Continue.hasOverrides(): Boolean =
-        url != null || method != null || headers != null || postData != null
 
     // ------------------------------------------------------- request events
 
@@ -911,16 +750,15 @@ internal class AndroidWebViewController(
     }
 
     override fun addRouteHandler(urlPattern: String, handler: suspend (Route) -> Unit) {
-        routeHandlers.removeAll { it.pattern == urlPattern }
-        routeHandlers.add(RouteRegistration(urlPattern, Regex(urlPattern), handler))
+        routeInterceptor.register(urlPattern, handler)
     }
 
     override fun removeRouteHandler(urlPattern: String) {
-        routeHandlers.removeAll { it.pattern == urlPattern }
+        routeInterceptor.unregister(urlPattern)
     }
 
     override fun removeAllRouteHandlers() {
-        routeHandlers.clear()
+        routeInterceptor.clear()
     }
 
     // --------------------------------------------------------------- cookies
@@ -1277,10 +1115,11 @@ internal class AndroidWebViewController(
         registration.remove()
     }
 
-    private fun evaluate(script: String, onResult: (String?) -> Unit, onFailure: (Throwable) -> Unit) {
-        val pending = PendingEvaluation(onResult, onFailure)
+    private fun evaluate(script: String, pending: PendingEvaluation) {
         pendingEvaluations.add(pending)
+        if (!pending.isPending()) pendingEvaluations.remove(pending)
         runOnMain {
+            if (!pending.isPending()) return@runOnMain
             if (!isUsable()) {
                 pending.fail(unusableError())
                 return@runOnMain
@@ -1294,19 +1133,23 @@ internal class AndroidWebViewController(
     }
 
     override fun evaluateJavaScript(script: String, callback: (String?) -> Unit) =
-        evaluate(script, callback) { callback(null) }
+        evaluate(script, PendingEvaluation(callback) { callback(null) })
 
     override fun injectJavaScript(script: String, callback: ((String?) -> Unit)?) =
-        evaluate(script, { callback?.invoke(it) }) { callback?.invoke(null) }
+        evaluate(script, PendingEvaluation({ callback?.invoke(it) }) { callback?.invoke(null) })
 
     /** Fails (instead of hanging) when the page is closed or its renderer is gone. */
-    override suspend fun evaluateJavaScriptAsync(script: String): String? = suspendCancellableCoroutine { continuation ->
-        evaluate(
-            script,
-            { result -> if (continuation.isActive) continuation.resume(result) },
-            { error -> if (continuation.isActive) continuation.resumeWithException(error) }
-        )
-    }
+    override suspend fun evaluateJavaScriptAsync(script: String): String? =
+        withKmpwrightTimeout(config.timeouts.default, { "Timed out waiting for Android WebView JavaScript" }) {
+            suspendCancellableCoroutine { continuation ->
+                val pending = PendingEvaluation(
+                    { result -> if (continuation.isActive) continuation.resume(result) },
+                    { error -> if (continuation.isActive) continuation.resumeWithException(error) }
+                )
+                continuation.invokeOnCancellation { pending.cancel() }
+                evaluate(script, pending)
+            }
+        }
 
     // ------------------------------------------------------ capture/viewport
 
@@ -1413,8 +1256,7 @@ internal class AndroidWebViewController(
         if (disposed) return
         disposed = true
         diagnosticsListeners.clear()
-        routeHandlers.clear()
-        routeScope.cancel()
+        routeInterceptor.close()
         requestFinishJobs.values.forEach { it.cancel() }
         requestFinishJobs.clear()
         pendingRequests.clear()
@@ -1467,36 +1309,4 @@ internal fun WebView.applyCssViewportSize(width: Int, height: Int) {
         )
         layout(0, 0, widthPx, heightPx)
     }
-}
-
-internal fun validateFulfillStatus(status: Int) {
-    if (status !in 100..599) {
-        throw KmpwrightException("Route fulfill status must be within 100..599, was $status")
-    }
-    if (status in 300..399) {
-        throw KmpwrightException(
-            "Android WebView cannot fulfill a route with redirect status $status. " +
-                "Fulfill the final response or use route.resume(url = ...)."
-        )
-    }
-}
-
-internal fun httpReasonPhrase(status: Int): String = defaultHttpStatusText(status).ifBlank { "Status $status" }
-
-internal fun parseWebResponseContentType(contentType: String): Pair<String, String?> {
-    val parts = contentType.split(";").map { it.trim() }.filter { it.isNotEmpty() }
-    val mimeType = parts.firstOrNull().orEmpty().ifEmpty { "text/plain" }
-    val charset = parts
-        .drop(1)
-        .firstOrNull { it.startsWith("charset=", ignoreCase = true) }
-        ?.substringAfter("=")
-        ?.trim()
-    val encoding = charset ?: when {
-        mimeType.startsWith("text/") -> "UTF-8"
-        mimeType.contains("json", ignoreCase = true) -> "UTF-8"
-        mimeType.contains("xml", ignoreCase = true) -> "UTF-8"
-        mimeType.contains("javascript", ignoreCase = true) -> "UTF-8"
-        else -> null
-    }
-    return mimeType to encoding
 }

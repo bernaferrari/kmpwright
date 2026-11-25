@@ -1,5 +1,8 @@
 package com.bernaferrari.kmpwright.core
 
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 /**
@@ -39,7 +42,7 @@ internal fun planDocumentCapture(options: DocumentScreenshotOptions, documentWid
     val width = scaledWidth.roundToInt()
     val rows = minOf(options.maxHeight.toLong(), options.maxPixels / width).toInt()
     require(rows > 0) { "The selected area is too wide for a screenshot" }
-    val truncated = scaledHeight > rows
+    val truncated = scaledHeight >= rows.toDouble() + 0.5
     if (truncated && (options.clip != null || !options.truncateFullPage)) {
         throw KmpwrightException("The selected area is too large for a screenshot. Choose a smaller part.")
     }
@@ -53,4 +56,48 @@ internal fun cssRectangleToNative(rect: Rectangle, cssViewportWidth: Double, nat
     require(cssViewportWidth.isFinite() && nativeViewportWidth.isFinite() && cssViewportWidth > 0 && nativeViewportWidth > 0)
     val scale = nativeViewportWidth / cssViewportWidth
     return Rectangle(rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale)
+}
+
+/** Restoring a dead renderer must neither delay cancellation indefinitely nor mask a capture failure. */
+internal suspend fun restoreScreenshotState(logFailure: (Exception?) -> Unit = {}, restore: suspend () -> Unit) {
+    withContext(NonCancellable) {
+        try {
+            if (withTimeoutOrNull(2_000) { restore(); true } == null) logFailure(null)
+        } catch (error: Exception) {
+            logFailure(error)
+        }
+    }
+}
+
+/**
+ * Captures a full page in an Android or iOS WebView using a caller-supplied [maxPixels] budget.
+ * Output uses the native page scale multiplied by [scale]. Set [truncateFullPage] to permit an
+ * oversized page to be shortened and inspect [ScreenshotResult.truncated]. [viewportWidthOnly]
+ * captures the visible viewport width of the document. Use [Page.screenshot] on other backends.
+ */
+@Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, kotlin.coroutines.cancellation.CancellationException::class)
+public suspend fun Page.screenshotDocument(
+    maxPixels: Long,
+    truncateFullPage: Boolean = false,
+    viewportWidthOnly: Boolean = false,
+    format: ScreenshotFormat = ScreenshotFormat.Png,
+    quality: Int = 90,
+    scale: Double = 1.0,
+    timeoutMs: Long? = null,
+): ScreenshotResult {
+    require(maxPixels > 0) { "Screenshot pixel budget must be positive" }
+    val page = this as? BasePage ?: throw KmpwrightUnsupportedException("Bounded document screenshots require an Android or iOS WebView")
+    return page.screenshotWithOptions(
+        ScreenshotOptions(
+            fullPage = true,
+            maxPixels = maxPixels,
+            truncateFullPage = truncateFullPage,
+            viewportWidthOnly = viewportWidthOnly,
+            format = format,
+            quality = quality,
+            scale = scale,
+            timeoutMs = timeoutMs
+        ),
+        boundedDocument = true
+    )
 }

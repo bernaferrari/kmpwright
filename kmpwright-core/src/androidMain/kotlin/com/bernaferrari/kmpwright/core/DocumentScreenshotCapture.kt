@@ -1,100 +1,154 @@
 package com.bernaferrari.kmpwright.core
 
-import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Rect
-import android.webkit.WebView
-import kotlinx.coroutines.NonCancellable
+import android.util.Log
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** Pixel-aligned, bounded tiling. The DOM is restored even when capture is cancelled. */
+/** Tile the document in its own coordinates, preserving the page's styles and original scroll. */
 internal suspend fun AndroidScreenshotController.captureDocument(
     options: DocumentScreenshotOptions,
     afterFirstTile: suspend () -> Unit
 ): ScreenshotResult {
-    prepareDocumentCapture(options)
+    prepareDocumentCapture()
     val webView = captureWebView
-    @Suppress("DEPRECATION") val nativePerCss = webView.scale.toDouble().takeIf { it.isFinite() && it > 0 } ?: 1.0
-    val dimensions = JSONObject(evaluateForDocument("JSON.stringify({width:Math.max(document.documentElement.scrollWidth,document.body?document.body.scrollWidth:0,window.innerWidth),height:Math.max(document.documentElement.scrollHeight,document.body?document.body.scrollHeight:0,window.innerHeight)})") ?: throw KmpwrightException("Could not measure the page"))
-    // innerWidth is rounded to integer CSS pixels; use the real visible width to avoid a thin extra tile.
-    val widthCss = if (options.viewportWidthOnly && options.clip == null) webView.width / nativePerCss else dimensions.getDouble("width")
-    val plan = planDocumentCapture(options, widthCss, dimensions.getDouble("height"))
-    val nativeWidth = (plan.rect.width * nativePerCss).roundToInt()
-    val nativeHeight = (plan.rect.height * nativePerCss).roundToInt()
-    require(nativeWidth > 0 && nativeHeight > 0) { "The selected part is too small to capture" }
-    val outputScale = options.pixelsPerCssPixel / nativePerCss
+    val nativePerCss = nativePixelsPerCss()
+    val dimensions = JSONObject(evaluateForDocument(DOCUMENT_SIZE) ?: throw KmpwrightException("Could not measure the page"))
+    val visibleWidthCss = webView.width / nativePerCss
+    val visibleHeightCss = webView.height / nativePerCss
+    val documentWidthCss = maxOf(dimensions.getDouble("width"), visibleWidthCss)
+    val documentHeightCss = maxOf(dimensions.getDouble("height"), visibleHeightCss)
+    val widthCss = if (options.viewportWidthOnly && options.clip == null) visibleWidthCss else documentWidthCss
+    val plan = planDocumentCapture(options, widthCss, documentHeightCss)
+    val bounds = documentNativeBounds(plan.rect, documentWidthCss, documentHeightCss, webView.width, webView.height, nativePerCss)
+    val originX = bounds.originX
+    val originY = bounds.originY
+    val nativeWidth = bounds.width
+    val nativeHeight = bounds.height
+    val lastLeft = bounds.lastLeft
+    val lastTop = bounds.lastTop
     val originalScroll = readScrollPosition()
     val vertical = webView.isVerticalScrollBarEnabled
     val horizontal = webView.isHorizontalScrollBarEnabled
     val output = allocateDocumentBitmap(plan.width, plan.height)
-    var transformed = false
+
     try {
         webView.isVerticalScrollBarEnabled = false
         webView.isHorizontalScrollBarEnabled = false
-        if (options.clip != null) {
-            transformed = true
-            evaluateForDocument("(function(){var e=document.documentElement;window.__kmpwrightCaptureTransform=[e.style.getPropertyValue('transform'),e.style.getPropertyPriority('transform')];var t=getComputedStyle(e).transform;e.style.setProperty('transform','translate(${-plan.rect.x}px,${-plan.rect.y}px) '+(t==='none'?'':t),'important');window.scrollTo({left:0,top:0,behavior:'instant'});return true;})()")
-        }
         val canvas = Canvas(output)
-        val documentWidth = (dimensions.getDouble("width") * nativePerCss).roundToInt()
-        val documentHeight = (dimensions.getDouble("height") * nativePerCss).roundToInt()
-        val lastLeft = (documentWidth - webView.width).coerceAtLeast(0)
-        val lastTop = (documentHeight - webView.height).coerceAtLeast(0)
-        val unit = (nativePerCss * 8).roundToInt().coerceAtLeast(1)
-        val stepY = (webView.height / unit * unit).coerceAtLeast(1)
+        val viewportWidth = webView.width
+        val viewportHeight = webView.height
         var y = 0
-        var first = true
         while (y < nativeHeight) {
-            currentCoroutineContext().ensureActive()
             var x = 0
-            var rowHeight = 0
+            var rowHeight = minOf(viewportHeight, nativeHeight - y)
             while (x < nativeWidth) {
-                val viewportX = minOf(x, lastLeft)
-                val viewportY = minOf(y, lastTop)
+                currentCoroutineContext().ensureActive()
+                val viewportX = minOf(originX + x, lastLeft)
+                val viewportY = minOf(originY + y, lastTop)
                 scrollForCapture(viewportX, viewportY)
                 awaitDocumentRendered()
-                // Position and software draw are atomic on Main. PixelCopy verifies this position again.
+                check(webView.width == viewportWidth && webView.height == viewportHeight) { LAYOUT_CHANGED }
+                // WebView's renderer can clamp the final tile a pixel earlier than DOM geometry predicts.
                 webView.scrollTo(viewportX, viewportY)
-                check(webView.scrollX == viewportX && webView.scrollY == viewportY) { "The page changed size while taking its screenshot" }
-                val tile = captureDocumentTile(viewportX, viewportY)
-                try {
-                    val offsetX = x - viewportX
-                    val offsetY = y - viewportY
-                    val columns = minOf(webView.width - offsetX, nativeWidth - x)
-                    val rows = minOf(webView.height - offsetY, nativeHeight - y)
-                    check(columns > 0 && rows > 0) { "The page changed size while taking its screenshot" }
-                    val left = (x * outputScale).roundToInt()
-                    val top = (y * outputScale).roundToInt()
-                    val right = minOf(((x + columns) * outputScale).roundToInt(), plan.width)
-                    val bottom = minOf(((y + rows) * outputScale).roundToInt(), plan.height)
-                    canvas.drawBitmap(tile, Rect(offsetX, offsetY, offsetX + columns, offsetY + rows), Rect(left, top, right, bottom), null)
-                    x += columns
-                    rowHeight = maxOf(rowHeight, rows)
-                } finally { tile.recycle() }
+                val actualX = webView.scrollX
+                val actualY = webView.scrollY
+                check(abs(actualX - viewportX) <= 1 && abs(actualY - viewportY) <= 1) { LAYOUT_CHANGED }
+                val columns = checkNotNull(documentTileSlice(originX + x, actualX, viewportWidth, nativeWidth - x)) { LAYOUT_CHANGED }
+                val rows = checkNotNull(documentTileSlice(originY + y, actualY, viewportHeight, nativeHeight - y)) { LAYOUT_CHANGED }
+                if (x == 0) rowHeight = rows.count
+                check(rows.count == rowHeight) { LAYOUT_CHANGED }
+                val source = Rect(columns.source.first, rows.source.first, columns.source.last + 1, rows.source.last + 1)
+                val destination = Rect(
+                    (x.toDouble() * plan.width / nativeWidth).roundToInt(),
+                    (y.toDouble() * plan.height / nativeHeight).roundToInt(),
+                    ((x + columns.count).toDouble() * plan.width / nativeWidth).roundToInt(),
+                    ((y + rowHeight).toDouble() * plan.height / nativeHeight).roundToInt()
+                )
+                if (!destination.isEmpty) {
+                    val tile = captureDocumentTile()
+                    try {
+                        canvas.drawBitmap(tile, source, destination, null)
+                    } finally {
+                        tile.recycle()
+                    }
+                }
+                x += columns.count
             }
-            if (first) {
-                afterFirstTile()
-                first = false
-            }
-            check(rowHeight > 0) { "The page changed size while taking its screenshot" }
-            y += minOf(stepY, rowHeight)
+            if (y == 0 && rowHeight < nativeHeight) afterFirstTile()
+            y += rowHeight
         }
-        return ScreenshotResult(encodeDocumentBitmap(output), plan.width, plan.height, truncated = plan.truncated)
+        return ScreenshotResult(encodeDocumentBitmap(output, options), plan.width, plan.height, truncated = plan.truncated)
     } finally {
         try {
-            withContext(NonCancellable) {
-                try {
-                    if (transformed) evaluateForDocument("(function(){var e=document.documentElement,s=window.__kmpwrightCaptureTransform;if(s){if(s[0])e.style.setProperty('transform',s[0],s[1]);else e.style.removeProperty('transform');}delete window.__kmpwrightCaptureTransform;return true;})()")
-                } finally {
-                    webView.isVerticalScrollBarEnabled = vertical
-                    webView.isHorizontalScrollBarEnabled = horizontal
-                    restoreScrollPosition(originalScroll)
-                }
+            output.recycle()
+            webView.isVerticalScrollBarEnabled = vertical
+            webView.isHorizontalScrollBarEnabled = horizontal
+        } finally {
+            restoreScreenshotState({ Log.w("Kmpwright", "Could not restore screenshot scroll position", it) }) {
+                restoreScrollPosition(originalScroll)
             }
-        } finally { output.recycle() }
+        }
     }
+}
+
+private const val LAYOUT_CHANGED = "The page changed size while taking its screenshot"
+private const val DOCUMENT_SIZE = """
+    (function() {
+        var root = document.documentElement, body = document.body;
+        return JSON.stringify({
+            width: Math.max(root.scrollWidth, body ? body.scrollWidth : 0),
+            height: Math.max(root.scrollHeight, body ? body.scrollHeight : 0)
+        });
+    })()
+"""
+
+internal data class DocumentNativeBounds(
+    val originX: Int,
+    val originY: Int,
+    val width: Int,
+    val height: Int,
+    val lastLeft: Int,
+    val lastTop: Int
+)
+
+/** Clamp fractional CSS clip rounding to the native document extent so high-DPI clips cannot overrun the final tile. */
+internal fun documentNativeBounds(
+    rect: Rectangle,
+    documentWidthCss: Double,
+    documentHeightCss: Double,
+    viewportWidth: Int,
+    viewportHeight: Int,
+    nativePerCss: Double
+): DocumentNativeBounds {
+    val documentNativeWidth = (documentWidthCss * nativePerCss).roundToInt().coerceAtLeast(viewportWidth)
+    val documentNativeHeight = (documentHeightCss * nativePerCss).roundToInt().coerceAtLeast(viewportHeight)
+    val originX = (rect.x * nativePerCss).roundToInt().coerceIn(0, (documentNativeWidth - 1).coerceAtLeast(0))
+    val originY = (rect.y * nativePerCss).roundToInt().coerceIn(0, (documentNativeHeight - 1).coerceAtLeast(0))
+    val width = (rect.width * nativePerCss).roundToInt().coerceAtMost(documentNativeWidth - originX)
+    val height = (rect.height * nativePerCss).roundToInt().coerceAtMost(documentNativeHeight - originY)
+    require(width > 0 && height > 0) { "The selected part is too small to capture" }
+    return DocumentNativeBounds(
+        originX = originX,
+        originY = originY,
+        width = width,
+        height = height,
+        lastLeft = (documentNativeWidth - viewportWidth).coerceAtLeast(0),
+        lastTop = (documentNativeHeight - viewportHeight).coerceAtLeast(0)
+    )
+}
+
+internal data class DocumentTileSlice(val source: IntRange, val count: Int)
+
+/** Chromium may round the final scroll extent down by one native pixel. Extend that last pixel. */
+internal fun documentTileSlice(position: Int, viewportStart: Int, viewportSize: Int, remaining: Int): DocumentTileSlice? {
+    val offset = position - viewportStart
+    if (offset < 0 || offset > viewportSize || (offset == viewportSize && remaining != 1)) return null
+    if (offset == viewportSize) return DocumentTileSlice(viewportSize - 1 until viewportSize, 1)
+    val count = minOf(viewportSize - offset, remaining)
+    return DocumentTileSlice(offset until (offset + count), count)
 }

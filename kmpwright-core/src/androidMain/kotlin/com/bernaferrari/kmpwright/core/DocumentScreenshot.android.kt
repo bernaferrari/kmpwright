@@ -1,13 +1,11 @@
 package com.bernaferrari.kmpwright.core
 
 import android.webkit.WebView
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * Capture a bounded document or complete selected region without taking ownership of [webView].
  * The caller prepares and settles the page before capture. Scroll position and temporary DOM changes
- * are restored on failure or cancellation. [afterFirstTile] runs after the first viewport row, so
+ * are restored on failure or cancellation. [afterFirstTile] runs after the first row only if there are more, so
  * pinned content can be hidden before subsequent rows.
  */
 @Throws(KmpwrightException::class, IllegalArgumentException::class, IllegalStateException::class, kotlin.coroutines.cancellation.CancellationException::class)
@@ -32,6 +30,6 @@ internal suspend fun captureWebViewDocument(
     webView: WebView,
     options: DocumentScreenshotOptions,
     afterFirstTile: suspend () -> Unit = {}
-): ScreenshotResult = withContext(Dispatchers.Main.immediate) {
+): ScreenshotResult = withWebViewScreenshotLock(webView) {
     AndroidScreenshotController(webView).captureDocument(options, afterFirstTile)
 }

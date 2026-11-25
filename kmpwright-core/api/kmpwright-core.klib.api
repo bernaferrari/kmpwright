@@ -1652,6 +1652,10 @@ final class com.bernaferrari.kmpwright.core/KmpwrightConfig { // com.bernaferrar
     final fun equals(kotlin/Any?): kotlin/Boolean // com.bernaferrari.kmpwright.core/KmpwrightConfig.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // com.bernaferrari.kmpwright.core/KmpwrightConfig.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // com.bernaferrari.kmpwright.core/KmpwrightConfig.toString|toString(){}[0]
+
+    final object Companion { // com.bernaferrari.kmpwright.core/KmpwrightConfig.Companion|null[0]
+        final fun untrustedPage(): com.bernaferrari.kmpwright.core/KmpwrightConfig // com.bernaferrari.kmpwright.core/KmpwrightConfig.Companion.untrustedPage|untrustedPage(){}[0]
+    }
 }
 
 final class com.bernaferrari.kmpwright.core/LargestContentfulPaint { // com.bernaferrari.kmpwright.core/LargestContentfulPaint|null[0]
@@ -3646,6 +3650,7 @@ final suspend fun (com.bernaferrari.kmpwright.core/Page).com.bernaferrari.kmpwri
 final suspend fun (com.bernaferrari.kmpwright.core/Page).com.bernaferrari.kmpwright.core/press(kotlin/String, kotlin/String, kotlin/Long = ..., kotlin/Long? = ...) // com.bernaferrari.kmpwright.core/press|press@com.bernaferrari.kmpwright.core.Page(kotlin.String;kotlin.String;kotlin.Long;kotlin.Long?){}[0]
 final suspend fun (com.bernaferrari.kmpwright.core/Page).com.bernaferrari.kmpwright.core/refBoundingBoxes(kotlin.collections/List<kotlin/String>): kotlin.collections/Map<kotlin/String, com.bernaferrari.kmpwright.core/Rectangle> // com.bernaferrari.kmpwright.core/refBoundingBoxes|refBoundingBoxes@com.bernaferrari.kmpwright.core.Page(kotlin.collections.List<kotlin.String>){}[0]
 final suspend fun (com.bernaferrari.kmpwright.core/Page).com.bernaferrari.kmpwright.core/runCommand(kotlin/String): com.bernaferrari.kmpwright.core/AgentCommandResult // com.bernaferrari.kmpwright.core/runCommand|runCommand@com.bernaferrari.kmpwright.core.Page(kotlin.String){}[0]
+final suspend fun (com.bernaferrari.kmpwright.core/Page).com.bernaferrari.kmpwright.core/screenshotDocument(kotlin/Long, kotlin/Boolean = ..., kotlin/Boolean = ..., com.bernaferrari.kmpwright.core/ScreenshotFormat = ..., kotlin/Int = ..., kotlin/Double = ..., kotlin/Long? = ...): com.bernaferrari.kmpwright.core/ScreenshotResult // com.bernaferrari.kmpwright.core/screenshotDocument|screenshotDocument@com.bernaferrari.kmpwright.core.Page(kotlin.Long;kotlin.Boolean;kotlin.Boolean;com.bernaferrari.kmpwright.core.ScreenshotFormat;kotlin.Int;kotlin.Double;kotlin.Long?){}[0]
 final suspend fun (com.bernaferrari.kmpwright.core/Page).com.bernaferrari.kmpwright.core/selectOption(kotlin/String, kotlin.collections/List<kotlin/String>, kotlin/Boolean = ..., kotlin/Long? = ...) // com.bernaferrari.kmpwright.core/selectOption|selectOption@com.bernaferrari.kmpwright.core.Page(kotlin.String;kotlin.collections.List<kotlin.String>;kotlin.Boolean;kotlin.Long?){}[0]
 final suspend fun (com.bernaferrari.kmpwright.core/Page).com.bernaferrari.kmpwright.core/selectOption(kotlin/String, kotlin/String, kotlin/Boolean = ..., kotlin/Long? = ...) // com.bernaferrari.kmpwright.core/selectOption|selectOption@com.bernaferrari.kmpwright.core.Page(kotlin.String;kotlin.String;kotlin.Boolean;kotlin.Long?){}[0]
 final suspend fun (com.bernaferrari.kmpwright.core/Page).com.bernaferrari.kmpwright.core/setChecked(kotlin/String, kotlin/Boolean, kotlin/Boolean = ..., kotlin/Long? = ...) // com.bernaferrari.kmpwright.core/setChecked|setChecked@com.bernaferrari.kmpwright.core.Page(kotlin.String;kotlin.Boolean;kotlin.Boolean;kotlin.Long?){}[0]

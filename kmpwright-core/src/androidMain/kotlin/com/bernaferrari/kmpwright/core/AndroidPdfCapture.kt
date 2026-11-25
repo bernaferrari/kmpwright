@@ -1,13 +1,11 @@
 package com.bernaferrari.kmpwright.core
 
-import android.graphics.BitmapFactory
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.webkit.WebView
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.io.ByteArrayOutputStream
 import kotlin.math.ceil
 import kotlin.math.min
@@ -22,7 +20,7 @@ internal fun validateAndroidPdfOptions(options: PdfOptions) {
 }
 
 /** Paginate rendered viewport tiles. Allocation is bounded; no whole-document bitmap is created. */
-internal suspend fun captureAndroidPdf(webView: WebView, options: PdfOptions): ByteArray = withContext(Dispatchers.Main) {
+internal suspend fun captureAndroidPdf(webView: WebView, options: PdfOptions): ByteArray = withWebViewScreenshotLock(webView) {
     validateAndroidPdfOptions(options)
     val size = options.paperSizeInches()
     val paperWidth = (size.first * 72).toInt()
@@ -69,11 +67,11 @@ internal suspend fun captureAndroidPdf(webView: WebView, options: PdfOptions): B
                     while (documentX < bounded.contentWidth) {
                         val x = documentX.coerceAtMost((bounded.contentWidth - dimensions.viewportWidth).coerceAtLeast(0))
                         val y = documentY.coerceAtMost((bounded.contentHeight - dimensions.viewportHeight).coerceAtLeast(0))
+                        currentCoroutineContext().ensureActive()
                         capture.scrollForCapture(x, y)
-                        val image = capture.captureViewport()
+                        capture.awaitDocumentRendered()
                         val scroll = capture.scrollPixelsForCapture()
-                        val bitmap = BitmapFactory.decodeByteArray(image.bytes, 0, image.bytes.size)
-                            ?: throw KmpwrightException("PDF tile decode failed")
+                        val bitmap = capture.captureDocumentTile()
                         try {
                             val sourceX = documentX - scroll.first
                             val sourceY = documentY - scroll.second
@@ -104,11 +102,14 @@ internal suspend fun captureAndroidPdf(webView: WebView, options: PdfOptions): B
         document.writeTo(output)
         output.toByteArray()
     } finally {
-        document.close()
-        withContext(NonCancellable + Dispatchers.Main) {
+        try {
+            document.close()
+        } finally {
             webView.isVerticalScrollBarEnabled = vertical
             webView.isHorizontalScrollBarEnabled = horizontal
-            capture.restoreScrollPosition(originalScroll)
+            restoreScreenshotState({ android.util.Log.w("Kmpwright", "Could not restore PDF scroll position", it) }) {
+                capture.restoreScrollPosition(originalScroll)
+            }
         }
     }
 }

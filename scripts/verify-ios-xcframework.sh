@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${RELEASE_VERSION:-0.0.1}"
+VERSION="${RELEASE_VERSION:-$(sed -n 's/^kmpwrightDevelopmentVersion=//p' "$ROOT_DIR/gradle.properties")}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "Skipping XCFramework and Swift consumer smoke build (requires Xcode on macOS)."

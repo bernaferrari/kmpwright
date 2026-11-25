@@ -14,7 +14,10 @@ internal data class ScreenshotOptions(
     val annotate: Boolean = false,
     val timeoutMs: Long? = null,
     /** Native element capture includes the complete bounding box beyond the viewport. */
-    val captureBeyondViewport: Boolean = false
+    val captureBeyondViewport: Boolean = false,
+    val maxPixels: Long = 32_000_000,
+    val truncateFullPage: Boolean = false,
+    val viewportWidthOnly: Boolean = false
 ) {
     init {
         require(!(fullPage && clip != null)) { "fullPage and clip are mutually exclusive" }

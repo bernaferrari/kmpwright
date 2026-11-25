@@ -2,8 +2,8 @@
 # Every entry tracks the newest release, including alpha/beta/RC builds
 # (checked 2026-10-12). The sample pins androidx material3 (androidxMaterial3)
 # ahead of the JetBrains redirect to get the newest Material 3 Expressive APIs.
-agp = "9.5.0-alpha09"
-kotlin = "2.5.0-Beta1"
+agp = "9.4.1"
+kotlin = "2.4.21"
 
 coreKtx = "1.19.1"
 junit = "4.13.2"
